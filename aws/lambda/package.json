@@ -1,0 +1,9 @@
+{
+  "name": "screeps-monitor-lambda",
+  "version": "1.0.0",
+  "description": "Screeps colony health monitor Lambda",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-sns": "^3.700.0"
+  }
+}

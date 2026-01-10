@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run push:*)",
+      "Bash(npm run push:main:*)",
+      "Bash(npx ts-node:*)",
+      "Bash(aws sts get-caller-identity:*)",
+      "Bash(aws configure:*)",
+      "Bash(cat:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws sts:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ecr:*)",
+      "Bash(docker --version:*)",
+      "Bash(docker login:*)",
+      "Bash(docker build:*)",
+      "Bash(docker tag:*)",
+      "Bash(docker push:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ecs create-cluster:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ec2 describe-vpcs:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ec2 create-default-vpc:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ec2:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws iam create-role:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws iam attach-role-policy:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ecs register-task-definition:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ecs create-service:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ecs list-tasks:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ecs describe-tasks:*)",
+      "Bash(curl:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws logs:*)",
+      "Bash(MSYS_NO_PATHCONV=1 AWS_PROFILE=screeps-monitor aws logs create-log-group:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws ecs update-service:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws sns:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws lambda:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws events:*)"
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "family": "screeps-monitor",
+  "networkMode": "awsvpc",
+  "executionRoleArn": "arn:aws:iam::488218643044:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "screeps-monitor",
+      "image": "488218643044.dkr.ecr.us-east-1.amazonaws.com/screeps-monitor:latest",
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "hostPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        {
+          "name": "SCREEPS_TOKEN",
+          "value": "7a601a02-0b71-49db-a9c9-cdad848eaa82"
+        },
+        {
+          "name": "SCREEPS_SHARD",
+          "value": "shard0"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/screeps-monitor",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ],
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512"
+}
