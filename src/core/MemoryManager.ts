@@ -4,13 +4,7 @@ import { logger } from "../utils/Logger";
 declare global {
   interface Memory {
     initialized?: boolean;
-    stats?: {
-      gcl: number;
-      gclLevel: number;
-      cpu: number;
-      bucket: number;
-      tick: number;
-    };
+    // Note: stats is now defined in StatsCollector.ts
     // Note: 'rooms' is already declared in @types/screeps
   }
 
@@ -41,20 +35,20 @@ export class MemoryManager {
   }
 
   static cleanup(): void {
-    // Only run cleanup periodically
-    if (Game.time % CONFIG.MEMORY_CLEANUP_INTERVAL !== 0) return;
-
-    logger.debug("MemoryManager", "Running memory cleanup");
-
-    // Clean up dead creeps
-    for (const name in Memory.creeps) {
-      if (!Game.creeps[name]) {
-        logger.debug("MemoryManager", `Clearing memory for dead creep: ${name}`);
-        delete Memory.creeps[name];
+    // Clean up dead creeps every 10 ticks (cheap, prevents accumulation)
+    if (Game.time % 10 === 0) {
+      for (const name in Memory.creeps) {
+        if (!Game.creeps[name]) {
+          delete Memory.creeps[name];
+        }
       }
     }
 
-    // Clean up rooms we no longer own
+    // Clean up stale room data less frequently (more expensive)
+    if (Game.time % CONFIG.MEMORY_CLEANUP_INTERVAL !== 0) return;
+
+    logger.debug("MemoryManager", "Running full memory cleanup");
+
     if (Memory.rooms) {
       for (const roomName in Memory.rooms) {
         const room = Game.rooms[roomName];
@@ -71,12 +65,7 @@ export class MemoryManager {
   }
 
   static recordStats(): void {
-    Memory.stats = {
-      gcl: Game.gcl.progress,
-      gclLevel: Game.gcl.level,
-      cpu: Game.cpu.getUsed(),
-      bucket: Game.cpu.bucket,
-      tick: Game.time,
-    };
+    // Stats recording is now handled by StatsCollector
+    // This method is kept for backwards compatibility but does nothing
   }
 }

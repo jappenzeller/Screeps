@@ -6,6 +6,8 @@ import { runBuilder } from "./Builder";
 import { runDefender } from "./Defender";
 import { runScout } from "./Scout";
 import { runRemoteMiner } from "./RemoteMiner";
+import { runReserver } from "./Reserver";
+import { runClaimer } from "./Claimer";
 
 export interface BodyConfig {
   base: BodyPartConstant[];
@@ -75,6 +77,8 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   DEFENDER: runDefender,
   SCOUT: runScout,
   REMOTE_MINER: runRemoteMiner,
+  RESERVER: runReserver,
+  CLAIMER: runClaimer,
 };
 
 export function runCreep(creep: Creep): void {

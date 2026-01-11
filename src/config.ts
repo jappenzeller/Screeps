@@ -22,7 +22,7 @@ export const CONFIG = {
     HARVESTER: 2,
     HAULER: 2,
     UPGRADER: 2,
-    BUILDER: 1,
+    BUILDER: 2,
     DEFENDER: 0, // Spawned on demand when hostiles detected
     SCOUT: 1,
     REMOTE_MINER: 0, // Spawned when remote mining enabled

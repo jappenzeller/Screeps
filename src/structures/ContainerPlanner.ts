@@ -236,3 +236,10 @@ export class ContainerPlanner {
     return containers.length > 0 ? containers[0] : null;
   }
 }
+
+// Extend memory types for container planning
+declare global {
+  interface RoomMemory {
+    containerPlan?: ContainerPlan;
+  }
+}

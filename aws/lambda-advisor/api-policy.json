@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:488218643044:table/screeps-advisor-snapshots",
+        "arn:aws:dynamodb:us-east-1:488218643044:table/screeps-advisor-snapshots/index/*",
+        "arn:aws:dynamodb:us-east-1:488218643044:table/screeps-advisor-events",
+        "arn:aws:dynamodb:us-east-1:488218643044:table/screeps-advisor-events/index/*",
+        "arn:aws:dynamodb:us-east-1:488218643044:table/screeps-advisor-recommendations",
+        "arn:aws:dynamodb:us-east-1:488218643044:table/screeps-advisor-recommendations/index/*"
+      ]
+    }
+  ]
+}

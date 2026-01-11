@@ -1,0 +1,22 @@
+{
+  "name": "screeps-advisor-lambdas",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:data-collector && npm run build:analysis-engine && npm run build:api",
+    "build:data-collector": "cd data-collector && esbuild index.ts --bundle --platform=node --target=node20 --outfile=../dist/data-collector/index.js && cd ../dist/data-collector && zip -r ../../data-collector.zip .",
+    "build:analysis-engine": "cd analysis-engine && esbuild index.ts --bundle --platform=node --target=node20 --external:@anthropic-ai/sdk --outfile=../dist/analysis-engine/index.js && cd ../dist/analysis-engine && zip -r ../../analysis-engine.zip .",
+    "build:api": "cd api && esbuild index.ts --bundle --platform=node --target=node20 --outfile=../dist/api/index.js && cd ../dist/api && zip -r ../../api.zip ."
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "@aws-sdk/util-dynamodb": "^3.700.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -122,23 +122,3 @@ function findNextScoutTarget(creep: Creep): string | undefined {
 
   return undefined;
 }
-
-// Extend memory types for scout intel
-declare global {
-  interface RoomMemory {
-    controller?: {
-      owner?: string;
-      level: number;
-      reservation?: {
-        username: string;
-        ticksToEnd: number;
-      };
-    };
-    hasKeepers?: boolean;
-    hasInvaderCore?: boolean;
-  }
-
-  interface CreepMemory {
-    targetRoom?: string;
-  }
-}

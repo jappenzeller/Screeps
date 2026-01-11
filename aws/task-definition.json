@@ -16,12 +16,14 @@
       "essential": true,
       "environment": [
         {
-          "name": "SCREEPS_TOKEN",
-          "value": "7a601a02-0b71-49db-a9c9-cdad848eaa82"
-        },
-        {
           "name": "SCREEPS_SHARD",
           "value": "shard0"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "SCREEPS_TOKEN",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:488218643044:secret:screeps/token-vDNkDM"
         }
       ],
       "logConfiguration": {

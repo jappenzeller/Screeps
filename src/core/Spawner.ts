@@ -14,7 +14,7 @@ export class Spawner {
   constructor(private colony: Colony) {}
 
   run(state: ColonyState): void {
-    const { spawn } = state;
+    const spawn = state.structures.spawns[0];
     if (!spawn) return;
 
     // Show spawning visual if currently spawning
@@ -57,12 +57,13 @@ export class Spawner {
 
   private buildSpawnQueue(state: ColonyState): SpawnRequest[] {
     const queue: SpawnRequest[] = [];
+    const energyCapacity = state.energy.capacity;
 
     // Core economy roles - always check
     const coreRoles: Role[] = ["HARVESTER", "HAULER", "UPGRADER", "BUILDER"];
     for (const role of coreRoles) {
       if (this.colony.needsCreep(role)) {
-        const body = this.getBody(role, state.energyCapacity);
+        const body = this.getBody(role, energyCapacity);
         if (body.length > 0) {
           queue.push({
             role,
@@ -75,11 +76,11 @@ export class Spawner {
     }
 
     // Defender - spawn when hostiles detected
-    if (state.hostiles.length > 0) {
+    if (state.threat.hostiles.length > 0) {
       const defenderCount = this.colony.getCreepCount("DEFENDER");
       const maxDefenders = CONFIG.MAX_CREEPS.DEFENDER || 3;
-      if (defenderCount < Math.min(state.hostiles.length, maxDefenders)) {
-        const body = this.getBody("DEFENDER", state.energyCapacity);
+      if (defenderCount < Math.min(state.threat.hostiles.length, maxDefenders)) {
+        const body = this.getBody("DEFENDER", energyCapacity);
         if (body.length > 0) {
           queue.push({
             role: "DEFENDER",
@@ -97,7 +98,7 @@ export class Spawner {
       const scoutCount = this.colony.getCreepCount("SCOUT");
       const minScouts = CONFIG.MIN_CREEPS.SCOUT || 0;
       if (scoutCount < minScouts) {
-        const body = this.getBody("SCOUT", state.energyCapacity);
+        const body = this.getBody("SCOUT", energyCapacity);
         if (body.length > 0) {
           queue.push({
             role: "SCOUT",
@@ -110,13 +111,13 @@ export class Spawner {
     }
 
     // Remote Miner - spawn when we have good economy and scouted rooms
-    if (room && room.controller && room.controller.level >= 4 && state.energyCapacity >= 550) {
+    if (room && room.controller && room.controller.level >= 4 && energyCapacity >= 550) {
       const remoteRooms = this.getRemoteMiningTargets();
       if (remoteRooms.length > 0) {
         const remoteMinerCount = this.colony.getCreepCount("REMOTE_MINER");
         const maxRemoteMiners = Math.min(remoteRooms.length * 2, CONFIG.MAX_CREEPS.REMOTE_MINER || 4);
         if (remoteMinerCount < maxRemoteMiners) {
-          const body = this.getBody("REMOTE_MINER", state.energyCapacity);
+          const body = this.getBody("REMOTE_MINER", energyCapacity);
           if (body.length > 0) {
             const targetRoom = remoteRooms[remoteMinerCount % remoteRooms.length];
             queue.push({
@@ -137,12 +138,17 @@ export class Spawner {
     const targets: string[] = [];
     const roomName = this.colony.roomName;
     const exits = Game.map.describeExits(roomName);
+    const MAX_REMOTE_DISTANCE = 1; // Only adjacent rooms for now
 
     if (!exits || !Memory.rooms) return targets;
 
     for (const dir in exits) {
       const adjacentRoom = exits[dir as ExitKey];
       if (!adjacentRoom) continue;
+
+      // Explicit distance check
+      const distance = Game.map.getRoomLinearDistance(roomName, adjacentRoom);
+      if (distance > MAX_REMOTE_DISTANCE) continue;
 
       const intel = Memory.rooms[adjacentRoom];
       if (!intel) continue;
@@ -222,7 +228,7 @@ export class Spawner {
       sourceCounts.set(source.id, 0);
     }
 
-    for (const creep of state.creeps) {
+    for (const creep of state.creeps.all) {
       if (creep.memory.role === "HARVESTER" && creep.memory.sourceId) {
         const count = sourceCounts.get(creep.memory.sourceId) ?? 0;
         sourceCounts.set(creep.memory.sourceId, count + 1);
@@ -255,19 +261,19 @@ export class Spawner {
    */
   private tryRenewCreeps(spawn: StructureSpawn, state: ColonyState): boolean {
     // Only renew if we have good energy reserves
-    if (state.energyAvailable < state.energyCapacity * 0.5) {
+    if (state.energy.available < state.energy.capacity * 0.5) {
       return false;
     }
 
     // Find creeps near spawn with low TTL
-    const dyingCreeps = state.creeps
-      .filter((c) => {
+    const dyingCreeps = state.creeps.all
+      .filter((c: Creep) => {
         const ttl = c.ticksToLive;
         if (!ttl || ttl > 300) return false; // Only renew if TTL < 300
         if (c.pos.getRangeTo(spawn) > 1) return false; // Must be adjacent to spawn
         return true;
       })
-      .sort((a, b) => {
+      .sort((a: Creep, b: Creep) => {
         // Prioritize creeps with more body parts (more expensive)
         return b.body.length - a.body.length;
       });

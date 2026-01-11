@@ -1,100 +1,50 @@
-import { logger } from "../utils/Logger";
 import { CONFIG, Role } from "../config";
+import { ColonyStateManager, CachedColonyState } from "./ColonyState";
 
-export interface ColonyState {
-  room: Room;
-  spawn: StructureSpawn | null;
-  sources: Source[];
-  creeps: Creep[];
-  creepsByRole: Record<string, Creep[]>;
-  hostiles: Creep[];
-  constructionSites: ConstructionSite[];
-  energyAvailable: number;
-  energyCapacity: number;
-}
+// Re-export the CachedColonyState type as ColonyState for backward compatibility
+export type ColonyState = CachedColonyState;
 
 export class Colony {
-  private state: ColonyState | null = null;
-
   constructor(public readonly roomName: string) {}
 
   get room(): Room | undefined {
     return Game.rooms[this.roomName];
   }
 
-  scan(): ColonyState | null {
-    const room = this.room;
-    if (!room) {
-      logger.warn("Colony", `Cannot scan room ${this.roomName} - no visibility`);
-      return null;
-    }
-
-    // Find spawn
-    const spawns = room.find(FIND_MY_SPAWNS);
-    const spawn = spawns.length > 0 ? spawns[0] : null;
-
-    // Find sources
-    const sources = room.find(FIND_SOURCES);
-
-    // Initialize room memory if needed
-    if (!Memory.rooms) Memory.rooms = {};
-    if (!Memory.rooms[this.roomName]) {
-      Memory.rooms[this.roomName] = {};
-    }
-
-    // Cache source IDs
-    if (!Memory.rooms[this.roomName].sources) {
-      Memory.rooms[this.roomName].sources = sources.map((s) => s.id);
-    }
-
-    // Find our creeps in this room
-    const creeps = Object.values(Game.creeps).filter((c) => c.memory.room === this.roomName);
-
-    // Group creeps by role
-    const creepsByRole: Record<string, Creep[]> = {};
-    for (const creep of creeps) {
-      const role = creep.memory.role;
-      if (!creepsByRole[role]) creepsByRole[role] = [];
-      creepsByRole[role].push(creep);
-    }
-
-    // Find hostiles
-    const hostiles = room.find(FIND_HOSTILE_CREEPS);
-    Memory.rooms[this.roomName].hostiles = hostiles.length;
-    Memory.rooms[this.roomName].lastScan = Game.time;
-
-    // Find construction sites
-    const constructionSites = room.find(FIND_CONSTRUCTION_SITES);
-
-    this.state = {
-      room,
-      spawn,
-      sources,
-      creeps,
-      creepsByRole,
-      hostiles,
-      constructionSites,
-      energyAvailable: room.energyAvailable,
-      energyCapacity: room.energyCapacityAvailable,
-    };
-
-    return this.state;
+  /**
+   * Get the colony state using ColonyStateManager
+   * This replaces the old scan() method that recalculated everything each tick
+   */
+  scan(): CachedColonyState | null {
+    return ColonyStateManager.getState(this.roomName);
   }
 
-  getState(): ColonyState | null {
-    return this.state;
+  getState(): CachedColonyState | null {
+    return ColonyStateManager.getState(this.roomName);
   }
 
   getCreepCount(role: string): number {
-    return this.state?.creepsByRole[role]?.length ?? 0;
+    const state = this.getState();
+    return state?.creeps.byRole[role]?.length ?? 0;
   }
 
   needsCreep(role: Role): boolean {
+    const state = this.getState();
+    if (!state) return false;
+
     const count = this.getCreepCount(role);
     const min = CONFIG.MIN_CREEPS[role as keyof typeof CONFIG.MIN_CREEPS] ?? 0;
 
-    // Harvesters: always need them (they harvest AND deliver)
-    if (role === "HARVESTER") return count < min;
+    // Harvesters: need 1 per source (static miner with container)
+    // or 2 per source early game (travel time) capped at config min
+    if (role === "HARVESTER") {
+      const sourceCount = state.sources.length;
+      const hasContainers = state.structures.containers.length > 0;
+      // With containers: 1 per source (static miner)
+      // Without: 2 per source (travel time) but capped at min config
+      const needed = hasContainers ? sourceCount : Math.min(sourceCount * 2, min);
+      return count < needed;
+    }
 
     // Upgraders: need them once we have harvesters bringing energy
     if (role === "UPGRADER") {
@@ -103,31 +53,40 @@ export class Colony {
 
     // Builders: only when construction sites exist
     if (role === "BUILDER") {
-      const hasSites = (this.state?.constructionSites?.length ?? 0) > 0;
+      const hasSites = state.constructionSites.length > 0;
       return count < min && hasSites;
     }
 
     // Haulers: only needed later when we have containers
     if (role === "HAULER") {
-      if (!this.state?.room) return false;
-      const containers = this.state.room.find(FIND_STRUCTURES, {
-        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
-      });
-      return count < min && containers.length > 0;
+      return count < min && state.structures.containers.length > 0;
     }
 
     return count < min;
   }
 
   drawVisuals(): void {
-    if (!CONFIG.VISUALS.ENABLED || !this.state) return;
+    const state = this.getState();
+    if (!CONFIG.VISUALS.ENABLED || !state) return;
 
-    const room = this.state.room;
+    const room = state.room;
 
-    // Draw creep roles
+    // Draw creep roles with distinct abbreviations
     if (CONFIG.VISUALS.SHOW_ROLES) {
-      for (const creep of this.state.creeps) {
-        room.visual.text(creep.memory.role.charAt(0), creep.pos.x, creep.pos.y - 0.5, {
+      const roleLabels: Record<string, string> = {
+        HARVESTER: "Hv",
+        HAULER: "Hl",
+        UPGRADER: "Up",
+        BUILDER: "Bd",
+        DEFENDER: "Df",
+        SCOUT: "Sc",
+        REMOTE_MINER: "Rm",
+        RESERVER: "Rs",
+        CLAIMER: "Cl",
+      };
+      for (const creep of state.creeps.all) {
+        const label = roleLabels[creep.memory.role] ?? creep.memory.role.charAt(0);
+        room.visual.text(label, creep.pos.x, creep.pos.y - 0.5, {
           font: 0.4,
           opacity: 0.7,
         });
@@ -135,13 +94,24 @@ export class Colony {
     }
 
     // Draw source assignments
-    for (const source of this.state.sources) {
-      const assignedHarvesters = this.state.creeps.filter(
-        (c) => c.memory.role === "HARVESTER" && c.memory.sourceId === source.id
-      );
-      room.visual.text(`${assignedHarvesters.length}`, source.pos.x, source.pos.y - 0.5, {
+    for (const assignment of state.sourceAssignments) {
+      const source = Game.getObjectById(assignment.sourceId);
+      if (!source) continue;
+
+      const assigned = assignment.creepName ? 1 : 0;
+      const containerIcon = assignment.hasContainer ? "📦" : "";
+      room.visual.text(`${assigned}${containerIcon}`, source.pos.x, source.pos.y - 0.5, {
         font: 0.5,
         color: "#ffff00",
+      });
+    }
+
+    // Draw emergency state if active
+    if (state.emergency.isEmergency) {
+      room.visual.text("⚠️ EMERGENCY", 25, 2, {
+        font: 1,
+        color: "#ff0000",
+        align: "center",
       });
     }
   }

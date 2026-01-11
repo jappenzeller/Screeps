@@ -22,6 +22,10 @@ cpu()            - CPU and bucket status
 spawn("ROLE")    - Force spawn a creep
 spawn("ROLE", "W1N1") - Force spawn in specific room
 kill("name")     - Kill a creep by name
+resetCreeps()    - Reset all creep states (fixes stuck creeps)
+tasks()          - Show current task assignments
+stats()          - Show collected stats for AWS monitoring
+clearStats()     - Clear all collected stats
 `);
   };
 
@@ -229,6 +233,105 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     console.log(`Fixed ${fixed} creeps`);
   };
 
+  // Reset all creep states - fixes stuck creeps after code updates
+  global.resetCreeps = () => {
+    const creeps = Object.values(Game.creeps);
+    let reset = 0;
+
+    for (const creep of creeps) {
+      // Clear old boolean state
+      delete creep.memory.working;
+      // Clear new state machine fields
+      delete creep.memory.state;
+      delete creep.memory.taskId;
+      reset++;
+    }
+
+    // Clear room assignments
+    for (const roomName in Memory.rooms) {
+      const roomMem = Memory.rooms[roomName];
+      if (roomMem.assignments) {
+        delete roomMem.assignments;
+      }
+    }
+
+    console.log(`Reset ${reset} creeps. All states and task assignments cleared.`);
+    console.log(`Next tick, creeps will reinitialize with fresh state.`);
+  };
+
+  // Show current task assignments
+  global.tasks = () => {
+    const lines: string[] = ["=== Task Assignments ==="];
+
+    // Group creeps by their current task/state
+    const byState: Record<string, Creep[]> = {};
+    const creeps = Object.values(Game.creeps);
+
+    for (const c of creeps) {
+      const state = c.memory.state || "NO_STATE";
+      if (!byState[state]) byState[state] = [];
+      byState[state].push(c);
+    }
+
+    for (const [state, list] of Object.entries(byState)) {
+      lines.push(`\n[${state}] (${list.length} creeps)`);
+      for (const c of list) {
+        const task = c.memory.taskId ? `task:${c.memory.taskId.substring(0, 8)}` : "no task";
+        lines.push(`  ${c.name} (${c.memory.role}) - ${task}`);
+      }
+    }
+
+    // Show room assignments if they exist
+    for (const roomName in Memory.rooms) {
+      const roomMem = Memory.rooms[roomName];
+      if (roomMem.assignments) {
+        lines.push(`\n[${roomName}] Assignments:`);
+        if (roomMem.assignments.harvesters) {
+          for (const [sourceId, creepName] of Object.entries(roomMem.assignments.harvesters)) {
+            lines.push(`  Source ${sourceId.substring(0, 8)}: ${creepName}`);
+          }
+        }
+        if (roomMem.assignments.haulers) {
+          for (const [containerId, creepNames] of Object.entries(roomMem.assignments.haulers)) {
+            lines.push(`  Container ${containerId.substring(0, 8)}: ${creepNames.join(", ")}`);
+          }
+        }
+      }
+    }
+
+    console.log(lines.join("\n"));
+  };
+
+  // Show road construction priorities
+  global.roads = () => {
+    for (const roomName in Game.rooms) {
+      const room = Game.rooms[roomName];
+      if (!room.controller || !room.controller.my) continue;
+
+      const spawn = room.find(FIND_MY_SPAWNS)[0];
+      if (!spawn) continue;
+
+      const sites = room.find(FIND_CONSTRUCTION_SITES).filter(
+        (s) => s.structureType === STRUCTURE_ROAD
+      );
+
+      if (sites.length === 0) {
+        console.log(`[${roomName}] No road construction sites`);
+        continue;
+      }
+
+      // Sort by distance from spawn
+      sites.sort((a, b) => a.pos.getRangeTo(spawn) - b.pos.getRangeTo(spawn));
+
+      console.log(`[${roomName}] Road sites (sorted by distance from spawn):`);
+      for (const site of sites) {
+        const dist = site.pos.getRangeTo(spawn);
+        const priority = 25 + Math.max(0, 50 - dist); // Same calculation as TaskManager
+        console.log(`  ${site.pos.x},${site.pos.y} - dist:${dist} priority:${priority}`);
+      }
+    }
+  };
+
   // Debug spawn status
   global.debug = () => {
     const lines: string[] = ["=== Debug Info ==="];
@@ -263,5 +366,47 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     console.log(lines.join("\n"));
+  };
+
+  // Show collected stats for AWS monitoring
+  global.stats = () => {
+    const stats = Memory.stats;
+    if (!stats) {
+      console.log("No stats collected yet. Wait a few ticks.");
+      return;
+    }
+
+    const lines: string[] = ["=== Collected Stats ==="];
+    lines.push(`\nTick Stats: ${stats.tickStats.length} entries`);
+    lines.push(`Snapshots: ${stats.snapshots.length} entries`);
+    lines.push(`Events: ${stats.events.length} entries`);
+    lines.push(`Last Snapshot: tick ${stats.lastSnapshotTick}`);
+
+    if (stats.snapshots.length > 0) {
+      const latest = stats.snapshots[stats.snapshots.length - 1];
+      lines.push(`\nLatest Snapshot (${latest.roomName}):`);
+      lines.push(`  Energy: spawn=${latest.energy.spawnAvailable}/${latest.energy.spawnCapacity}, storage=${latest.energy.storage}, containers=${latest.energy.containers}`);
+      lines.push(`  Creeps: ${latest.creeps.total} (avgTTL: ${latest.creeps.avgTicksToLive})`);
+      lines.push(`  Harvest Efficiency: ${(latest.economy.harvestEfficiency * 100).toFixed(0)}%`);
+      lines.push(`  Controller: RCL ${latest.controller.level} (${Math.floor(latest.controller.progress / latest.controller.progressTotal * 100)}%)`);
+      lines.push(`  Structures: ${latest.structures.containers} containers, ${latest.structures.extensions} extensions, ${latest.structures.towers} towers`);
+      lines.push(`  CPU: ${latest.cpu.used.toFixed(2)} used, bucket ${latest.cpu.bucket}`);
+    }
+
+    if (stats.events.length > 0) {
+      lines.push(`\nRecent Events:`);
+      const recentEvents = stats.events.slice(-5);
+      for (const event of recentEvents) {
+        lines.push(`  [${event.type}] ${event.roomName} @ tick ${event.gameTick}`);
+      }
+    }
+
+    console.log(lines.join("\n"));
+  };
+
+  // Clear all collected stats
+  global.clearStats = () => {
+    delete Memory.stats;
+    console.log("Stats cleared.");
   };
 }
