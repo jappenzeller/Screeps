@@ -241,10 +241,10 @@ export class TaskManager {
     // Sort sites by distance from spawn (closer first) for roads and containers
     const sortedSites = [...state.constructionSites].sort((a, b) => {
       if (!spawn) return 0;
-      // Apply distance sorting to roads and containers
+      // Roads and containers: sort by distance to spawn (build outward from center)
       const aIsDistancePriority = a.structureType === STRUCTURE_ROAD || a.structureType === STRUCTURE_CONTAINER;
       const bIsDistancePriority = b.structureType === STRUCTURE_ROAD || b.structureType === STRUCTURE_CONTAINER;
-      if (aIsDistancePriority && bIsDistancePriority && a.structureType === b.structureType) {
+      if (aIsDistancePriority && bIsDistancePriority) {
         return a.pos.getRangeTo(spawn) - b.pos.getRangeTo(spawn);
       }
       return 0;
@@ -256,8 +256,9 @@ export class TaskManager {
       // For roads and containers, prioritize by distance from spawn (closer = higher priority)
       if ((site.structureType === STRUCTURE_ROAD || site.structureType === STRUCTURE_CONTAINER) && spawn) {
         const distance = site.pos.getRangeTo(spawn);
-        // Closer sites get higher priority (50 - distance)
-        priority += Math.max(0, 50 - distance);
+        // Closer sites get MUCH higher priority (100 - distance*2)
+        // This ensures roads are built outward from spawn
+        priority += Math.max(0, 100 - distance * 2);
       }
 
       tasks.push({

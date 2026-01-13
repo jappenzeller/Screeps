@@ -6,7 +6,10 @@ import { MemoryManager } from "./core/MemoryManager";
 import { Colony } from "./core/Colony";
 import { Spawner } from "./core/Spawner";
 import { RoadPlanner } from "./core/RoadPlanner";
+import { ConstructionCoordinator } from "./core/ConstructionCoordinator";
+import { StrategicCoordinator } from "./core/StrategicCoordinator";
 import { ContainerPlanner } from "./structures/ContainerPlanner";
+import { ExtensionPlanner } from "./structures/ExtensionPlanner";
 import { TowerManager } from "./structures/TowerManager";
 import { LinkManager } from "./structures/LinkManager";
 import { CPUBudget } from "./core/CPUBudget";
@@ -28,6 +31,7 @@ if (!global._initialized) {
   registerConsoleCommands();
   global.colonies = new Map();
   global._initialized = true;
+  global._forceStrategicRefresh = true; // Force strategic refresh on code push
 }
 
 // Colony instances (stored on global to survive module re-execution)
@@ -103,16 +107,33 @@ export function loop(): void {
 
     // Skip non-essential operations if bucket is low
     if (CPUBudget.canRunExpensive()) {
-      // Plan containers (every 20 ticks at RCL 2+)
-      if (Game.time % 20 === 0) {
-        const containerPlanner = new ContainerPlanner(room);
-        containerPlanner.run();
+      // Strategic analysis (every 100 ticks, or on code push, or if no cached state)
+      const hasStrategicState = StrategicCoordinator.getState(room.name) !== null;
+      const forceRefresh = global._forceStrategicRefresh === true;
+      if (Game.time % 100 === 0 || !hasStrategicState || forceRefresh) {
+        const strategicCoordinator = new StrategicCoordinator(room);
+        strategicCoordinator.run();
+        global._forceStrategicRefresh = false;
       }
 
-      // Plan roads periodically (every 50 ticks)
-      if (Game.time % 50 === 0) {
-        const roadPlanner = new RoadPlanner(room);
-        roadPlanner.run();
+      // Construction planning (every 20 ticks) - uses coordinator for priority
+      if (Game.time % 20 === 0) {
+        const coordinator = new ConstructionCoordinator(room);
+
+        // Containers first (critical for economy)
+        if (coordinator.canPlaceSites(STRUCTURE_CONTAINER)) {
+          new ContainerPlanner(room).run();
+        }
+
+        // Extensions second (unlock bigger creeps)
+        if (coordinator.canPlaceSites(STRUCTURE_EXTENSION)) {
+          new ExtensionPlanner(room).run();
+        }
+
+        // Roads last (only after extensions complete, RCL 3+)
+        if (coordinator.canPlaceSites(STRUCTURE_ROAD)) {
+          new RoadPlanner(room).run();
+        }
       }
     }
 

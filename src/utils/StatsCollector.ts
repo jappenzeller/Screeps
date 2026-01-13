@@ -394,6 +394,50 @@ export class StatsCollector {
   }
 
   /**
+   * Get rolling average energy income per tick
+   */
+  static getAverageIncome(ticks: number = 20): number {
+    if (!Memory.stats?.tickStats || Memory.stats.tickStats.length === 0) {
+      return 0;
+    }
+
+    const recent = Memory.stats.tickStats.slice(-ticks);
+    if (recent.length === 0) return 0;
+
+    const totalHarvested = recent.reduce((sum, s) => sum + s.energyHarvested, 0);
+    return totalHarvested / recent.length;
+  }
+
+  /**
+   * Get rolling average energy spent per category
+   */
+  static getAverageSpending(ticks: number = 20): { spawning: number; building: number; upgrading: number; repairing: number } {
+    if (!Memory.stats?.tickStats || Memory.stats.tickStats.length === 0) {
+      return { spawning: 0, building: 0, upgrading: 0, repairing: 0 };
+    }
+
+    const recent = Memory.stats.tickStats.slice(-ticks);
+    if (recent.length === 0) return { spawning: 0, building: 0, upgrading: 0, repairing: 0 };
+
+    const totals = recent.reduce(
+      (acc, s) => ({
+        spawning: acc.spawning + s.energySpent.spawning,
+        building: acc.building + s.energySpent.building,
+        upgrading: acc.upgrading + s.energySpent.upgrading,
+        repairing: acc.repairing + s.energySpent.repairing,
+      }),
+      { spawning: 0, building: 0, upgrading: 0, repairing: 0 }
+    );
+
+    return {
+      spawning: totals.spawning / recent.length,
+      building: totals.building / recent.length,
+      upgrading: totals.upgrading / recent.length,
+      repairing: totals.repairing / recent.length,
+    };
+  }
+
+  /**
    * Clear all stats (useful for reset)
    */
   static clearStats(): void {

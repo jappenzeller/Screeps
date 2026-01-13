@@ -14,6 +14,7 @@ export function registerConsoleCommands(): void {
     console.log(`
 === Screeps Swarm Console Commands ===
 status()         - Overview of all colonies
+strategy()       - Strategic analysis (bottlenecks, workforce, budget)
 creeps()         - List all creeps
 creeps("ROLE")   - List creeps by role (HARVESTER, HAULER, UPGRADER, BUILDER)
 rooms()          - List owned rooms
@@ -26,6 +27,7 @@ resetCreeps()    - Reset all creep states (fixes stuck creeps)
 tasks()          - Show current task assignments
 stats()          - Show collected stats for AWS monitoring
 clearStats()     - Clear all collected stats
+construction()   - Show construction status and priorities
 `);
   };
 
@@ -408,5 +410,192 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
   global.clearStats = () => {
     delete Memory.stats;
     console.log("Stats cleared.");
+  };
+
+  // Strategic analysis
+  global.strategy = () => {
+    const lines: string[] = ["=== Strategic Analysis ==="];
+
+    for (const roomName in Game.rooms) {
+      const room = Game.rooms[roomName];
+      if (!room.controller || !room.controller.my) continue;
+
+      const roomMem = Memory.rooms?.[roomName] as { strategic?: {
+        phase: string;
+        bottleneck: string | null;
+        budget: {
+          incomePerTick: number;
+          maxIncomePerTick: number;
+          harvestEfficiency: number;
+          allocations: { spawning: number; upgrading: number; building: number; repair: number; reserve: number };
+        };
+        workforce: {
+          harvestWorkParts: number;
+          upgradeWorkParts: number;
+          buildWorkParts: number;
+          carryThroughput: number;
+          targetCreeps: Record<string, number>;
+          gaps: Record<string, number>;
+        };
+        recommendations: string[];
+        rclProgress: { current: number; total: number; percent: number; eta: number };
+        capacityTransition: {
+          inTransition: boolean;
+          currentCapacity: number;
+          futureCapacity: number;
+          extensionsBuilding: number;
+          estimatedTicksToCompletion: number;
+          shouldSuppressRenewal: boolean;
+          shouldDelaySpawning: boolean;
+        };
+        lastUpdated: number;
+      } } | undefined;
+
+      const strat = roomMem?.strategic;
+
+      lines.push(`\n[${roomName}] RCL ${room.controller.level}`);
+
+      if (!strat) {
+        lines.push("  No strategic data yet (runs every 100 ticks)");
+        continue;
+      }
+
+      // Phase and bottleneck
+      lines.push(`  Phase: ${strat.phase}`);
+      lines.push(`  Bottleneck: ${strat.bottleneck || "none"}`);
+
+      // Energy budget
+      lines.push(`\n  Energy Budget:`);
+      lines.push(`    Income: ${strat.budget.incomePerTick.toFixed(1)}/tick (max: ${strat.budget.maxIncomePerTick})`);
+      lines.push(`    Harvest Efficiency: ${(strat.budget.harvestEfficiency * 100).toFixed(0)}%`);
+      lines.push(`    Allocations: spawn=${strat.budget.allocations.spawning}% upgrade=${strat.budget.allocations.upgrading}% build=${strat.budget.allocations.building}%`);
+
+      // Workforce
+      lines.push(`\n  Workforce Requirements:`);
+      lines.push(`    Harvest: ${strat.workforce.harvestWorkParts} WORK parts needed`);
+      lines.push(`    Upgrade: ${strat.workforce.upgradeWorkParts} WORK parts needed`);
+      lines.push(`    Carry: ${strat.workforce.carryThroughput.toFixed(1)} throughput/tick needed`);
+
+      // Targets vs actual
+      lines.push(`\n  Creep Targets (gaps):`);
+      for (const [role, target] of Object.entries(strat.workforce.targetCreeps)) {
+        const gap = strat.workforce.gaps[role] || 0;
+        const indicator = gap > 0 ? ` [NEED +${gap}]` : "";
+        lines.push(`    ${role}: ${target - gap}/${target}${indicator}`);
+      }
+
+      // RCL Progress
+      lines.push(`\n  RCL Progress:`);
+      lines.push(`    ${strat.rclProgress.percent.toFixed(1)}% (${strat.rclProgress.current}/${strat.rclProgress.total})`);
+      if (strat.rclProgress.eta !== Infinity && strat.rclProgress.eta > 0) {
+        const etaMinutes = Math.round(strat.rclProgress.eta * 3 / 60); // ~3s per tick
+        const etaHours = Math.round(etaMinutes / 60);
+        lines.push(`    ETA: ~${etaMinutes} min (~${etaHours} hours)`);
+      }
+
+      // Capacity Transition
+      if (strat.capacityTransition?.inTransition) {
+        const trans = strat.capacityTransition;
+        lines.push(`\n  Capacity Transition:`);
+        lines.push(`    ${trans.currentCapacity} → ${trans.futureCapacity} energy capacity`);
+        lines.push(`    Extensions building: ${trans.extensionsBuilding}`);
+        if (trans.estimatedTicksToCompletion !== Infinity) {
+          const etaMin = Math.round(trans.estimatedTicksToCompletion * 3 / 60);
+          lines.push(`    Est. completion: ~${trans.estimatedTicksToCompletion} ticks (~${etaMin} min)`);
+        }
+        if (trans.shouldSuppressRenewal) {
+          lines.push(`    ⚡ Renewal suppressed (waiting for bigger creeps)`);
+        }
+        if (trans.shouldDelaySpawning) {
+          lines.push(`    ⏳ Non-critical spawns delayed`);
+        }
+      }
+
+      // Recommendations
+      if (strat.recommendations.length > 0) {
+        lines.push(`\n  Recommendations:`);
+        for (const rec of strat.recommendations) {
+          lines.push(`    • ${rec}`);
+        }
+      }
+
+      lines.push(`\n  Last updated: tick ${strat.lastUpdated} (${Game.time - strat.lastUpdated} ticks ago)`);
+    }
+
+    console.log(lines.join("\n"));
+  };
+
+  // Construction status and priorities
+  global.construction = () => {
+    const lines: string[] = ["=== Construction Status ==="];
+
+    for (const roomName in Game.rooms) {
+      const room = Game.rooms[roomName];
+      if (!room.controller || !room.controller.my) continue;
+
+      lines.push(`\n[${roomName}] RCL ${room.controller.level}`);
+
+      // Get all structures by type
+      const structures = room.find(FIND_MY_STRUCTURES);
+      const sites = room.find(FIND_CONSTRUCTION_SITES);
+
+      const structureCounts: Record<string, { built: number; sites: number; max: number }> = {};
+
+      // Count built structures
+      for (const s of structures) {
+        if (!structureCounts[s.structureType]) {
+          const max = CONTROLLER_STRUCTURES[s.structureType as BuildableStructureConstant]?.[room.controller.level] || 0;
+          structureCounts[s.structureType] = { built: 0, sites: 0, max };
+        }
+        structureCounts[s.structureType].built++;
+      }
+
+      // Count construction sites
+      for (const s of sites) {
+        if (!structureCounts[s.structureType]) {
+          const max = CONTROLLER_STRUCTURES[s.structureType as BuildableStructureConstant]?.[room.controller.level] || 0;
+          structureCounts[s.structureType] = { built: 0, sites: 0, max };
+        }
+        structureCounts[s.structureType].sites++;
+      }
+
+      // Display by priority order
+      const priorityOrder = [
+        STRUCTURE_SPAWN, STRUCTURE_CONTAINER, STRUCTURE_EXTENSION, STRUCTURE_TOWER,
+        STRUCTURE_STORAGE, STRUCTURE_LINK, STRUCTURE_ROAD, STRUCTURE_WALL, STRUCTURE_RAMPART
+      ];
+
+      for (const type of priorityOrder) {
+        const counts = structureCounts[type];
+        if (!counts && CONTROLLER_STRUCTURES[type as BuildableStructureConstant]?.[room.controller.level] === 0) continue;
+
+        const built = counts?.built || 0;
+        const siteCount = counts?.sites || 0;
+        const max = CONTROLLER_STRUCTURES[type as BuildableStructureConstant]?.[room.controller.level] || 0;
+
+        if (max === 0 && built === 0 && siteCount === 0) continue;
+
+        let status = "";
+        if (built >= max && max > 0) {
+          status = "✓ COMPLETE";
+        } else if (siteCount > 0) {
+          status = `building ${siteCount}`;
+        } else if (built < max) {
+          status = `NEED ${max - built} more`;
+        }
+
+        lines.push(`  ${type}: ${built}/${max} ${status}`);
+      }
+
+      // Show remaining site types not in priority order
+      for (const type in structureCounts) {
+        if (!priorityOrder.includes(type as typeof priorityOrder[number])) {
+          const counts = structureCounts[type];
+          lines.push(`  ${type}: ${counts.built}/${counts.max} (${counts.sites} sites)`);
+        }
+      }
+    }
+
+    console.log(lines.join("\n"));
   };
 }

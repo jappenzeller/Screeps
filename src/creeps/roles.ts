@@ -15,10 +15,14 @@ export interface BodyConfig {
 }
 
 export const ROLE_BODIES: Record<Role, BodyConfig> = {
-  // Harvester: early game does both harvest+deliver, later becomes static miner
+  // Harvester: Prioritize WORK for mining efficiency
+  // Base has CARRY for early game mobile harvesting (before containers)
+  // 300 energy: [WORK, WORK, CARRY, MOVE] = 2 WORK (4 energy/tick) + can deliver
+  // 400 energy: [WORK, WORK, CARRY, MOVE, WORK] = 3 WORK (6 energy/tick)
+  // 550 energy: [WORK, WORK, CARRY, MOVE, WORK, WORK, WORK] = 5 WORK (10 energy/tick!)
   HARVESTER: {
-    base: [WORK, CARRY, MOVE, MOVE], // Can harvest AND deliver
-    scale: [WORK, CARRY, MOVE],
+    base: [WORK, WORK, CARRY, MOVE], // 300 energy - can harvest AND deliver early game
+    scale: [WORK], // Add more WORK parts as capacity grows (for static mining)
   },
 
   // Hauler: moves energy around

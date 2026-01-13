@@ -1,5 +1,5 @@
 import { TaskManager, TaskType } from "../core/TaskManager";
-import { ColonyStateManager } from "../core/ColonyState";
+import { getOrFindEnergySource, acquireEnergy, clearEnergyTarget } from "../utils/EnergyUtils";
 
 /**
  * Builder: Builds construction sites and repairs structures.
@@ -15,10 +15,12 @@ export function runBuilder(creep: Creep): void {
   if (creep.memory.state === "BUILDING" && creep.store[RESOURCE_ENERGY] === 0) {
     creep.memory.state = "COLLECTING";
     TaskManager.completeTask(creep);
+    clearEnergyTarget(creep);
     creep.say("🔄 energy");
   }
   if (creep.memory.state === "COLLECTING" && creep.store.getFreeCapacity() === 0) {
     creep.memory.state = "BUILDING";
+    clearEnergyTarget(creep);
     creep.say("🔨 build");
   }
 
@@ -30,96 +32,83 @@ export function runBuilder(creep: Creep): void {
 }
 
 function buildOrRepair(creep: Creep): void {
-  // Always get a fresh task - this ensures builders pick the highest priority target
-  TaskManager.releaseTask(creep);
+  // Get current task
+  const currentTask = TaskManager.getCreepTask(creep);
 
-  // Check what other builders in this room are already doing
-  const otherBuilders = Object.values(Game.creeps).filter(
-    (c) => c.memory.role === "BUILDER" && c.memory.room === creep.memory.room && c.name !== creep.name
-  );
+  // Every 10 ticks, re-evaluate to pick up higher priority tasks
+  // This allows builders to switch to closer roads as priorities update
+  const shouldReevaluate = Game.time % 10 === 0;
 
-  // Check if another builder is already on containers
-  const anotherOnContainers = otherBuilders.some((b) => {
-    const taskId = b.memory.taskId;
-    if (!taskId) return false;
-    const tasks = TaskManager.getTasks(creep.memory.room);
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return false;
-    const site = Game.getObjectById(task.targetId) as ConstructionSite | null;
-    return site?.structureType === STRUCTURE_CONTAINER;
-  });
-
-  // Check if another builder is already on roads
-  const anotherOnRoads = otherBuilders.some((b) => {
-    const taskId = b.memory.taskId;
-    if (!taskId) return false;
-    const tasks = TaskManager.getTasks(creep.memory.room);
-    const task = tasks.find((t) => t.id === taskId);
-    if (!task) return false;
-    const site = Game.getObjectById(task.targetId) as ConstructionSite | null;
-    return site?.structureType === STRUCTURE_ROAD;
-  });
-
-  let task: ReturnType<typeof TaskManager.requestTask> = null;
-
-  // If no one is on containers yet, this builder takes containers
-  if (!anotherOnContainers) {
-    task = TaskManager.requestTask(creep, [TaskType.BUILD], (t) => {
-      const site = Game.getObjectById(t.targetId) as ConstructionSite | null;
-      return site?.structureType === STRUCTURE_CONTAINER;
-    });
-  }
-
-  // If no container task or someone else is on containers, try roads
-  if (!task && !anotherOnRoads) {
-    task = TaskManager.requestTask(creep, [TaskType.BUILD], (t) => {
-      const site = Game.getObjectById(t.targetId) as ConstructionSite | null;
-      return site?.structureType === STRUCTURE_ROAD;
-    });
-  }
-
-  // Fall back to any non-road structure
-  if (!task) {
-    task = TaskManager.requestTask(creep, [TaskType.BUILD], (t) => {
-      const site = Game.getObjectById(t.targetId) as ConstructionSite | null;
-      return site?.structureType !== STRUCTURE_ROAD;
-    });
-  }
-
-  // Finally, take any available task
-  if (!task) {
-    task = TaskManager.requestTask(creep, [TaskType.BUILD, TaskType.REPAIR]);
-  }
-
-  if (task) {
-    const target = Game.getObjectById(task.targetId);
-    if (!target) {
-      TaskManager.completeTask(creep);
-      return;
-    }
-
-    if (task.type === TaskType.BUILD) {
-      const site = target as ConstructionSite;
-      const result = creep.build(site);
-      if (result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
-      } else if (result === ERR_INVALID_TARGET) {
-        TaskManager.completeTask(creep);
+  if (currentTask && !shouldReevaluate) {
+    if (currentTask.type === TaskType.BUILD) {
+      const site = Game.getObjectById(currentTask.targetId as Id<ConstructionSite>);
+      if (site) {
+        executeBuildTask(creep, site);
+        return;
       }
     } else {
-      const structure = target as Structure;
-      const result = creep.repair(structure);
-      if (result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(structure, { visualizePathStyle: { stroke: "#ff8800" }, reusePath: 5 });
-      } else if (result === ERR_INVALID_TARGET || structure.hits >= structure.hitsMax) {
-        TaskManager.completeTask(creep);
+      const structure = Game.getObjectById(currentTask.targetId as Id<Structure>);
+      if (structure) {
+        executeRepairTask(creep, structure);
+        return;
       }
+    }
+    // Target gone, complete the task
+    TaskManager.completeTask(creep);
+  } else if (currentTask) {
+    // Re-evaluation tick - release current task to get fresh assignment
+    TaskManager.releaseTask(creep);
+  }
+
+  // Request new task - TaskManager returns highest priority unassigned task
+  // Roads are now prioritized by distance from existing infrastructure
+  const task = TaskManager.requestTask(creep, [TaskType.BUILD, TaskType.REPAIR]);
+
+  if (task) {
+    if (task.type === TaskType.BUILD) {
+      const site = Game.getObjectById(task.targetId as Id<ConstructionSite>);
+      if (!site) {
+        TaskManager.completeTask(creep);
+        return;
+      }
+      executeBuildTask(creep, site);
+    } else {
+      const structure = Game.getObjectById(task.targetId as Id<Structure>);
+      if (!structure) {
+        TaskManager.completeTask(creep);
+        return;
+      }
+      executeRepairTask(creep, structure);
     }
     return;
   }
 
   // Fallback: Use legacy behavior if no tasks available
   legacyBuildOrRepair(creep);
+}
+
+/**
+ * Execute a build task
+ */
+function executeBuildTask(creep: Creep, site: ConstructionSite): void {
+  const result = creep.build(site);
+  if (result === ERR_NOT_IN_RANGE) {
+    creep.moveTo(site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+  } else if (result === ERR_INVALID_TARGET) {
+    TaskManager.completeTask(creep);
+  }
+}
+
+/**
+ * Execute a repair task
+ */
+function executeRepairTask(creep: Creep, structure: Structure): void {
+  const result = creep.repair(structure);
+  if (result === ERR_NOT_IN_RANGE) {
+    creep.moveTo(structure, { visualizePathStyle: { stroke: "#ff8800" }, reusePath: 5 });
+  } else if (result === ERR_INVALID_TARGET || structure.hits >= structure.hitsMax) {
+    TaskManager.completeTask(creep);
+  }
 }
 
 /**
@@ -206,80 +195,20 @@ function legacyBuildOrRepair(creep: Creep): void {
 }
 
 function getEnergy(creep: Creep): void {
-  // Use ColonyState for cached energy sources
-  const state = ColonyStateManager.getState(creep.room.name);
+  // Use sticky energy source selection to prevent oscillation
+  const source = getOrFindEnergySource(creep, 50);
 
-  // Priority 1: Storage (if sufficient energy)
-  if (state?.structures.storage && state.structures.storage.store[RESOURCE_ENERGY] > 1000) {
-    if (creep.withdraw(state.structures.storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(state.structures.storage, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
+  if (source) {
+    acquireEnergy(creep, source);
     return;
   }
 
-  // Priority 2: Containers with energy (from cached state)
-  if (state && state.energy.containersWithEnergy.length > 0) {
-    // Find closest container with any energy
-    let closestContainer: StructureContainer | null = null;
-    let closestDist = Infinity;
+  // No energy available - wait near spawn
+  clearEnergyTarget(creep);
 
-    for (const { id } of state.energy.containersWithEnergy) {
-      const container = Game.getObjectById(id);
-      if (!container) continue;
-      const dist = creep.pos.getRangeTo(container);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closestContainer = container;
-      }
-    }
-
-    if (closestContainer) {
-      if (creep.withdraw(closestContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(closestContainer, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-      }
-      return;
-    }
+  const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
+  if (spawn && creep.pos.getRangeTo(spawn) > 3) {
+    creep.moveTo(spawn, { visualizePathStyle: { stroke: "#888888" } });
   }
-
-  // Priority 3: Dropped energy (from cached state)
-  if (state && state.energy.droppedResources.length > 0) {
-    const closest = creep.pos.findClosestByPath(state.energy.droppedResources);
-    if (closest) {
-      if (creep.pickup(closest) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(closest, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-      }
-      return;
-    }
-  }
-
-  // Priority 4: Early game - go to sources where harvesters drop energy
-  // This is better than withdrawing from spawn (which starves economy)
-  const sources = state?.sources ?? creep.room.find(FIND_SOURCES);
-  if (sources.length > 0) {
-    const closestSource = creep.pos.findClosestByPath(sources);
-    if (closestSource) {
-      // Check for dropped energy near the source first
-      const droppedNearSource = creep.room.find(FIND_DROPPED_RESOURCES, {
-        filter: (r) => r.resourceType === RESOURCE_ENERGY && r.pos.inRangeTo(closestSource, 3),
-      });
-      if (droppedNearSource.length > 0) {
-        const closest = creep.pos.findClosestByPath(droppedNearSource);
-        if (closest) {
-          if (creep.pickup(closest) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(closest, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-          }
-          return;
-        }
-      }
-      // No dropped energy yet - move toward source and wait
-      if (creep.pos.getRangeTo(closestSource) > 3) {
-        creep.moveTo(closestSource, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
-      }
-      creep.say("⏳");
-      return;
-    }
-  }
-
-  // Fallback - wait in place
   creep.say("💤");
 }

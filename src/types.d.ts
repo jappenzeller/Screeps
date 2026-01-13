@@ -8,7 +8,6 @@ type CreepState = "IDLE" | "COLLECTING" | "DELIVERING" | "BUILDING" | "UPGRADING
 interface ContainerPlan {
   sources: { [sourceId: string]: { x: number; y: number } };
   controller?: { x: number; y: number };
-  placed: boolean;
 }
 
 // Extend CreepMemory from @types/screeps
@@ -22,6 +21,9 @@ interface CreepMemory {
   taskId?: string;
   state?: CreepState;
   emergency?: boolean;
+
+  // Energy acquisition coordination
+  energyTarget?: Id<StructureContainer | StructureStorage | StructureLink | Resource | Tombstone | Ruin>;
 
   // Legacy support
   working?: boolean;

@@ -1,5 +1,6 @@
 import { CONFIG, Role } from "../config";
 import { ColonyStateManager, CachedColonyState } from "./ColonyState";
+import { StrategicCoordinator } from "./StrategicCoordinator";
 
 // Re-export the CachedColonyState type as ColonyState for backward compatibility
 export type ColonyState = CachedColonyState;
@@ -46,15 +47,28 @@ export class Colony {
       return count < needed;
     }
 
-    // Upgraders: need them once we have harvesters bringing energy
+    // Upgraders: dynamic scaling based on energy budget and storage levels
     if (role === "UPGRADER") {
-      return count < min && this.getCreepCount("HARVESTER") > 0;
+      // Need at least one harvester to bring energy
+      if (this.getCreepCount("HARVESTER") === 0) return false;
+
+      // Use StrategicCoordinator's dynamic target (factors in budget allocations and energy surplus)
+      const strategicState = StrategicCoordinator.getState(this.roomName);
+      const targetUpgraders = strategicState?.workforce.targetCreeps.UPGRADER ?? min;
+      const maxUpgraders = CONFIG.MAX_CREEPS.UPGRADER || 4;
+      return count < Math.min(targetUpgraders, maxUpgraders);
     }
 
-    // Builders: only when construction sites exist
+    // Builders: dynamic scaling based on construction sites + energy surplus
     if (role === "BUILDER") {
       const hasSites = state.constructionSites.length > 0;
-      return count < min && hasSites;
+      if (!hasSites) return false;
+
+      // Use StrategicCoordinator's dynamic target (factors in sites, budget, energy surplus)
+      const strategicState = StrategicCoordinator.getState(this.roomName);
+      const targetBuilders = strategicState?.workforce.targetCreeps.BUILDER ?? 1;
+      const maxBuilders = CONFIG.MAX_CREEPS.BUILDER || 3;
+      return count < Math.min(targetBuilders, maxBuilders);
     }
 
     // Haulers: only needed later when we have containers

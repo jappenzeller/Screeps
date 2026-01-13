@@ -2,6 +2,7 @@ import { logger } from "../utils/Logger";
 import { CONFIG, Role } from "../config";
 import { Colony, ColonyState } from "./Colony";
 import { ROLE_BODIES } from "../creeps/roles";
+import { StrategicCoordinator, CapacityTransition } from "./StrategicCoordinator";
 
 interface SpawnRequest {
   role: Role;
@@ -59,10 +60,19 @@ export class Spawner {
     const queue: SpawnRequest[] = [];
     const energyCapacity = state.energy.capacity;
 
+    // Get capacity transition state for spawn timing optimization
+    const strategicState = StrategicCoordinator.getState(this.colony.roomName);
+    const transition = strategicState?.capacityTransition;
+
     // Core economy roles - always check
     const coreRoles: Role[] = ["HARVESTER", "HAULER", "UPGRADER", "BUILDER"];
     for (const role of coreRoles) {
       if (this.colony.needsCreep(role)) {
+        // Check if we should delay spawning this role
+        if (this.shouldDelaySpawn(role, transition, state)) {
+          continue; // Skip this role - wait for bigger body
+        }
+
         const body = this.getBody(role, energyCapacity);
         if (body.length > 0) {
           queue.push({
@@ -265,12 +275,22 @@ export class Spawner {
       return false;
     }
 
+    // Get capacity transition state
+    const strategicState = StrategicCoordinator.getState(spawn.room.name);
+    const transition = strategicState?.capacityTransition;
+
     // Find creeps near spawn with low TTL
     const dyingCreeps = state.creeps.all
       .filter((c: Creep) => {
         const ttl = c.ticksToLive;
         if (!ttl || ttl > 300) return false; // Only renew if TTL < 300
         if (c.pos.getRangeTo(spawn) > 1) return false; // Must be adjacent to spawn
+
+        // Check if renewal should be suppressed for this creep
+        if (transition && this.shouldSuppressRenewal(c, transition, state)) {
+          return false;
+        }
+
         return true;
       })
       .sort((a: Creep, b: Creep) => {
@@ -294,5 +314,81 @@ export class Spawner {
     }
 
     return false;
+  }
+
+  /**
+   * Determine if renewal should be suppressed for a creep during capacity transition
+   * Returns true if the creep should NOT be renewed (let it die for bigger replacement)
+   */
+  private shouldSuppressRenewal(creep: Creep, transition: CapacityTransition, state: ColonyState): boolean {
+    // Calculate creep's energy cost
+    const creepCost = creep.body.reduce((sum, part) => sum + BODYPART_COST[part.type], 0);
+    const currentCapacity = state.energy.capacity;
+
+    // ALWAYS suppress renewal for severely undersized creeps (< 50% of current capacity)
+    // This ensures we replace tiny early-game harvesters with proper ones
+    if (creepCost < currentCapacity * 0.5) {
+      logger.debug(
+        "Spawner",
+        `Suppressing renewal for undersized ${creep.name} (${creepCost} cost < ${(currentCapacity * 0.5).toFixed(0)} threshold)`
+      );
+      return true;
+    }
+
+    // Don't suppress if not in transition or suppression not recommended
+    if (!transition.inTransition || !transition.shouldSuppressRenewal) {
+      return false;
+    }
+
+    // For critical roles at minimum count, only suppress if very undersized (already handled above)
+    const criticalRoles = ["HARVESTER", "HAULER"];
+    if (criticalRoles.includes(creep.memory.role)) {
+      const roleCount = state.creeps.all.filter(c => c.memory.role === creep.memory.role).length;
+      const minCount = (CONFIG.MIN_CREEPS as Record<string, number>)[creep.memory.role] || 1;
+      if (roleCount <= minCount) {
+        return false; // Don't suppress - we need this creep (and it's not undersized)
+      }
+    }
+
+    // If creep cost is less than 70% of future capacity, suppress renewal
+    const valueThreshold = transition.futureCapacity * 0.7;
+    if (creepCost < valueThreshold) {
+      logger.debug(
+        "Spawner",
+        `Suppressing renewal for ${creep.name} (${creepCost} cost < ${valueThreshold.toFixed(0)} threshold)`
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if spawning should be delayed for non-critical roles during capacity transition
+   */
+  private shouldDelaySpawn(role: Role, transition: CapacityTransition | undefined, state: ColonyState): boolean {
+    if (!transition || !transition.inTransition || !transition.shouldDelaySpawning) {
+      return false;
+    }
+
+    // Never delay critical roles (economy must keep running)
+    const criticalRoles: Role[] = ["HARVESTER", "HAULER", "UPGRADER"];
+    if (criticalRoles.includes(role)) {
+      return false;
+    }
+
+    // Check if we're below minimum for this role
+    const currentCount = state.creeps.all.filter(c => c.memory.role === role).length;
+    const minCount = (CONFIG.MIN_CREEPS as Record<string, number>)[role] || 1;
+    if (currentCount < minCount) {
+      return false; // Must spawn to meet minimum
+    }
+
+    // Delay spawning - bigger body coming soon
+    logger.debug(
+      "Spawner",
+      `Delaying ${role} spawn: extensions done in ~${transition.estimatedTicksToCompletion} ticks`
+    );
+    return true;
   }
 }

@@ -32,7 +32,30 @@
       "Bash(AWS_PROFILE=screeps-monitor aws ecs update-service:*)",
       "Bash(AWS_PROFILE=screeps-monitor aws sns:*)",
       "Bash(AWS_PROFILE=screeps-monitor aws lambda:*)",
-      "Bash(AWS_PROFILE=screeps-monitor aws events:*)"
+      "Bash(AWS_PROFILE=screeps-monitor aws events:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws secretsmanager create-secret:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws sso login:*)",
+      "Bash(npx esbuild:*)",
+      "Bash(zip:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(ls:*)",
+      "Bash(terraform version:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws dynamodb:*)",
+      "Bash(AttributeName=roomName,AttributeType=S )",
+      "Bash(AttributeName=timestamp,AttributeType=N )",
+      "Bash(AttributeName=roomName,KeyType=HASH )",
+      "Bash(AttributeName=timestamp,KeyType=RANGE )",
+      "Bash(AttributeName=eventId,AttributeType=S )",
+      "Bash(AttributeName=eventId,KeyType=RANGE )",
+      "Bash(AttributeName=id,AttributeType=S )",
+      "Bash(AttributeName=status,AttributeType=S )",
+      "Bash(AttributeName=createdAt,AttributeType=N )",
+      "Bash(AttributeName=id,KeyType=HASH )",
+      "Bash(AWS_PROFILE=screeps-monitor aws iam:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws secretsmanager:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws apigatewayv2:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd centralized state management, task system, and AWS advisor\n\nCore Systems:\n- ColonyState: Centralized cached state with tiered refresh rates\n- TaskManager: Task-based creep coordination to prevent duplicate targeting\n- CPUBudget: CPU tracking and bucket-aware throttling\n- FailureRecovery: Emergency bootstrap spawning and safe mode triggers\n\nCreep Improvements:\n- Harvesters drop energy at sources for early-game pickup\n- Builders/Upgraders collect from sources instead of draining spawn\n- Haulers use task system to prevent multiple haulers targeting same container\n- Source-aware harvester spawning (1 per source with containers)\n- Distinct visual labels (Hv, Hl, Up, Bd) to differentiate roles\n\nAWS AI Advisor:\n- Lambda functions for data collection, analysis, and API\n- DynamoDB tables for snapshots, events, and recommendations\n- Terraform infrastructure definitions\n- StatsCollector for in-game metrics collection\n\nDocumentation:\n- Architecture overview and design docs\n- CLAUDE.md development guide\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")"
     ]
   }
 }

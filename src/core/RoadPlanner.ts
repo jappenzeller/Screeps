@@ -19,7 +19,24 @@ export class RoadPlanner {
       return;
     }
 
-    // Check if we should plan roads (limit construction sites)
+    // Don't build roads until extensions are complete for current RCL
+    const extensionCount = this.room.find(FIND_MY_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_EXTENSION,
+    }).length;
+    const maxExtensions = CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION][this.room.controller.level];
+    if (extensionCount < maxExtensions) {
+      return; // Build extensions first
+    }
+
+    // Limit concurrent road construction sites
+    const existingRoadSites = this.room.find(FIND_CONSTRUCTION_SITES, {
+      filter: (s) => s.structureType === STRUCTURE_ROAD,
+    }).length;
+    if (existingRoadSites >= 5) {
+      return; // Don't spam road sites
+    }
+
+    // Check total construction sites
     const existingSites = this.room.find(FIND_MY_CONSTRUCTION_SITES);
     if (existingSites.length > 10) {
       return; // Don't overload with construction sites
@@ -31,21 +48,29 @@ export class RoadPlanner {
     const spawn = spawns[0];
     const sources = this.room.find(FIND_SOURCES);
 
+    // Track how many we place this tick (max 5 total including existing)
+    const maxToPlace = 5 - existingRoadSites;
+    let placed = 0;
+
     // Plan roads from spawn to each source
     for (const source of sources) {
-      this.planRoadBetween(spawn.pos, source.pos);
+      placed += this.planRoadBetween(spawn.pos, source.pos, maxToPlace - placed);
+      if (placed >= maxToPlace) return;
     }
 
     // Plan road from spawn to controller
     if (this.room.controller) {
-      this.planRoadBetween(spawn.pos, this.room.controller.pos);
+      placed += this.planRoadBetween(spawn.pos, this.room.controller.pos, maxToPlace - placed);
+      if (placed >= maxToPlace) return;
     }
 
     // Plan roads around spawn (3x3 grid for extension placement)
-    this.planSpawnRoads(spawn.pos);
+    this.planSpawnRoads(spawn.pos, maxToPlace - placed);
   }
 
-  private planRoadBetween(from: RoomPosition, to: RoomPosition): void {
+  private planRoadBetween(from: RoomPosition, to: RoomPosition, limit: number): number {
+    if (limit <= 0) return 0;
+
     const path = this.room.findPath(from, to, {
       ignoreCreeps: true,
       swampCost: 2,
@@ -53,12 +78,19 @@ export class RoadPlanner {
       range: 1,
     });
 
+    let placed = 0;
     for (const step of path) {
-      this.tryPlaceRoad(step.x, step.y);
+      if (placed >= limit) break;
+      if (this.tryPlaceRoad(step.x, step.y)) {
+        placed++;
+      }
     }
+    return placed;
   }
 
-  private planSpawnRoads(spawnPos: RoomPosition): void {
+  private planSpawnRoads(spawnPos: RoomPosition, limit: number): number {
+    if (limit <= 0) return 0;
+
     // Create roads in a ring around spawn for traffic
     const offsets = [
       { x: -2, y: 0 },
@@ -71,13 +103,18 @@ export class RoadPlanner {
       { x: 2, y: 2 },
     ];
 
+    let placed = 0;
     for (const offset of offsets) {
+      if (placed >= limit) break;
       const x = spawnPos.x + offset.x;
       const y = spawnPos.y + offset.y;
       if (x > 0 && x < 49 && y > 0 && y < 49) {
-        this.tryPlaceRoad(x, y);
+        if (this.tryPlaceRoad(x, y)) {
+          placed++;
+        }
       }
     }
+    return placed;
   }
 
   private tryPlaceRoad(x: number, y: number): boolean {

@@ -6,11 +6,7 @@
 
 import { logger } from "../utils/Logger";
 
-interface ContainerPlan {
-  sources: { [sourceId: string]: { x: number; y: number } };
-  controller?: { x: number; y: number };
-  placed: boolean;
-}
+// ContainerPlan interface is defined in types.d.ts
 
 export class ContainerPlanner {
   constructor(private room: Room) {}
@@ -36,16 +32,14 @@ export class ContainerPlanner {
       logger.info("ContainerPlanner", `Created container plan for ${this.room.name}`);
     }
 
-    // Place construction sites if not already placed
-    if (!plan.placed) {
-      this.placeConstructionSites(plan);
-    }
+    // Always try to place sites - check each position individually
+    // This handles cases where some containers built but others failed
+    this.placeConstructionSites(plan);
   }
 
   private createPlan(): ContainerPlan {
     const plan: ContainerPlan = {
       sources: {},
-      placed: false,
     };
 
     const spawn = this.room.find(FIND_MY_SPAWNS)[0];
@@ -59,8 +53,9 @@ export class ContainerPlanner {
       }
     }
 
-    // Plan container near controller
-    if (this.room.controller) {
+    // Plan container near controller (RCL 5+ with storage only)
+    // At low RCL, controller containers waste builder time - upgraders should get energy from haulers
+    if (this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
       const controllerPos = this.findControllerContainerPosition();
       if (controllerPos) {
         plan.controller = { x: controllerPos.x, y: controllerPos.y };
@@ -165,30 +160,19 @@ export class ContainerPlanner {
 
   /**
    * Place construction sites for planned containers
+   * Idempotent - safe to call repeatedly, will skip already placed
    */
   private placeConstructionSites(plan: ContainerPlan): void {
-    let allPlaced = true;
-
     // Place source containers
     for (const sourceId in plan.sources) {
       const pos = plan.sources[sourceId];
-      const result = this.placeContainerSite(pos.x, pos.y);
-      if (result !== OK && result !== ERR_FULL) {
-        allPlaced = false;
-      }
+      this.placeContainerSite(pos.x, pos.y);
     }
 
-    // Place controller container
-    if (plan.controller) {
-      const result = this.placeContainerSite(plan.controller.x, plan.controller.y);
-      if (result !== OK && result !== ERR_FULL) {
-        allPlaced = false;
-      }
-    }
-
-    if (allPlaced) {
-      plan.placed = true;
-      logger.info("ContainerPlanner", `Container sites placed in ${this.room.name}`);
+    // Place controller container (RCL 5+ with storage only)
+    // This check handles old plans that may have controller position from before this fix
+    if (plan.controller && this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
+      this.placeContainerSite(plan.controller.x, plan.controller.y);
     }
   }
 
@@ -234,12 +218,5 @@ export class ContainerPlanner {
       filter: (s) => s.structureType === STRUCTURE_CONTAINER,
     }) as StructureContainer[];
     return containers.length > 0 ? containers[0] : null;
-  }
-}
-
-// Extend memory types for container planning
-declare global {
-  interface RoomMemory {
-    containerPlan?: ContainerPlan;
   }
 }
