@@ -1,185 +1,104 @@
-import { CONFIG } from "./config";
+/**
+ * Main game loop - Simple, working code.
+ * Phase 0/1 implementation per docs/00_IMPLEMENTATION_PLAN.md
+ */
+
 import { logger } from "./utils/Logger";
+import { CONFIG } from "./config";
 import { registerConsoleCommands } from "./utils/Console";
-import { StatsCollector } from "./utils/StatsCollector";
-import { MemoryManager } from "./core/MemoryManager";
-import { Colony } from "./core/Colony";
-import { Spawner } from "./core/Spawner";
-import { RoadPlanner } from "./core/RoadPlanner";
-import { ConstructionCoordinator } from "./core/ConstructionCoordinator";
-import { StrategicCoordinator } from "./core/StrategicCoordinator";
-import { ContainerPlanner } from "./structures/ContainerPlanner";
-import { ExtensionPlanner } from "./structures/ExtensionPlanner";
-import { TowerPlanner } from "./structures/TowerPlanner";
+import { placeStructures } from "./structures/placeStructures";
+import { spawnCreeps } from "./spawning/spawnCreeps";
 import { TowerManager } from "./structures/TowerManager";
-import { LinkManager } from "./structures/LinkManager";
-import { CPUBudget } from "./core/CPUBudget";
-import { ColonyStateManager } from "./core/ColonyState";
-import { TaskManager } from "./core/TaskManager";
-import { FailureRecovery } from "./core/FailureRecovery";
 import { runCreep } from "./creeps/roles";
 
-// Screeps global object for persistent state
-declare const global: {
-  [key: string]: unknown;
-  _initialized?: boolean;
-  colonies?: Map<string, Colony>;
-};
+// One-time initialization
+declare const global: { [key: string]: unknown };
 
-// One-time initialization (survives global resets within same tick)
 if (!global._initialized) {
   logger.setLevel(CONFIG.LOG_LEVEL);
   registerConsoleCommands();
-  global.colonies = new Map();
   global._initialized = true;
-  global._forceStrategicRefresh = true; // Force strategic refresh on code push
+  console.log("=== Screeps Bot Initialized ===");
 }
-
-// Colony instances (stored on global to survive module re-execution)
-const colonies = global.colonies as Map<string, Colony>;
 
 /**
  * Main game loop - runs every tick
  */
 export function loop(): void {
-  // Start CPU tracking
-  CPUBudget.startTick();
-
-  // Start stats collection for this tick
-  StatsCollector.startTick();
-
-  // Initialize memory on first run
-  MemoryManager.init();
-
   // Clean up dead creep memory
-  MemoryManager.cleanup();
+  cleanupMemory();
 
-  // Process each owned room as a colony
+  // Process each owned room
   for (const roomName in Game.rooms) {
     const room = Game.rooms[roomName];
-
-    // Only manage rooms we own
     if (!room.controller?.my) continue;
 
-    // Get or create colony for this room
-    let colony = colonies.get(roomName);
-    if (!colony) {
-      logger.info("Main", `Initializing colony in ${roomName}`);
-      colony = new Colony(roomName);
-      colonies.set(roomName, colony);
-    }
-
-    // Get centralized state (uses tiered caching)
-    const cpuStateStart = Game.cpu.getUsed();
-    const state = ColonyStateManager.getState(roomName);
-    CPUBudget.trackSystem("colonyState", cpuStateStart);
-
-    if (!state) continue;
-
-    // Check for emergency conditions and handle recovery
-    const cpuRecoveryStart = Game.cpu.getUsed();
-    const emergencyHandled = FailureRecovery.check(state);
-    CPUBudget.trackSystem("other", cpuRecoveryStart);
-
-    // Generate tasks for this room
-    const cpuTasksStart = Game.cpu.getUsed();
-    TaskManager.generateTasks(state);
-    CPUBudget.trackSystem("tasks", cpuTasksStart);
-
-    // Run spawner (unless emergency was just handled)
-    if (!emergencyHandled) {
-      const cpuSpawnerStart = Game.cpu.getUsed();
-      const spawner = new Spawner(colony);
-      spawner.run(state);
-      CPUBudget.trackSystem("spawner", cpuSpawnerStart);
-    }
-
-    // Run tower defense (every tick - critical for defense)
-    const cpuTowersStart = Game.cpu.getUsed();
-    const towerManager = new TowerManager(room);
-    towerManager.run();
-    CPUBudget.trackSystem("towers", cpuTowersStart);
-
-    // Run link transfers (RCL 5+)
-    if (room.controller && room.controller.level >= 5) {
-      const linkManager = new LinkManager(room);
-      linkManager.run();
-    }
-
-    // Skip non-essential operations if bucket is low
-    if (CPUBudget.canRunExpensive()) {
-      // Strategic analysis (every 100 ticks, or on code push, or if no cached state)
-      const hasStrategicState = StrategicCoordinator.getState(room.name) !== null;
-      const forceRefresh = global._forceStrategicRefresh === true;
-      if (Game.time % 100 === 0 || !hasStrategicState || forceRefresh) {
-        const strategicCoordinator = new StrategicCoordinator(room);
-        strategicCoordinator.run();
-        global._forceStrategicRefresh = false;
-      }
-
-      // Construction planning (every 20 ticks) - uses coordinator for priority
-      if (Game.time % 20 === 0) {
-        const coordinator = new ConstructionCoordinator(room);
-
-        // Containers first (critical for economy)
-        if (coordinator.canPlaceSites(STRUCTURE_CONTAINER)) {
-          new ContainerPlanner(room).run();
-        }
-
-        // Extensions second (unlock bigger creeps)
-        if (coordinator.canPlaceSites(STRUCTURE_EXTENSION)) {
-          new ExtensionPlanner(room).run();
-        }
-
-        // Towers third (defense)
-        if (coordinator.canPlaceSites(STRUCTURE_TOWER)) {
-          new TowerPlanner(room).run();
-        }
-
-        // Roads last (only after extensions complete, RCL 3+)
-        if (coordinator.canPlaceSites(STRUCTURE_ROAD)) {
-          new RoadPlanner(room).run();
-        }
-      }
-    }
-
-    // Draw visuals
-    colony.drawVisuals();
+    runRoom(room);
   }
 
-  // Run all creeps (with CPU limiting if bucket is low)
-  const cpuCreepsStart = Game.cpu.getUsed();
-  const creepLimit = CPUBudget.getCreepLimit();
-  let creepsProcessed = 0;
+  // Run all creeps
+  runCreeps();
 
+  // Log status every 100 ticks
+  if (Game.time % 100 === 0) {
+    logStatus();
+  }
+}
+
+function runRoom(room: Room): void {
+  // 1. Place construction sites (simple, direct)
+  placeStructures(room);
+
+  // 2. Spawn creeps
+  spawnCreeps(room);
+
+  // 3. Run towers
+  const towerManager = new TowerManager(room);
+  towerManager.run();
+}
+
+function runCreeps(): void {
   for (const name in Game.creeps) {
-    if (creepsProcessed >= creepLimit) {
-      logger.debug("Main", `Skipped ${Object.keys(Game.creeps).length - creepsProcessed} creeps due to CPU limit`);
-      break;
-    }
-
     const creep = Game.creeps[name];
     try {
       runCreep(creep);
     } catch (error) {
       logger.error("Main", `Error running creep ${name}:`, error);
     }
-    creepsProcessed++;
   }
-  CPUBudget.trackSystem("creeps", cpuCreepsStart);
+}
 
-  // Finalize stats collection for this tick
-  StatsCollector.endTick();
+function cleanupMemory(): void {
+  // Only run every 100 ticks
+  if (Game.time % 100 !== 0) return;
 
-  // End CPU tracking
-  CPUBudget.endTick();
+  for (const name in Memory.creeps) {
+    if (!Game.creeps[name]) {
+      delete Memory.creeps[name];
+    }
+  }
+}
 
-  // Log CPU usage periodically
-  if (Game.time % 10 === 0) {
-    logger.debug(
-      "Main",
-      `Tick ${Game.time} | CPU: ${CPUBudget.getCurrentTickCPU().toFixed(2)} | ` +
-        `Avg: ${CPUBudget.getAverageCPU().toFixed(2)} | Bucket: ${Game.cpu.bucket}`
+function logStatus(): void {
+  for (const roomName in Game.rooms) {
+    const room = Game.rooms[roomName];
+    if (!room.controller?.my) continue;
+
+    const rcl = room.controller.level;
+    const progress = Math.floor((room.controller.progress / room.controller.progressTotal) * 100);
+    const creeps = Object.values(Game.creeps).filter((c) => c.memory.room === roomName);
+    const sites = room.find(FIND_CONSTRUCTION_SITES).length;
+
+    // Count by role
+    const roles: Record<string, number> = {};
+    for (const c of creeps) {
+      const role = c.memory.role || "UNKNOWN";
+      roles[role] = (roles[role] || 0) + 1;
+    }
+
+    console.log(
+      `[${roomName}] RCL ${rcl} (${progress}%) | Energy: ${room.energyAvailable}/${room.energyCapacityAvailable} | Sites: ${sites}`
     );
+    console.log(`  Creeps: ${JSON.stringify(roles)}`);
   }
 }

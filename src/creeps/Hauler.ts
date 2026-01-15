@@ -1,12 +1,34 @@
-import { TaskManager, TaskType, Task } from "../core/TaskManager";
-import { logger } from "../utils/Logger";
-import { getOrFindEnergySource, acquireEnergy, clearEnergyTarget } from "../utils/EnergyUtils";
-
 /**
- * Hauler: Picks up energy from the ground/containers and delivers to structures.
- * Uses TaskManager for coordination to prevent multiple haulers targeting same resource.
- * Falls back to legacy behavior during emergency bootstrap.
+ * Hauler: Picks up energy from containers/ground and delivers to structures.
+ * Simple implementation - no task manager dependency.
  */
+
+function moveOffRoad(creep: Creep): void {
+  const onRoad = creep.pos.lookFor(LOOK_STRUCTURES).some(s => s.structureType === STRUCTURE_ROAD);
+  if (!onRoad) return;
+
+  const terrain = creep.room.getTerrain();
+
+  // Search in expanding radius for non-road tile
+  for (let radius = 1; radius <= 5; radius++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const x = creep.pos.x + dx;
+        const y = creep.pos.y + dy;
+        if (x < 1 || x > 48 || y < 1 || y > 48) continue;
+        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+        const hasRoad = creep.room.lookForAt(LOOK_STRUCTURES, x, y).some(s => s.structureType === STRUCTURE_ROAD);
+        const hasCreep = creep.room.lookForAt(LOOK_CREEPS, x, y).length > 0;
+        if (!hasRoad && !hasCreep) {
+          creep.moveTo(x, y, { visualizePathStyle: { stroke: "#888888" }, reusePath: 3 });
+          return;
+        }
+      }
+    }
+  }
+}
+
 export function runHauler(creep: Creep): void {
   // Initialize state if needed
   if (!creep.memory.state) {
@@ -16,16 +38,12 @@ export function runHauler(creep: Creep): void {
   // State transitions
   if (creep.memory.state === "DELIVERING" && creep.store[RESOURCE_ENERGY] === 0) {
     creep.memory.state = "COLLECTING";
-    TaskManager.completeTask(creep);
-    clearEnergyTarget(creep);
-    creep.say("🔄 collect");
+    creep.say("🔄");
   }
 
   if (creep.memory.state === "COLLECTING" && creep.store.getFreeCapacity() === 0) {
     creep.memory.state = "DELIVERING";
-    TaskManager.completeTask(creep);
-    clearEnergyTarget(creep);
-    creep.say("📦 deliver");
+    creep.say("📦");
   }
 
   // Also switch to deliver earlier if spawn critically needs energy
@@ -33,121 +51,88 @@ export function runHauler(creep: Creep): void {
     const spawnCritical = creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.5;
     if (spawnCritical) {
       creep.memory.state = "DELIVERING";
-      TaskManager.completeTask(creep);
-      clearEnergyTarget(creep);
-      creep.say("📦 urgent");
+      creep.say("⚡");
     }
   }
 
   // Execute current state
   if (creep.memory.state === "DELIVERING") {
-    executeDelivery(creep);
+    deliver(creep);
   } else {
-    executeCollection(creep);
+    collect(creep);
   }
 }
 
-/**
- * Execute collection task
- */
-function executeCollection(creep: Creep): void {
-  // Try to get a task from TaskManager
-  let task = TaskManager.getCreepTask(creep);
+function collect(creep: Creep): void {
+  // Priority 1: Dropped energy (high priority)
+  const droppedEnergy = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
+  });
 
-  if (!task || task.type !== TaskType.HAUL_COLLECT) {
-    // Request a new collection task
-    TaskManager.releaseTask(creep);
-    task = TaskManager.requestTask(creep, [TaskType.HAUL_COLLECT]);
+  if (droppedEnergy) {
+    if (creep.pickup(droppedEnergy) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(droppedEnergy, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+    }
+    return;
   }
 
-  if (task) {
-    const target = Game.getObjectById(task.targetId);
-    if (!target) {
-      TaskManager.completeTask(creep);
-      return;
-    }
+  // Priority 2: Tombstones with energy
+  const tombstone = creep.pos.findClosestByPath(FIND_TOMBSTONES, {
+    filter: (t) => t.store[RESOURCE_ENERGY] >= 50,
+  });
 
-    // Handle different target types
-    if (target instanceof Resource) {
-      if (creep.pickup(target) === ERR_NOT_IN_RANGE) {
+  if (tombstone) {
+    if (creep.withdraw(tombstone, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(tombstone, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // Priority 3: Containers near sources (not near controller)
+  const sourceContainers = creep.room.find(FIND_STRUCTURES, {
+    filter: (s) => {
+      if (s.structureType !== STRUCTURE_CONTAINER) return false;
+      const container = s as StructureContainer;
+      if (container.store[RESOURCE_ENERGY] < 100) return false;
+
+      // Check if near a source (not controller)
+      const nearSource = container.pos.findInRange(FIND_SOURCES, 2).length > 0;
+      return nearSource;
+    },
+  }) as StructureContainer[];
+
+  if (sourceContainers.length > 0) {
+    // Pick the closest one with most energy
+    sourceContainers.sort((a, b) => b.store[RESOURCE_ENERGY] - a.store[RESOURCE_ENERGY]);
+    const target = creep.pos.findClosestByPath(sourceContainers);
+
+    if (target) {
+      if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         creep.moveTo(target, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
       }
-    } else if ("store" in target) {
-      const storeTarget = target as StructureContainer | StructureStorage | Tombstone | Ruin;
-      if (creep.withdraw(storeTarget, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(storeTarget, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
-      }
-    }
-    return;
-  }
-
-  // Fallback: Legacy collection behavior (for emergency/bootstrap)
-  legacyCollect(creep);
-}
-
-/**
- * Execute delivery task
- */
-function executeDelivery(creep: Creep): void {
-  // Try to get a task from TaskManager
-  let task = TaskManager.getCreepTask(creep);
-
-  if (!task || task.type !== TaskType.HAUL_DELIVER) {
-    // Request a new delivery task
-    TaskManager.releaseTask(creep);
-    task = TaskManager.requestTask(creep, [TaskType.HAUL_DELIVER]);
-  }
-
-  if (task) {
-    const target = Game.getObjectById(task.targetId);
-    if (!target) {
-      TaskManager.completeTask(creep);
       return;
     }
+  }
 
-    if ("store" in target) {
-      const storeTarget = target as StructureSpawn | StructureExtension | StructureTower | StructureStorage | StructureContainer;
-      const result = creep.transfer(storeTarget, RESOURCE_ENERGY);
-      if (result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(storeTarget, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
-      } else if (result === OK || result === ERR_FULL) {
-        TaskManager.completeTask(creep);
-      }
+  // Priority 4: Storage (if has excess)
+  const storage = creep.room.storage;
+  if (storage && storage.store[RESOURCE_ENERGY] > 10000) {
+    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(storage, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
     }
     return;
   }
 
-  // Fallback: Legacy delivery behavior
-  legacyDeliver(creep);
-}
-
-/**
- * Legacy collection - used during bootstrap/emergency when TaskManager has no tasks
- * Uses weighted energy source selection to prevent multiple haulers targeting same resource.
- */
-function legacyCollect(creep: Creep): void {
-  // Haulers need more energy to be worth the trip
-  const minEnergy = Math.max(50, creep.store.getFreeCapacity() * 0.3);
-  const source = getOrFindEnergySource(creep, minEnergy);
-
-  if (source) {
-    acquireEnergy(creep, source);
-    return;
-  }
-
-  // Nothing to collect - move towards energy sources to wait for harvesters
-  clearEnergyTarget(creep);
-
-  const energySource = creep.pos.findClosestByPath(FIND_SOURCES);
-  if (energySource) {
-    creep.moveTo(energySource, { visualizePathStyle: { stroke: "#888888" } });
+  // Nothing to collect - wait near source but off road
+  const source = creep.pos.findClosestByPath(FIND_SOURCES);
+  if (source && creep.pos.getRangeTo(source) > 3) {
+    creep.moveTo(source, { visualizePathStyle: { stroke: "#888888" } });
+  } else {
+    moveOffRoad(creep);
   }
 }
 
-/**
- * Legacy delivery - used during bootstrap/emergency
- */
-function legacyDeliver(creep: Creep): void {
+function deliver(creep: Creep): void {
   // Priority 1: Spawn and Extensions
   const spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
     filter: (s) =>
@@ -184,7 +169,7 @@ function legacyDeliver(creep: Creep): void {
     return;
   }
 
-  // Priority 4: Controller container
+  // Priority 4: Controller container (for upgraders)
   const controller = creep.room.controller;
   if (controller) {
     const controllerContainer = controller.pos.findInRange(FIND_STRUCTURES, 3, {
@@ -200,9 +185,11 @@ function legacyDeliver(creep: Creep): void {
     }
   }
 
-  // Nothing to deliver to - wait near spawn
+  // Nothing to deliver to - wait near spawn but off road
   const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
-  if (spawn) {
+  if (spawn && creep.pos.getRangeTo(spawn) > 3) {
     creep.moveTo(spawn, { visualizePathStyle: { stroke: "#888888" } });
+  } else {
+    moveOffRoad(creep);
   }
 }

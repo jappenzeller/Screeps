@@ -1,10 +1,34 @@
-import { TaskManager, TaskType } from "../core/TaskManager";
-import { getOrFindEnergySource, acquireEnergy, clearEnergyTarget } from "../utils/EnergyUtils";
-
 /**
  * Builder: Builds construction sites and repairs structures.
- * Uses TaskManager for task assignment and ColonyState for cached structures.
+ * Simple implementation - no external dependencies.
  */
+
+function moveOffRoad(creep: Creep): void {
+  const onRoad = creep.pos.lookFor(LOOK_STRUCTURES).some(s => s.structureType === STRUCTURE_ROAD);
+  if (!onRoad) return;
+
+  const terrain = creep.room.getTerrain();
+
+  // Search in expanding radius for non-road tile
+  for (let radius = 1; radius <= 5; radius++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const x = creep.pos.x + dx;
+        const y = creep.pos.y + dy;
+        if (x < 1 || x > 48 || y < 1 || y > 48) continue;
+        if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+        const hasRoad = creep.room.lookForAt(LOOK_STRUCTURES, x, y).some(s => s.structureType === STRUCTURE_ROAD);
+        const hasCreep = creep.room.lookForAt(LOOK_CREEPS, x, y).length > 0;
+        if (!hasRoad && !hasCreep) {
+          creep.moveTo(x, y, { visualizePathStyle: { stroke: "#888888" }, reusePath: 3 });
+          return;
+        }
+      }
+    }
+  }
+}
+
 export function runBuilder(creep: Creep): void {
   // Initialize state
   if (!creep.memory.state) {
@@ -14,14 +38,11 @@ export function runBuilder(creep: Creep): void {
   // State transitions
   if (creep.memory.state === "BUILDING" && creep.store[RESOURCE_ENERGY] === 0) {
     creep.memory.state = "COLLECTING";
-    TaskManager.completeTask(creep);
-    clearEnergyTarget(creep);
-    creep.say("🔄 energy");
+    creep.say("🔄");
   }
   if (creep.memory.state === "COLLECTING" && creep.store.getFreeCapacity() === 0) {
     creep.memory.state = "BUILDING";
-    clearEnergyTarget(creep);
-    creep.say("🔨 build");
+    creep.say("🔨");
   }
 
   if (creep.memory.state === "BUILDING") {
@@ -32,94 +53,11 @@ export function runBuilder(creep: Creep): void {
 }
 
 function buildOrRepair(creep: Creep): void {
-  // Get current task
-  const currentTask = TaskManager.getCreepTask(creep);
-
-  // Every 10 ticks, re-evaluate to pick up higher priority tasks
-  // This allows builders to switch to closer roads as priorities update
-  const shouldReevaluate = Game.time % 10 === 0;
-
-  if (currentTask && !shouldReevaluate) {
-    if (currentTask.type === TaskType.BUILD) {
-      const site = Game.getObjectById(currentTask.targetId as Id<ConstructionSite>);
-      if (site) {
-        executeBuildTask(creep, site);
-        return;
-      }
-    } else {
-      const structure = Game.getObjectById(currentTask.targetId as Id<Structure>);
-      if (structure) {
-        executeRepairTask(creep, structure);
-        return;
-      }
-    }
-    // Target gone, complete the task
-    TaskManager.completeTask(creep);
-  } else if (currentTask) {
-    // Re-evaluation tick - release current task to get fresh assignment
-    TaskManager.releaseTask(creep);
-  }
-
-  // Request new task - TaskManager returns highest priority unassigned task
-  // Roads are now prioritized by distance from existing infrastructure
-  const task = TaskManager.requestTask(creep, [TaskType.BUILD, TaskType.REPAIR]);
-
-  if (task) {
-    if (task.type === TaskType.BUILD) {
-      const site = Game.getObjectById(task.targetId as Id<ConstructionSite>);
-      if (!site) {
-        TaskManager.completeTask(creep);
-        return;
-      }
-      executeBuildTask(creep, site);
-    } else {
-      const structure = Game.getObjectById(task.targetId as Id<Structure>);
-      if (!structure) {
-        TaskManager.completeTask(creep);
-        return;
-      }
-      executeRepairTask(creep, structure);
-    }
-    return;
-  }
-
-  // Fallback: Use legacy behavior if no tasks available
-  legacyBuildOrRepair(creep);
-}
-
-/**
- * Execute a build task
- */
-function executeBuildTask(creep: Creep, site: ConstructionSite): void {
-  const result = creep.build(site);
-  if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
-  } else if (result === ERR_INVALID_TARGET) {
-    TaskManager.completeTask(creep);
-  }
-}
-
-/**
- * Execute a repair task
- */
-function executeRepairTask(creep: Creep, structure: Structure): void {
-  const result = creep.repair(structure);
-  if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(structure, { visualizePathStyle: { stroke: "#ff8800" }, reusePath: 5 });
-  } else if (result === ERR_INVALID_TARGET || structure.hits >= structure.hitsMax) {
-    TaskManager.completeTask(creep);
-  }
-}
-
-/**
- * Legacy build/repair - used when TaskManager has no tasks
- */
-function legacyBuildOrRepair(creep: Creep): void {
   // Priority 1: Construction sites (non-roads first, then roads from spawn outward)
   const sites = creep.room.find(FIND_CONSTRUCTION_SITES);
 
   if (sites.length > 0) {
-    const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
+    const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
 
     // Sort: non-roads first, then roads by distance from spawn (closer first)
     sites.sort((a, b) => {
@@ -138,16 +76,14 @@ function legacyBuildOrRepair(creep: Creep): void {
       return 0;
     });
 
-    // Find closest reachable site from the prioritized list
-    for (const site of sites) {
-      const path = creep.pos.findPathTo(site, { ignoreCreeps: true });
-      if (path.length > 0) {
-        const result = creep.build(site);
-        if (result === ERR_NOT_IN_RANGE) {
-          creep.moveTo(site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
-        }
-        return;
+    // Build closest reachable site
+    const site = creep.pos.findClosestByPath(sites);
+    if (site) {
+      const result = creep.build(site);
+      if (result === ERR_NOT_IN_RANGE) {
+        creep.moveTo(site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
       }
+      return;
     }
   }
 
@@ -195,20 +131,54 @@ function legacyBuildOrRepair(creep: Creep): void {
 }
 
 function getEnergy(creep: Creep): void {
-  // Use sticky energy source selection to prevent oscillation
-  const source = getOrFindEnergySource(creep, 50);
-
-  if (source) {
-    acquireEnergy(creep, source);
+  // Priority 1: Storage
+  const storage = creep.room.storage;
+  if (storage && storage.store[RESOURCE_ENERGY] > 0) {
+    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(storage, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    }
     return;
   }
 
-  // No energy available - wait near spawn
-  clearEnergyTarget(creep);
+  // Priority 2: Any container with energy
+  const container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
+    filter: (s) => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 50,
+  }) as StructureContainer | null;
 
+  if (container) {
+    if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(container, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // Priority 3: Dropped energy
+  const droppedEnergy = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
+  });
+
+  if (droppedEnergy) {
+    if (creep.pickup(droppedEnergy) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(droppedEnergy, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // Priority 4: Harvest from source as last resort
+  const source = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
+  if (source) {
+    if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
+      creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // No energy available - wait near spawn but off road
   const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
   if (spawn && creep.pos.getRangeTo(spawn) > 3) {
     creep.moveTo(spawn, { visualizePathStyle: { stroke: "#888888" } });
+  } else {
+    moveOffRoad(creep);
+    creep.say("💤");
   }
-  creep.say("💤");
 }
