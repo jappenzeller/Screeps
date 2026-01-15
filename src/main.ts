@@ -10,6 +10,7 @@ import { ConstructionCoordinator } from "./core/ConstructionCoordinator";
 import { StrategicCoordinator } from "./core/StrategicCoordinator";
 import { ContainerPlanner } from "./structures/ContainerPlanner";
 import { ExtensionPlanner } from "./structures/ExtensionPlanner";
+import { TowerPlanner } from "./structures/TowerPlanner";
 import { TowerManager } from "./structures/TowerManager";
 import { LinkManager } from "./structures/LinkManager";
 import { CPUBudget } from "./core/CPUBudget";
@@ -128,6 +129,11 @@ export function loop(): void {
         // Extensions second (unlock bigger creeps)
         if (coordinator.canPlaceSites(STRUCTURE_EXTENSION)) {
           new ExtensionPlanner(room).run();
+        }
+
+        // Towers third (defense)
+        if (coordinator.canPlaceSites(STRUCTURE_TOWER)) {
+          new TowerPlanner(room).run();
         }
 
         // Roads last (only after extensions complete, RCL 3+)
