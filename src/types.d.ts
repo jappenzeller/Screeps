@@ -29,12 +29,23 @@ interface CreepMemory {
   working?: boolean;
 }
 
+// Task definition for RoomMemory
+interface RoomTask {
+  id: string;
+  type: "HARVEST" | "SUPPLY_SPAWN" | "SUPPLY_TOWER" | "BUILD" | "UPGRADE" | "HAUL";
+  targetId: Id<any>;
+  priority: number;
+  assignedCreep: string | null;
+  createdAt: number;
+}
+
 // Extend RoomMemory from @types/screeps
 interface RoomMemory {
   sources?: Id<Source>[];
   hostiles?: number;
   lastScan?: number;
   containerPlan?: ContainerPlan;
+  tasks?: RoomTask[];
 
   // Assignment tracking
   assignments?: {

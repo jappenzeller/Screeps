@@ -8,10 +8,18 @@ This is a TypeScript Screeps bot targeting the official MMO server (shard0). The
 
 ### Current State
 - Functional RCL 1-4 economy with role-based creeps
-- Basic remote mining scaffolding (incomplete)
-- Container and road auto-placement
+- ColonyManager for centralized task generation (foundation for future task-based creeps)
+- Simple structure placement and spawning
+- Basic tower defense
 - No link/terminal/lab/factory management
 - No combat beyond basic melee defender
+
+### Core Systems
+
+- **ColonyManager** (`src/core/ColonyManager.ts`): Central coordinator that generates tasks based on room state. Tasks stored in `Memory.rooms[name].tasks`. Currently generates tasks but creeps don't consume them yet.
+- **ColonyStateManager** (`src/core/ColonyState.ts`): Cached room state with tiered refresh intervals.
+- **Simple spawning** (`src/spawning/spawnCreeps.ts`): Predictable creep counts based on room state.
+- **Simple structure placement** (`src/structures/placeStructures.ts`): One structure per tick, priority-based.
 
 ### Tech Stack
 - TypeScript with strict mode
@@ -336,25 +344,17 @@ When adding a new system:
 
 ## Current Codebase Issues to Fix
 
-1. **Upgrader.ts:87** - Variable shadowing: `controller` declared twice in same scope
+1. **ColonyManager tasks not consumed** - Tasks are generated but creeps still use role-based logic
 
 2. **Harvester static miner** - No handling for full container; creep just idles
 
-3. **Hauler threshold** - Delivers at 50% capacity, inefficient for early game
+3. **RemoteMiner** - No distance limiting on target room selection
 
-4. **Builder/Upgrader** - Both wait at spawn when no energy; should go to where energy is
+4. **Reserver/Claimer** - Listed in roles.ts but not implemented
 
-5. **RemoteMiner** - No distance limiting on target room selection
+5. **No link support** - Missing entirely
 
-6. **Memory cleanup** - Only every 100 ticks; dead creep memory accumulates
-
-7. **Reserver/Claimer** - Listed in roles.ts but not implemented
-
-8. **No tower management** - Towers exist but no manager controls them
-
-9. **No link support** - Missing entirely
-
-10. **AWS task-definition.json** - Hardcoded Screeps token, should use Secrets Manager
+6. **AWS task-definition.json** - Hardcoded Screeps token, should use Secrets Manager
 
 ---
 

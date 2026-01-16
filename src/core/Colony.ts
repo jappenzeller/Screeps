@@ -1,6 +1,5 @@
 import { CONFIG, Role } from "../config";
 import { ColonyStateManager, CachedColonyState } from "./ColonyState";
-import { StrategicCoordinator } from "./StrategicCoordinator";
 
 // Re-export the CachedColonyState type as ColonyState for backward compatibility
 export type ColonyState = CachedColonyState;
@@ -34,48 +33,38 @@ export class Colony {
     if (!state) return false;
 
     const count = this.getCreepCount(role);
-    const min = CONFIG.MIN_CREEPS[role as keyof typeof CONFIG.MIN_CREEPS] ?? 0;
 
-    // Harvesters: need 1 per source (static miner with container)
-    // or 2 per source early game (travel time) capped at config min
+    // Harvesters: 1 per source (with containers) or 2 per source (without)
     if (role === "HARVESTER") {
       const sourceCount = state.sources.length;
       const hasContainers = state.structures.containers.length > 0;
-      // With containers: 1 per source (static miner)
-      // Without: 2 per source (travel time) but capped at min config
-      const needed = hasContainers ? sourceCount : Math.min(sourceCount * 2, min);
+      const needed = hasContainers ? sourceCount : sourceCount * 2;
       return count < needed;
     }
 
-    // Upgraders: dynamic scaling based on energy budget and storage levels
-    if (role === "UPGRADER") {
-      // Need at least one harvester to bring energy
-      if (this.getCreepCount("HARVESTER") === 0) return false;
-
-      // Use StrategicCoordinator's dynamic target (factors in budget allocations and energy surplus)
-      const strategicState = StrategicCoordinator.getState(this.roomName);
-      const targetUpgraders = strategicState?.workforce.targetCreeps.UPGRADER ?? min;
-      const maxUpgraders = CONFIG.MAX_CREEPS.UPGRADER || 4;
-      return count < Math.min(targetUpgraders, maxUpgraders);
-    }
-
-    // Builders: dynamic scaling based on construction sites + energy surplus
-    if (role === "BUILDER") {
-      const hasSites = state.constructionSites.length > 0;
-      if (!hasSites) return false;
-
-      // Use StrategicCoordinator's dynamic target (factors in sites, budget, energy surplus)
-      const strategicState = StrategicCoordinator.getState(this.roomName);
-      const targetBuilders = strategicState?.workforce.targetCreeps.BUILDER ?? 1;
-      const maxBuilders = CONFIG.MAX_CREEPS.BUILDER || 3;
-      return count < Math.min(targetBuilders, maxBuilders);
-    }
-
-    // Haulers: only needed later when we have containers
+    // Haulers: 2 if containers exist, 0 otherwise
     if (role === "HAULER") {
-      return count < min && state.structures.containers.length > 0;
+      if (state.structures.containers.length === 0) return false;
+      return count < 2;
     }
 
+    // Upgraders: use config min, require at least one harvester
+    if (role === "UPGRADER") {
+      if (this.getCreepCount("HARVESTER") === 0) return false;
+      const min = CONFIG.MIN_CREEPS.UPGRADER ?? 2;
+      return count < min;
+    }
+
+    // Builders: 1-2 if construction sites exist, 0 otherwise
+    if (role === "BUILDER") {
+      const siteCount = state.constructionSites.length;
+      if (siteCount === 0) return false;
+      const needed = siteCount > 5 ? 2 : 1;
+      return count < needed;
+    }
+
+    // Other roles: use CONFIG.MIN_CREEPS directly
+    const min = CONFIG.MIN_CREEPS[role as keyof typeof CONFIG.MIN_CREEPS] ?? 0;
     return count < min;
   }
 

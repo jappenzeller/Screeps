@@ -10,6 +10,7 @@ import { placeStructures } from "./structures/placeStructures";
 import { spawnCreeps } from "./spawning/spawnCreeps";
 import { TowerManager } from "./structures/TowerManager";
 import { runCreep } from "./creeps/roles";
+import { ColonyManager } from "./core/ColonyManager";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -46,6 +47,10 @@ export function loop(): void {
 }
 
 function runRoom(room: Room): void {
+  // 0. Run ColonyManager to generate/refresh tasks
+  const manager = ColonyManager.getInstance(room.name);
+  manager.run();
+
   // 1. Place construction sites (simple, direct)
   placeStructures(room);
 
