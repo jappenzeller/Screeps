@@ -6,6 +6,7 @@ import { runBuilder } from "./Builder";
 import { runDefender } from "./Defender";
 import { runScout } from "./Scout";
 import { runRemoteMiner } from "./RemoteMiner";
+import { runRemoteHauler } from "./RemoteHauler";
 import { runReserver } from "./Reserver";
 import { runClaimer } from "./Claimer";
 
@@ -60,6 +61,12 @@ export const ROLE_BODIES: Record<Role, BodyConfig> = {
     scale: [CARRY, MOVE],
   },
 
+  // Remote hauler: collects energy from remote rooms
+  REMOTE_HAULER: {
+    base: [CARRY, CARRY, CARRY, CARRY, CARRY, CARRY, MOVE, MOVE, MOVE, MOVE, MOVE, MOVE],
+    scale: [CARRY, MOVE],
+  },
+
   // Reserver: reserves remote controllers
   RESERVER: {
     base: [CLAIM, CLAIM, MOVE, MOVE],
@@ -81,6 +88,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   DEFENDER: runDefender,
   SCOUT: runScout,
   REMOTE_MINER: runRemoteMiner,
+  REMOTE_HAULER: runRemoteHauler,
   RESERVER: runReserver,
   CLAIMER: runClaimer,
 };

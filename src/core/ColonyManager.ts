@@ -49,7 +49,9 @@ export interface WorkforceNeeds {
   BUILDER: number;
   DEFENDER: number;
   REMOTE_MINER: number;
+  REMOTE_HAULER: number;
   RESERVER: number;
+  SCOUT: number;
 }
 
 // Singleton instances per room
@@ -704,7 +706,9 @@ export class ColonyManager {
         BUILDER: 0,
         DEFENDER: 0,
         REMOTE_MINER: 0,
+        REMOTE_HAULER: 0,
         RESERVER: 0,
+        SCOUT: 0,
       };
     }
 
@@ -755,6 +759,7 @@ export class ColonyManager {
 
     // Remote mining (RCL 4+)
     let remoteMiners = 0;
+    let remoteHaulers = 0;
     let reservers = 0;
 
     const rcl = state.room.controller?.level || 0;
@@ -772,6 +777,30 @@ export class ColonyManager {
       if (remoteTargets.length > 0) {
         reservers = Math.ceil(remoteTargets.length / 2);
       }
+
+      // 2 remote haulers per remote room
+      remoteHaulers = remoteTargets.length * 2;
+    }
+
+    // Scouts (RCL 4+): 1 if any adjacent room needs intel
+    let scouts = 0;
+    if (rcl >= 4) {
+      const exits = Game.map.describeExits(this.roomName);
+      if (exits) {
+        for (const dir in exits) {
+          const adjacentRoom = exits[dir as ExitKey];
+          if (!adjacentRoom) continue;
+
+          const intel = Memory.rooms?.[adjacentRoom];
+          const lastScan = intel?.lastScan || 0;
+
+          // Need scout if any adjacent room hasn't been scanned in 2000 ticks
+          if (Game.time - lastScan > 2000) {
+            scouts = 1;
+            break;
+          }
+        }
+      }
     }
 
     return {
@@ -781,7 +810,9 @@ export class ColonyManager {
       BUILDER: builders,
       DEFENDER: defenders,
       REMOTE_MINER: remoteMiners,
+      REMOTE_HAULER: remoteHaulers,
       RESERVER: reservers,
+      SCOUT: scouts,
     };
   }
 
