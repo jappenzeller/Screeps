@@ -367,6 +367,50 @@ When adding a new system:
 - `creeps()` - List all creeps
 - `cpu()` - CPU and bucket status
 - `construction()` - Show construction status and priorities
+- `awsExport()` - Show AWS memory segment export status
+- `advisor()` - Show AI Advisor API endpoints
+- `fetchAdvisor("W1N1")` - Show cached AI recommendations
+
+---
+
+## AWS AI Advisor
+
+External AI-powered analysis system that monitors colony performance and provides recommendations.
+
+### API Endpoint
+
+```text
+https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com
+```
+
+(Replace with actual endpoint after terraform apply)
+
+### Endpoints
+
+- `GET /summary/{roomName}` - Colony overview with latest snapshot
+- `GET /recommendations/{roomName}` - AI-generated recommendations
+- `GET /metrics/{roomName}?hours=24` - Historical metric data
+- `POST /feedback/{recommendationId}` - Submit feedback on recommendations
+
+### How It Works
+
+1. Bot exports stats to `RawMemory.segments[90]` every 100 ticks
+2. Data collector Lambda fetches segment every 5 minutes
+3. Analysis engine runs Claude AI hourly to generate recommendations
+4. Recommendations stored in DynamoDB with 30-day retention
+
+### Deployment
+
+```bash
+cd aws/terraform
+export TF_VAR_screeps_token="your-token"
+export TF_VAR_anthropic_api_key="your-key"
+terraform init && terraform apply
+```
+
+### Estimated Cost
+
+~$25/month (DynamoDB, Lambda, API Gateway, Secrets Manager)
 
 ---
 
