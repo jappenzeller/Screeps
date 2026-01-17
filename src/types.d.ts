@@ -67,6 +67,29 @@ interface RoomMemory {
   hasInvaderCore?: boolean;
 }
 
+// AI Advisor recommendation
+interface AdvisorRecommendation {
+  priority: number;
+  title: string;
+  description: string;
+  category?: string;
+  status?: string;
+}
+
+// AI Advisor data stored in memory
+interface AdvisorData {
+  roomName: string;
+  recommendations: AdvisorRecommendation[];
+  snapshot?: unknown;
+  recommendationCount?: number;
+  fetchedAt?: number;
+}
+
+// Extend Memory for advisor data
+interface Memory {
+  advisor?: AdvisorData;
+}
+
 // Global console declaration for Screeps
 declare const console: {
   log(...args: unknown[]): void;

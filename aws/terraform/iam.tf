@@ -46,7 +46,7 @@ resource "aws_iam_role_policy" "data_collector" {
           "secretsmanager:GetSecretValue"
         ]
         Resource = [
-          "arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${var.screeps_token_secret_name}*"
+          aws_secretsmanager_secret.screeps_token.arn
         ]
       },
       {
@@ -126,7 +126,7 @@ resource "aws_iam_role_policy" "analysis_engine" {
           "secretsmanager:GetSecretValue"
         ]
         Resource = [
-          "arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${var.anthropic_api_key_secret_name}*"
+          aws_secretsmanager_secret.anthropic_key.arn
         ]
       },
       {

@@ -36,6 +36,8 @@ stats()          - Show collected stats for AWS monitoring
 clearStats()     - Clear all collected stats
 awsExport()      - Show AWS memory segment export status
 construction()   - Show construction status and priorities
+advisor()        - Show AI Advisor API endpoints
+fetchAdvisor("W1N1") - Show cached recommendations for room
 `);
   };
 
@@ -642,5 +644,47 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     console.log(lines.join("\n"));
+  };
+
+  // AI Advisor API endpoints
+  global.advisor = () => {
+    // This won't work in-game (no fetch), but documents the API
+    const apiEndpoint = 'https://your-api-endpoint.execute-api.us-east-1.amazonaws.com';
+
+    console.log('=== AI Advisor ===');
+    console.log(`API Endpoint: ${apiEndpoint}`);
+    console.log('');
+    console.log('Available endpoints:');
+    console.log(`  GET ${apiEndpoint}/summary/{roomName}`);
+    console.log(`  GET ${apiEndpoint}/recommendations/{roomName}`);
+    console.log(`  GET ${apiEndpoint}/metrics/{roomName}?hours=24`);
+    console.log(`  POST ${apiEndpoint}/feedback/{recommendationId}`);
+    console.log('');
+    console.log('To view recommendations, visit the API in a browser or use curl:');
+    console.log(`  curl ${apiEndpoint}/recommendations/E46N37`);
+
+    return 'See API endpoints above';
+  };
+
+  // Store latest recommendations in Memory for in-game access
+  global.fetchAdvisor = (roomName: string) => {
+    console.log('Recommendations are stored in Memory.advisor after API fetch');
+    console.log('Use external tool to fetch and store:');
+    console.log('');
+    console.log('// Run this externally:');
+    console.log(`fetch('https://your-api/recommendations/${roomName}')`);
+    console.log("  .then(r => r.json())");
+    console.log("  .then(data => screepsApi.setMemory('advisor', data));");
+
+    // Show cached recommendations if any
+    if (Memory.advisor) {
+      console.log('\nCached recommendations:');
+      for (const rec of Memory.advisor.recommendations || []) {
+        console.log(`  [${rec.priority}] ${rec.title}`);
+        console.log(`      ${rec.description}`);
+      }
+    }
+
+    return 'OK';
   };
 }

@@ -23,3 +23,10 @@ npm-debug.log*
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Terraform
+aws/terraform/.terraform/
+aws/terraform/*.tfstate
+aws/terraform/*.tfstate.*
+aws/terraform/terraform.tfvars
+aws/terraform/builds/
