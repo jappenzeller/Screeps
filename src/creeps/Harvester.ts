@@ -67,10 +67,19 @@ export function runHarvester(creep: Creep): void {
 
 /**
  * Static miner mode: Sit on container and harvest continuously
- * Never delivers - that's the hauler's job. Just harvest and drop.
+ * Never delivers - that's the hauler's job. Just harvest and transfer to link/container.
  */
 function runStaticMiner(creep: Creep, source: Source, container: StructureContainer): void {
-  // Move to container if not there
+  // Check for source link (RCL 5+)
+  const sourceLink = source.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+    filter: (s) => s.structureType === STRUCTURE_LINK,
+  })[0] as StructureLink | undefined;
+
+  // Determine deposit target: link > container
+  const depositTarget =
+    sourceLink && sourceLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0 ? sourceLink : container;
+
+  // Move to container if not there (optimal position for both harvesting and link transfer)
   if (!creep.pos.isEqualTo(container.pos)) {
     creep.moveTo(container, {
       visualizePathStyle: { stroke: "#ffaa00" },
@@ -82,13 +91,13 @@ function runStaticMiner(creep: Creep, source: Source, container: StructureContai
 
   // On container - harvest continuously
   const result = creep.harvest(source);
-  if (result === OK) {
-    // Transfer to container if it has space
-    if (creep.store[RESOURCE_ENERGY] > 0 && container.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-      creep.transfer(container, RESOURCE_ENERGY);
-    }
-    // If container full and we're full, just drop on ground - haulers will get it
-    else if (creep.store.getFreeCapacity() === 0) {
+
+  if (result === OK && creep.store[RESOURCE_ENERGY] > 0) {
+    // Deposit to link or container
+    if (depositTarget.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+      creep.transfer(depositTarget, RESOURCE_ENERGY);
+    } else if (creep.store.getFreeCapacity() === 0) {
+      // Both full - drop for hauler
       creep.drop(RESOURCE_ENERGY);
       creep.say("💧");
     }

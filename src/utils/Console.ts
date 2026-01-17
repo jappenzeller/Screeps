@@ -27,9 +27,14 @@ spawn("ROLE")    - Force spawn a creep
 spawn("ROLE", "W1N1") - Force spawn in specific room
 kill("name")     - Kill a creep by name
 resetCreeps()    - Reset all creep states (fixes stuck creeps)
-tasks()          - Show current task assignments
+tasks()          - Show ColonyManager task queue
+tasks("W1N1")    - Show tasks for specific room
+creepStates()    - Show current creep state assignments
+remote()         - Remote mining status and targets
+threats()        - Show hostile creeps and threat levels
 stats()          - Show collected stats for AWS monitoring
 clearStats()     - Clear all collected stats
+awsExport()      - Show AWS memory segment export status
 construction()   - Show construction status and priorities
 `);
   };
@@ -308,9 +313,31 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     console.log(`Next tick, creeps will reinitialize with fresh state.`);
   };
 
-  // Show current task assignments
-  global.tasks = () => {
-    const lines: string[] = ["=== Task Assignments ==="];
+  // Show ColonyManager task queue
+  global.tasks = (roomName?: string) => {
+    const room = roomName || Object.keys(Game.rooms).find((r) => Game.rooms[r].controller?.my);
+    if (!room) {
+      console.log("No owned room found");
+      return "No room";
+    }
+
+    const manager = ColonyManager.getInstance(room);
+    const tasks = manager.getTasks();
+
+    console.log(`=== Tasks in ${room} ===`);
+    console.log(`Total: ${tasks.length}`);
+
+    for (const task of tasks) {
+      const assignee = task.assignedCreep || "unassigned";
+      console.log(`  [${task.priority}] ${task.type} → ${assignee}`);
+    }
+
+    return "OK";
+  };
+
+  // Show current creep state assignments (formerly tasks)
+  global.creepStates = () => {
+    const lines: string[] = ["=== Creep State Assignments ==="];
 
     // Group creeps by their current task/state
     const byState: Record<string, Creep[]> = {};
@@ -349,6 +376,90 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     console.log(lines.join("\n"));
+  };
+
+  // Remote mining status
+  global.remote = () => {
+    const firstRoom = Object.keys(Game.rooms).find((r) => Game.rooms[r].controller?.my);
+    if (!firstRoom) {
+      console.log("No owned room found");
+      return "No room";
+    }
+
+    const manager = ColonyManager.getInstance(firstRoom);
+    const targets = manager.getRemoteMiningTargets();
+
+    console.log("=== Remote Mining ===");
+    console.log(`Targets: ${targets.length}`);
+
+    for (const roomName of targets) {
+      const intel = Memory.rooms?.[roomName];
+      console.log(`\n${roomName}:`);
+      console.log(`  Sources: ${intel?.sources?.length || 0}`);
+      console.log(`  Last scan: ${Game.time - (intel?.lastScan || 0)} ticks ago`);
+      console.log(`  Hostiles: ${intel?.hostiles || 0}`);
+    }
+
+    return "OK";
+  };
+
+  // Threat status
+  global.threats = () => {
+    for (const roomName in Game.rooms) {
+      const room = Game.rooms[roomName];
+      if (!room.controller?.my) continue;
+
+      const hostiles = room.find(FIND_HOSTILE_CREEPS);
+      if (hostiles.length === 0) {
+        console.log(`${roomName}: Safe`);
+        continue;
+      }
+
+      console.log(`\n${roomName}: ${hostiles.length} hostiles`);
+      for (const hostile of hostiles) {
+        const attack = hostile.getActiveBodyparts(ATTACK);
+        const ranged = hostile.getActiveBodyparts(RANGED_ATTACK);
+        const heal = hostile.getActiveBodyparts(HEAL);
+        console.log(`  ${hostile.owner.username}: A${attack} R${ranged} H${heal}`);
+      }
+    }
+
+    return "OK";
+  };
+
+  // AWS export status
+  global.awsExport = () => {
+    const data = RawMemory.segments[90];
+    if (!data) {
+      console.log("No export data. Wait for next export tick (every 100 ticks).");
+      console.log("To force export: AWSExporter.export()");
+      return "No data";
+    }
+
+    try {
+      const parsed = JSON.parse(data);
+      console.log(`Exported at tick: ${parsed.gameTick}`);
+      console.log(`Timestamp: ${new Date(parsed.timestamp).toISOString()}`);
+      console.log(`Shard: ${parsed.shard}`);
+      console.log(`Colonies: ${parsed.colonies.length}`);
+
+      for (const colony of parsed.colonies) {
+        console.log(`\n[${colony.roomName}] RCL ${colony.rcl}`);
+        console.log(`  Energy: ${colony.energy.available}/${colony.energy.capacity} (stored: ${colony.energy.stored})`);
+        console.log(`  Creeps: ${colony.creeps.total}`);
+        console.log(`  Threats: ${colony.threats.hostileCount} (DPS: ${colony.threats.hostileDPS})`);
+      }
+
+      console.log(`\nGlobal:`);
+      console.log(`  CPU: ${parsed.global.cpu.used.toFixed(2)} used, bucket ${parsed.global.cpu.bucket}`);
+      console.log(`  GCL: ${parsed.global.gcl.level}`);
+      console.log(`  Total creeps: ${parsed.global.totalCreeps}`);
+
+      return "OK";
+    } catch (e) {
+      console.log("Parse error:", e);
+      return "Parse error";
+    }
   };
 
   // Show road construction priorities

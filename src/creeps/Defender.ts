@@ -1,51 +1,65 @@
-import { logger } from "../utils/Logger";
+import { ColonyManager } from "../core/ColonyManager";
 
 /**
  * Defender - Attacks hostile creeps in the room
- * Priority targets: healers > ranged > melee > other
+ * Uses ColonyManager DEFEND tasks for target coordination
  */
 export function runDefender(creep: Creep): void {
-  const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
+  const manager = ColonyManager.getInstance(creep.memory.room);
 
-  if (hostiles.length === 0) {
-    // No hostiles - patrol near spawn
-    const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
-    if (spawn && !creep.pos.inRangeTo(spawn, 5)) {
+  // Task tracking - validate existing task
+  if (creep.memory.taskId) {
+    const tasks = manager.getTasks();
+    const myTask = tasks.find((t) => t.id === creep.memory.taskId);
+
+    if (myTask && myTask.type === "DEFEND") {
+      // Check if target still exists
+      const target = Game.getObjectById(myTask.targetId as Id<Creep>);
+      if (!target) {
+        // Target eliminated - complete task
+        manager.completeTask(creep.memory.taskId);
+        delete creep.memory.taskId;
+      }
+    } else if (!myTask) {
+      // Task no longer exists
+      delete creep.memory.taskId;
+    }
+  }
+
+  // Request DEFEND task if we don't have one
+  if (!creep.memory.taskId) {
+    const task = manager.getAvailableTask(creep);
+    if (task && task.type === "DEFEND") {
+      manager.assignTask(task.id, creep.name);
+      creep.memory.taskId = task.id;
+    }
+  }
+
+  // Get target from task
+  let target: Creep | null = null;
+  if (creep.memory.taskId) {
+    const tasks = manager.getTasks();
+    const myTask = tasks.find((t) => t.id === creep.memory.taskId);
+    if (myTask) {
+      target = Game.getObjectById(myTask.targetId as Id<Creep>);
+    }
+  }
+
+  // Execute defense
+  if (target) {
+    const attackResult = creep.attack(target);
+    if (attackResult === ERR_NOT_IN_RANGE) {
+      creep.moveTo(target, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 3 });
+    }
+    // Also use ranged attack if we have it
+    if (creep.getActiveBodyparts(RANGED_ATTACK) > 0) {
+      creep.rangedAttack(target);
+    }
+  } else {
+    // No target - patrol near spawn
+    const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
+    if (spawn && creep.pos.getRangeTo(spawn) > 5) {
       creep.moveTo(spawn, { visualizePathStyle: { stroke: "#ff0000" } });
     }
-    return;
   }
-
-  // Prioritize targets
-  const target = findPriorityTarget(hostiles);
-
-  if (target) {
-    const result = creep.attack(target);
-    if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(target, { visualizePathStyle: { stroke: "#ff0000" } });
-    } else if (result === OK) {
-      logger.debug("Defender", `${creep.name} attacking ${target.owner.username}`);
-    }
-  }
-}
-
-function findPriorityTarget(hostiles: Creep[]): Creep | null {
-  // Priority: healers > ranged attackers > melee > others
-  const healers = hostiles.filter((c) => c.getActiveBodyparts(HEAL) > 0);
-  if (healers.length > 0) {
-    return healers.reduce((a, b) => (a.hits < b.hits ? a : b));
-  }
-
-  const ranged = hostiles.filter((c) => c.getActiveBodyparts(RANGED_ATTACK) > 0);
-  if (ranged.length > 0) {
-    return ranged.reduce((a, b) => (a.hits < b.hits ? a : b));
-  }
-
-  const melee = hostiles.filter((c) => c.getActiveBodyparts(ATTACK) > 0);
-  if (melee.length > 0) {
-    return melee.reduce((a, b) => (a.hits < b.hits ? a : b));
-  }
-
-  // Any hostile
-  return hostiles.reduce((a, b) => (a.hits < b.hits ? a : b));
 }

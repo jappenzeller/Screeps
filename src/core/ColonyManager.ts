@@ -24,7 +24,8 @@ export type TaskType =
   | "SUPPLY_TOWER"
   | "BUILD"
   | "UPGRADE"
-  | "HAUL";
+  | "HAUL"
+  | "DEFEND";
 
 /**
  * Task definition
@@ -46,6 +47,9 @@ export interface WorkforceNeeds {
   HAULER: number;
   UPGRADER: number;
   BUILDER: number;
+  DEFENDER: number;
+  REMOTE_MINER: number;
+  RESERVER: number;
 }
 
 // Singleton instances per room
@@ -97,26 +101,65 @@ export class ColonyManager {
     const state = this.getState();
     if (!state) return ColonyPhase.BOOTSTRAP;
 
-    // Emergency takes priority
+    const room = state.room;
+    const controller = room.controller;
+
+    // === EMERGENCY CONDITIONS ===
+
+    // 1. No harvesters - economy dead
+    const harvesters = this.getCreepCount("HARVESTER");
+    if (harvesters === 0) {
+      return ColonyPhase.EMERGENCY;
+    }
+
+    // 2. Spawn under attack or critically damaged
+    const spawn = state.structures.spawns[0];
+    if (spawn && spawn.hits < spawn.hitsMax * 0.5) {
+      return ColonyPhase.EMERGENCY;
+    }
+
+    // 3. Significant hostile presence
+    const hostiles = room.find(FIND_HOSTILE_CREEPS);
+    const hostileThreat = hostiles.reduce((sum, h) => {
+      return (
+        sum + h.getActiveBodyparts(ATTACK) * 30 + h.getActiveBodyparts(RANGED_ATTACK) * 10
+      );
+    }, 0);
+    if (hostileThreat > 150) {
+      return ColonyPhase.EMERGENCY;
+    }
+
+    // 4. Controller about to downgrade
+    if (controller && controller.ticksToDowngrade && controller.ticksToDowngrade < 5000) {
+      return ColonyPhase.EMERGENCY;
+    }
+
+    // 5. Legacy emergency state check
     if (state.emergency.isEmergency || state.threat.level >= 3) {
       return ColonyPhase.EMERGENCY;
     }
 
-    // Check creep count for bootstrap
-    const creepCount = state.creeps.all.length;
-    if (creepCount < 3) {
+    // === NORMAL PHASES ===
+
+    if (!controller) return ColonyPhase.BOOTSTRAP;
+
+    const rcl = controller.level;
+    const creepCount = Object.values(Game.creeps).filter(
+      (c) => c.memory.room === this.roomName
+    ).length;
+
+    // Bootstrap: RCL 1-2 or very few creeps
+    if (rcl <= 2 || creepCount < 4) {
       return ColonyPhase.BOOTSTRAP;
     }
 
-    // Phase based on RCL
-    const rcl = state.rcl;
-    if (rcl <= 2) {
-      return ColonyPhase.BOOTSTRAP;
-    } else if (rcl <= 4) {
+    // Developing: RCL 3-4
+    if (rcl <= 4) {
       return ColonyPhase.DEVELOPING;
-    } else {
-      return ColonyPhase.STABLE;
     }
+
+    // Stable: RCL 5+
+    return ColonyPhase.STABLE;
   }
 
   /**
@@ -135,15 +178,21 @@ export class ColonyManager {
     if (!state) return [];
 
     const phase = this.getPhase();
+
+    // In emergency, generate only survival-critical tasks
+    if (phase === ColonyPhase.EMERGENCY) {
+      return this.generateEmergencyTasks(state);
+    }
+
     const tasks: Task[] = [];
     const existingTasks = this.getTasks();
 
     // Priority adjustments by phase (negative = more urgent)
     const priorityMod: Record<ColonyPhase, Record<string, number>> = {
-      [ColonyPhase.BOOTSTRAP]: { HARVEST: -2, SUPPLY_SPAWN: -2, UPGRADE: +2, BUILD: +1, HAUL: 0 },
-      [ColonyPhase.DEVELOPING]: { HARVEST: 0, SUPPLY_SPAWN: -1, UPGRADE: 0, BUILD: 0, HAUL: 0 },
-      [ColonyPhase.STABLE]: { HARVEST: 0, SUPPLY_SPAWN: 0, UPGRADE: -1, BUILD: 0, HAUL: 0 },
-      [ColonyPhase.EMERGENCY]: { HARVEST: -2, SUPPLY_SPAWN: -3, UPGRADE: +5, BUILD: +3, HAUL: -1 },
+      [ColonyPhase.BOOTSTRAP]: { HARVEST: -2, SUPPLY_SPAWN: -2, UPGRADE: +2, BUILD: +1, HAUL: 0, DEFEND: 0 },
+      [ColonyPhase.DEVELOPING]: { HARVEST: 0, SUPPLY_SPAWN: -1, UPGRADE: 0, BUILD: 0, HAUL: 0, DEFEND: 0 },
+      [ColonyPhase.STABLE]: { HARVEST: 0, SUPPLY_SPAWN: 0, UPGRADE: -1, BUILD: 0, HAUL: 0, DEFEND: 0 },
+      [ColonyPhase.EMERGENCY]: { HARVEST: -2, SUPPLY_SPAWN: -3, UPGRADE: +5, BUILD: +3, HAUL: -1, DEFEND: -1 },
     };
 
     const mod = priorityMod[phase];
@@ -191,13 +240,11 @@ export class ColonyManager {
     // SUPPLY_TOWER - towers below 500 energy
     for (const tower of state.structures.towers) {
       if (tower.store[RESOURCE_ENERGY] < 500 && !hasActiveTask("SUPPLY_TOWER", tower.id)) {
-        // Tower supply is more urgent during emergencies (hostiles)
-        const basePriority = phase === ColonyPhase.EMERGENCY ? 1 : 3;
         tasks.push({
           id: `supply_tower_${tower.id}_${Game.time}`,
           type: "SUPPLY_TOWER",
           targetId: tower.id,
-          priority: basePriority,
+          priority: 3, // Emergency tower supply handled in generateEmergencyTasks
           assignedCreep: null,
           createdAt: Game.time,
         });
@@ -280,6 +327,154 @@ export class ColonyManager {
       }
     }
 
+    // DEFEND - when hostiles present
+    const hostiles = state.room.find(FIND_HOSTILE_CREEPS);
+    if (hostiles.length > 0) {
+      // Prioritize by threat level (ATTACK parts most dangerous)
+      const sortedHostiles = [...hostiles].sort((a, b) => {
+        const threatA = a.getActiveBodyparts(ATTACK) * 30 + a.getActiveBodyparts(RANGED_ATTACK) * 10;
+        const threatB = b.getActiveBodyparts(ATTACK) * 30 + b.getActiveBodyparts(RANGED_ATTACK) * 10;
+        return threatB - threatA; // Highest threat first
+      });
+
+      // Create DEFEND task for each hostile (max 3)
+      for (let i = 0; i < Math.min(3, sortedHostiles.length); i++) {
+        const hostile = sortedHostiles[i];
+        if (!hasActiveTask("DEFEND", hostile.id)) {
+          tasks.push({
+            id: `defend_${hostile.id}_${Game.time}`,
+            type: "DEFEND",
+            targetId: hostile.id,
+            priority: 0 + (mod.DEFEND || 0), // Highest priority
+            assignedCreep: null,
+            createdAt: Game.time,
+          });
+        }
+      }
+    }
+
+    return tasks;
+  }
+
+  /**
+   * Generate emergency-only tasks - survival critical operations
+   * Only SUPPLY_SPAWN, SUPPLY_TOWER, DEFEND, HARVEST, and minimal UPGRADE
+   */
+  private generateEmergencyTasks(state: CachedColonyState): Task[] {
+    const tasks: Task[] = [];
+    const existingTasks = this.getTasks();
+
+    const hasActiveTask = (type: TaskType, targetId?: Id<any>): boolean => {
+      return existingTasks.some(
+        (t) => t.type === type && (targetId === undefined || t.targetId === targetId)
+      );
+    };
+
+    // 1. SUPPLY_SPAWN - top priority in emergency
+    if (state.energy.available < state.energy.capacity) {
+      const spawn = state.structures.spawns[0];
+      if (spawn && !hasActiveTask("SUPPLY_SPAWN")) {
+        tasks.push({
+          id: `supply_spawn_${spawn.id}_${Game.time}`,
+          type: "SUPPLY_SPAWN",
+          targetId: spawn.id,
+          priority: 0, // Absolute top priority
+          assignedCreep: null,
+          createdAt: Game.time,
+        });
+      }
+    }
+
+    // 2. SUPPLY_TOWER - critical for defense
+    for (const tower of state.structures.towers) {
+      if (tower.store[RESOURCE_ENERGY] < 500 && !hasActiveTask("SUPPLY_TOWER", tower.id)) {
+        tasks.push({
+          id: `supply_tower_${tower.id}_${Game.time}`,
+          type: "SUPPLY_TOWER",
+          targetId: tower.id,
+          priority: 1, // Very high priority
+          assignedCreep: null,
+          createdAt: Game.time,
+        });
+      }
+    }
+
+    // 3. DEFEND - eliminate threats
+    const hostiles = state.room.find(FIND_HOSTILE_CREEPS);
+    if (hostiles.length > 0) {
+      const sortedHostiles = [...hostiles].sort((a, b) => {
+        const threatA =
+          a.getActiveBodyparts(ATTACK) * 30 +
+          a.getActiveBodyparts(RANGED_ATTACK) * 10 +
+          a.getActiveBodyparts(HEAL) * 20;
+        const threatB =
+          b.getActiveBodyparts(ATTACK) * 30 +
+          b.getActiveBodyparts(RANGED_ATTACK) * 10 +
+          b.getActiveBodyparts(HEAL) * 20;
+        return threatB - threatA;
+      });
+
+      for (let i = 0; i < Math.min(3, sortedHostiles.length); i++) {
+        const hostile = sortedHostiles[i];
+        if (!hasActiveTask("DEFEND", hostile.id)) {
+          tasks.push({
+            id: `defend_${hostile.id}_${Game.time}`,
+            type: "DEFEND",
+            targetId: hostile.id,
+            priority: 2, // High priority
+            assignedCreep: null,
+            createdAt: Game.time,
+          });
+        }
+      }
+    }
+
+    // 4. HARVEST - keep economy alive (one per source)
+    for (const assignment of state.sourceAssignments) {
+      if (!assignment.creepName && !hasActiveTask("HARVEST", assignment.sourceId)) {
+        tasks.push({
+          id: `harvest_${assignment.sourceId}_${Game.time}`,
+          type: "HARVEST",
+          targetId: assignment.sourceId,
+          priority: 3,
+          assignedCreep: null,
+          createdAt: Game.time,
+        });
+      }
+    }
+
+    // 5. HAUL - only if spawn needs energy and no haulers collecting
+    if (state.energy.available < state.energy.capacity * 0.5) {
+      for (const container of state.energy.containersWithEnergy) {
+        if (container.amount > 200 && !hasActiveTask("HAUL", container.id)) {
+          tasks.push({
+            id: `haul_${container.id}_${Game.time}`,
+            type: "HAUL",
+            targetId: container.id,
+            priority: 4,
+            assignedCreep: null,
+            createdAt: Game.time,
+          });
+          break; // Only one haul task in emergency
+        }
+      }
+    }
+
+    // 6. UPGRADE - only if controller critically low (prevent downgrade)
+    const controller = state.room.controller;
+    if (controller && controller.ticksToDowngrade && controller.ticksToDowngrade < 5000) {
+      if (!hasActiveTask("UPGRADE")) {
+        tasks.push({
+          id: `upgrade_${controller.id}_${Game.time}`,
+          type: "UPGRADE",
+          targetId: controller.id,
+          priority: 5, // Lower priority but still needed
+          assignedCreep: null,
+          createdAt: Game.time,
+        });
+      }
+    }
+
     return tasks;
   }
 
@@ -338,6 +533,8 @@ export class ColonyManager {
   private canDoTask(creep: Creep, taskType: TaskType): boolean {
     const hasWork = creep.getActiveBodyparts(WORK) > 0;
     const hasCarry = creep.getActiveBodyparts(CARRY) > 0;
+    const hasAttack = creep.getActiveBodyparts(ATTACK) > 0;
+    const hasRangedAttack = creep.getActiveBodyparts(RANGED_ATTACK) > 0;
 
     switch (taskType) {
       case "HARVEST":
@@ -349,6 +546,8 @@ export class ColonyManager {
       case "BUILD":
       case "UPGRADE":
         return hasWork && hasCarry;
+      case "DEFEND":
+        return hasAttack || hasRangedAttack;
       default:
         return false;
     }
@@ -459,12 +658,54 @@ export class ColonyManager {
   }
 
   /**
+   * Get list of valid remote mining room targets
+   */
+  getRemoteMiningTargets(): string[] {
+    const targets: string[] = [];
+    const homeRoom = this.roomName;
+    const exits = Game.map.describeExits(homeRoom);
+
+    if (!exits || !Memory.rooms) return targets;
+
+    for (const dir in exits) {
+      const roomName = exits[dir as ExitKey];
+      if (!roomName) continue;
+
+      const intel = Memory.rooms[roomName];
+      if (!intel || !intel.lastScan) continue;
+
+      // Check if room is a valid remote mining target
+      const isOwned = intel.controller?.owner;
+      const isReservedByOther =
+        intel.controller?.reservation &&
+        intel.controller.reservation.username !== "Invader";
+      const hasSources = intel.sources && intel.sources.length > 0;
+      const isSafe = !intel.hasKeepers && !intel.hasInvaderCore && (intel.hostiles || 0) === 0;
+      const recentScan = Game.time - intel.lastScan < 2000;
+
+      if (!isOwned && !isReservedByOther && hasSources && isSafe && recentScan) {
+        targets.push(roomName);
+      }
+    }
+
+    return targets;
+  }
+
+  /**
    * Calculate how many creeps of each role we need
    */
   getWorkforceNeeds(): WorkforceNeeds {
     const state = this.getState();
     if (!state) {
-      return { HARVESTER: 2, HAULER: 0, UPGRADER: 1, BUILDER: 0 };
+      return {
+        HARVESTER: 2,
+        HAULER: 0,
+        UPGRADER: 1,
+        BUILDER: 0,
+        DEFENDER: 0,
+        REMOTE_MINER: 0,
+        RESERVER: 0,
+      };
     }
 
     const phase = this.getPhase();
@@ -492,11 +733,55 @@ export class ColonyManager {
       builders = Math.min(2, Math.ceil(constructionSites / 5));
     }
 
+    // Defenders: based on threat level
+    let defenders = 0;
+    const hostiles = state.room.find(FIND_HOSTILE_CREEPS);
+    if (hostiles.length > 0) {
+      // Calculate total threat level
+      const totalThreat = hostiles.reduce((sum, h) => {
+        return (
+          sum +
+          h.getActiveBodyparts(ATTACK) * 30 +
+          h.getActiveBodyparts(RANGED_ATTACK) * 10 +
+          h.getActiveBodyparts(HEAL) * 12
+        );
+      }, 0);
+
+      // Scale defenders to threat
+      if (totalThreat > 0) defenders = 1;
+      if (totalThreat > 100) defenders = 2;
+      if (totalThreat > 300) defenders = 3;
+    }
+
+    // Remote mining (RCL 4+)
+    let remoteMiners = 0;
+    let reservers = 0;
+
+    const rcl = state.room.controller?.level || 0;
+    if (rcl >= 4) {
+      const remoteTargets = this.getRemoteMiningTargets();
+
+      // 1 remote miner per source in remote rooms
+      for (const roomName of remoteTargets) {
+        const intel = Memory.rooms?.[roomName];
+        const sourcesInRoom = intel?.sources?.length || 0;
+        remoteMiners += sourcesInRoom;
+      }
+
+      // 1 reserver per 2 remote rooms (to maintain reservation)
+      if (remoteTargets.length > 0) {
+        reservers = Math.ceil(remoteTargets.length / 2);
+      }
+    }
+
     return {
       HARVESTER: harvesters,
       HAULER: haulers,
       UPGRADER: upgraders,
       BUILDER: builders,
+      DEFENDER: defenders,
+      REMOTE_MINER: remoteMiners,
+      RESERVER: reservers,
     };
   }
 

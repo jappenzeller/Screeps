@@ -59,6 +59,26 @@ function upgrade(creep: Creep): void {
     return;
   }
 
+  // If controller link exists (RCL 5+), position to be in range of both
+  if (controller.level >= 5) {
+    const controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
+      filter: (s) => s.structureType === STRUCTURE_LINK,
+    })[0] as StructureLink | undefined;
+
+    if (controllerLink) {
+      // Ideal position: range 3 to controller, range 1 to link
+      const inUpgradeRange = creep.pos.getRangeTo(controller) <= 3;
+      const inLinkRange = creep.pos.getRangeTo(controllerLink) <= 1;
+
+      if (!inUpgradeRange || !inLinkRange) {
+        // Move toward link (will be close enough to controller)
+        creep.moveTo(controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 10 });
+        return;
+      }
+    }
+  }
+
+  // Standard upgrade logic
   const result = creep.upgradeController(controller);
 
   if (result === ERR_NOT_IN_RANGE) {
@@ -71,6 +91,20 @@ function upgrade(creep: Creep): void {
 
 function getEnergy(creep: Creep): void {
   const controller = creep.room.controller;
+
+  // Priority 0: Controller link (RCL 5+)
+  if (controller && controller.level >= 5) {
+    const controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
+      filter: (s) => s.structureType === STRUCTURE_LINK && s.store[RESOURCE_ENERGY] >= 50,
+    })[0] as StructureLink | undefined;
+
+    if (controllerLink) {
+      if (creep.withdraw(controllerLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        creep.moveTo(controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
+      }
+      return;
+    }
+  }
 
   // Priority 1: Container near controller
   if (controller) {

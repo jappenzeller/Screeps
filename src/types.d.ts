@@ -33,7 +33,7 @@ interface CreepMemory {
 // Task definition for RoomMemory
 interface RoomTask {
   id: string;
-  type: "HARVEST" | "SUPPLY_SPAWN" | "SUPPLY_TOWER" | "BUILD" | "UPGRADE" | "HAUL";
+  type: "HARVEST" | "SUPPLY_SPAWN" | "SUPPLY_TOWER" | "BUILD" | "UPGRADE" | "HAUL" | "DEFEND";
   targetId: Id<any>;
   priority: number;
   assignedCreep: string | null;

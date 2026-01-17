@@ -77,20 +77,16 @@ export class Spawner {
       }
     }
 
-    // Defender - spawn when hostiles detected
-    if (state.threat.hostiles.length > 0) {
-      const defenderCount = manager.getCreepCount("DEFENDER");
-      const maxDefenders = CONFIG.MAX_CREEPS.DEFENDER || 3;
-      if (defenderCount < Math.min(state.threat.hostiles.length, maxDefenders)) {
-        const body = this.getBody("DEFENDER", energyCapacity);
-        if (body.length > 0) {
-          queue.push({
-            role: "DEFENDER",
-            priority: 0, // Highest priority when hostiles present
-            body,
-            memory: this.getMemory("DEFENDER", state),
-          });
-        }
+    // Defender - use ColonyManager workforce calculation
+    if (manager.needsCreep("DEFENDER")) {
+      const body = this.getBody("DEFENDER", energyCapacity);
+      if (body.length > 0) {
+        queue.push({
+          role: "DEFENDER",
+          priority: 0, // Highest priority when hostiles present
+          body,
+          memory: this.getMemory("DEFENDER", state),
+        });
       }
     }
 

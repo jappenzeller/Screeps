@@ -11,6 +11,8 @@ import { spawnCreeps } from "./spawning/spawnCreeps";
 import { TowerManager } from "./structures/TowerManager";
 import { runCreep } from "./creeps/roles";
 import { ColonyManager } from "./core/ColonyManager";
+import { StatsCollector, EventType } from "./utils/StatsCollector";
+import { AWSExporter } from "./utils/AWSExporter";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -26,6 +28,9 @@ if (!global._initialized) {
  * Main game loop - runs every tick
  */
 export function loop(): void {
+  // Start stats tracking for this tick
+  StatsCollector.startTick();
+
   // Clean up dead creep memory
   cleanupMemory();
 
@@ -44,6 +49,14 @@ export function loop(): void {
   if (Game.time % 100 === 0) {
     logStatus();
   }
+
+  // Export data to memory segment for AWS Lambda (every 100 ticks)
+  if (Game.time % 100 === 0) {
+    AWSExporter.export();
+  }
+
+  // End stats tracking for this tick
+  StatsCollector.endTick();
 }
 
 function runRoom(room: Room): void {
@@ -69,6 +82,12 @@ function runCreeps(): void {
       runCreep(creep);
     } catch (error) {
       logger.error("Main", `Error running creep ${name}:`, error);
+      StatsCollector.recordEvent(EventType.CREEP_DEATH, creep.room?.name || "unknown", {
+        creep: name,
+        role: creep.memory.role,
+        error: String(error),
+        type: "ERROR",
+      });
     }
   }
 }

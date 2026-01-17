@@ -1,18 +1,16 @@
-import { logger } from "../utils/Logger";
-
 /**
  * Scout - Explores adjacent rooms and records intel
- * Stores room data in Memory.rooms for expansion planning
+ * Stores room data in Memory.rooms for expansion planning and remote mining
  */
 export function runScout(creep: Creep): void {
+  // Record intel about current room every tick
+  recordRoomIntel(creep.room);
+
   // Get target room from memory or find new one
   let targetRoom = creep.memory.targetRoom;
 
   if (!targetRoom || creep.room.name === targetRoom) {
-    // Record intel for current room
-    recordRoomIntel(creep.room);
-
-    // Find next room to scout
+    // Find new room to scout
     targetRoom = findNextScoutTarget(creep);
     creep.memory.targetRoom = targetRoom;
   }
@@ -21,13 +19,9 @@ export function runScout(creep: Creep): void {
     // No rooms to scout - return home
     const homeRoom = creep.memory.room;
     if (creep.room.name !== homeRoom) {
-      const exitDir = creep.room.findExitTo(homeRoom);
-      if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
-        const exit = creep.pos.findClosestByPath(exitDir);
-        if (exit) {
-          creep.moveTo(exit, { visualizePathStyle: { stroke: "#00ffff" } });
-        }
-      }
+      creep.moveTo(new RoomPosition(25, 25, homeRoom), {
+        visualizePathStyle: { stroke: "#00ffff" },
+      });
     }
     return;
   }
@@ -42,10 +36,7 @@ export function runScout(creep: Creep): void {
       }
     }
   } else {
-    // In target room - explore it
-    recordRoomIntel(creep.room);
-
-    // Move to center to get full visibility
+    // In target room - move to center for full visibility
     const center = new RoomPosition(25, 25, creep.room.name);
     if (!creep.pos.inRangeTo(center, 10)) {
       creep.moveTo(center, { visualizePathStyle: { stroke: "#00ffff" } });
@@ -55,19 +46,21 @@ export function runScout(creep: Creep): void {
 
 function recordRoomIntel(room: Room): void {
   if (!Memory.rooms) Memory.rooms = {};
-  if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
+  if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {} as RoomMemory;
 
-  const intel = Memory.rooms[room.name];
-  intel.lastScan = Game.time;
+  const mem = Memory.rooms[room.name];
 
-  // Record sources
+  // Basic info
+  mem.lastScan = Game.time;
+
+  // Sources
   const sources = room.find(FIND_SOURCES);
-  intel.sources = sources.map((s) => s.id);
+  mem.sources = sources.map((s) => s.id);
 
-  // Record controller info
+  // Controller
   if (room.controller) {
-    intel.controller = {
-      owner: room.controller.owner ? room.controller.owner.username : undefined,
+    mem.controller = {
+      owner: room.controller.owner?.username,
       level: room.controller.level,
       reservation: room.controller.reservation
         ? {
@@ -78,34 +71,39 @@ function recordRoomIntel(room: Room): void {
     };
   }
 
-  // Record hostiles
-  intel.hostiles = room.find(FIND_HOSTILE_CREEPS).length;
+  // Threats
+  const hostiles = room.find(FIND_HOSTILE_CREEPS);
+  mem.hostiles = hostiles.length;
 
-  // Record structures of interest
-  const structures = room.find(FIND_STRUCTURES);
-  intel.hasKeepers = structures.some((s) => s.structureType === STRUCTURE_KEEPER_LAIR);
-  intel.hasInvaderCore = structures.some((s) => s.structureType === STRUCTURE_INVADER_CORE);
+  mem.hasKeepers =
+    room.find(FIND_HOSTILE_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_KEEPER_LAIR,
+    }).length > 0;
 
-  logger.debug("Scout", `Recorded intel for ${room.name}: ${sources.length} sources`);
+  mem.hasInvaderCore =
+    room.find(FIND_HOSTILE_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_INVADER_CORE,
+    }).length > 0;
 }
 
 function findNextScoutTarget(creep: Creep): string | undefined {
   const homeRoom = creep.memory.room;
-  const exits = Game.map.describeExits(creep.room.name);
+  const exits = Game.map.describeExits(homeRoom);
 
   if (!exits) return undefined;
 
-  // Find rooms we haven't scouted recently
+  // Find adjacent rooms that haven't been scouted recently
   const candidates: string[] = [];
 
   for (const dir in exits) {
     const roomName = exits[dir as ExitKey];
     if (!roomName) continue;
 
-    const intel = Memory.rooms ? Memory.rooms[roomName] : undefined;
+    const mem = Memory.rooms?.[roomName];
+    const lastScan = mem?.lastScan || 0;
 
-    // Scout if never visited or data is old (>1000 ticks)
-    if (!intel || !intel.lastScan || Game.time - intel.lastScan > 1000) {
+    // Scout if never scanned or >2000 ticks old
+    if (Game.time - lastScan > 2000) {
       candidates.push(roomName);
     }
   }
