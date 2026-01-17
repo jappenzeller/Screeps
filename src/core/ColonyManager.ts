@@ -38,6 +38,16 @@ export interface Task {
   createdAt: number;
 }
 
+/**
+ * Workforce needs by role
+ */
+export interface WorkforceNeeds {
+  HARVESTER: number;
+  HAULER: number;
+  UPGRADER: number;
+  BUILDER: number;
+}
+
 // Singleton instances per room
 const instances: Map<string, ColonyManager> = new Map();
 
@@ -124,8 +134,19 @@ export class ColonyManager {
     const state = this.getState();
     if (!state) return [];
 
+    const phase = this.getPhase();
     const tasks: Task[] = [];
     const existingTasks = this.getTasks();
+
+    // Priority adjustments by phase (negative = more urgent)
+    const priorityMod: Record<ColonyPhase, Record<string, number>> = {
+      [ColonyPhase.BOOTSTRAP]: { HARVEST: -2, SUPPLY_SPAWN: -2, UPGRADE: +2, BUILD: +1, HAUL: 0 },
+      [ColonyPhase.DEVELOPING]: { HARVEST: 0, SUPPLY_SPAWN: -1, UPGRADE: 0, BUILD: 0, HAUL: 0 },
+      [ColonyPhase.STABLE]: { HARVEST: 0, SUPPLY_SPAWN: 0, UPGRADE: -1, BUILD: 0, HAUL: 0 },
+      [ColonyPhase.EMERGENCY]: { HARVEST: -2, SUPPLY_SPAWN: -3, UPGRADE: +5, BUILD: +3, HAUL: -1 },
+    };
+
+    const mod = priorityMod[phase];
 
     // Helper to check if a task type already exists (not completed)
     const hasActiveTask = (type: TaskType, targetId?: Id<any>): boolean => {
@@ -134,17 +155,18 @@ export class ColonyManager {
       );
     };
 
-    // Priority 1: SUPPLY_SPAWN - one task for the spawn cluster
+    // SUPPLY_SPAWN - critical when spawn needs energy
     if (state.energy.available < state.energy.capacity) {
       if (!hasActiveTask("SUPPLY_SPAWN")) {
-        // Use spawn as the target for the cluster
         const spawn = state.structures.spawns[0];
         if (spawn) {
+          // Extra urgent if very low energy
+          const basePriority = state.energy.available < 300 ? 0 : 1;
           tasks.push({
             id: `supply_spawn_${spawn.id}_${Game.time}`,
             type: "SUPPLY_SPAWN",
             targetId: spawn.id,
-            priority: 1,
+            priority: basePriority + (mod.SUPPLY_SPAWN || 0),
             assignedCreep: null,
             createdAt: Game.time,
           });
@@ -152,39 +174,39 @@ export class ColonyManager {
       }
     }
 
-    // Priority 2: HARVEST - one task per source without assigned harvester
+    // HARVEST - one task per source without assigned harvester
     for (const assignment of state.sourceAssignments) {
-      // Only generate if no harvester assigned to this source
       if (!assignment.creepName && !hasActiveTask("HARVEST", assignment.sourceId)) {
         tasks.push({
           id: `harvest_${assignment.sourceId}_${Game.time}`,
           type: "HARVEST",
           targetId: assignment.sourceId,
-          priority: 2,
+          priority: 2 + (mod.HARVEST || 0),
           assignedCreep: null,
           createdAt: Game.time,
         });
       }
     }
 
-    // Priority 3: SUPPLY_TOWER - towers below 500 energy
+    // SUPPLY_TOWER - towers below 500 energy
     for (const tower of state.structures.towers) {
       if (tower.store[RESOURCE_ENERGY] < 500 && !hasActiveTask("SUPPLY_TOWER", tower.id)) {
+        // Tower supply is more urgent during emergencies (hostiles)
+        const basePriority = phase === ColonyPhase.EMERGENCY ? 1 : 3;
         tasks.push({
           id: `supply_tower_${tower.id}_${Game.time}`,
           type: "SUPPLY_TOWER",
           targetId: tower.id,
-          priority: 3,
+          priority: basePriority,
           assignedCreep: null,
           createdAt: Game.time,
         });
       }
     }
 
-    // Priority 4: BUILD - max 3 active, prioritize container > extension > road
+    // BUILD - max 3 active, prioritize container > extension > road
     const existingBuildTasks = existingTasks.filter((t) => t.type === "BUILD").length;
     if (existingBuildTasks < 3 && state.constructionSites.length > 0) {
-      // Sort sites by priority: container > extension > road > other
       const sortedSites = [...state.constructionSites].sort((a, b) => {
         const priorityOrder: Record<string, number> = {
           [STRUCTURE_CONTAINER]: 1,
@@ -196,7 +218,6 @@ export class ColonyManager {
         return aPriority - bPriority;
       });
 
-      // Add tasks up to max 3
       let buildTasksToAdd = 3 - existingBuildTasks;
       for (const site of sortedSites) {
         if (buildTasksToAdd <= 0) break;
@@ -205,7 +226,7 @@ export class ColonyManager {
             id: `build_${site.id}_${Game.time}`,
             type: "BUILD",
             targetId: site.id,
-            priority: 4,
+            priority: 4 + (mod.BUILD || 0),
             assignedCreep: null,
             createdAt: Game.time,
           });
@@ -214,7 +235,7 @@ export class ColonyManager {
       }
     }
 
-    // Priority 5: UPGRADE - always 1-2 upgrade tasks available
+    // UPGRADE - always 1-2 upgrade tasks available
     const controller = state.room.controller;
     if (controller) {
       const existingUpgradeTasks = existingTasks.filter((t) => t.type === "UPGRADE").length;
@@ -224,21 +245,21 @@ export class ColonyManager {
           id: `upgrade_${controller.id}_${Game.time}_${i}`,
           type: "UPGRADE",
           targetId: controller.id,
-          priority: 5,
+          priority: 5 + (mod.UPGRADE || 0),
           assignedCreep: null,
           createdAt: Game.time,
         });
       }
     }
 
-    // Priority 6: HAUL - containers with > 500 energy or dropped resources
+    // HAUL - containers with > 500 energy or dropped resources
     for (const container of state.energy.containersWithEnergy) {
       if (container.amount > 500 && !hasActiveTask("HAUL", container.id)) {
         tasks.push({
           id: `haul_${container.id}_${Game.time}`,
           type: "HAUL",
           targetId: container.id,
-          priority: 6,
+          priority: 6 + (mod.HAUL || 0),
           assignedCreep: null,
           createdAt: Game.time,
         });
@@ -252,7 +273,7 @@ export class ColonyManager {
           id: `haul_${resource.id}_${Game.time}`,
           type: "HAUL",
           targetId: resource.id,
-          priority: 6,
+          priority: 6 + (mod.HAUL || 0),
           assignedCreep: null,
           createdAt: Game.time,
         });
@@ -435,6 +456,67 @@ export class ColonyManager {
       task.assignedCreep = null;
       Memory.rooms[this.roomName].tasks = tasks;
     }
+  }
+
+  /**
+   * Calculate how many creeps of each role we need
+   */
+  getWorkforceNeeds(): WorkforceNeeds {
+    const state = this.getState();
+    if (!state) {
+      return { HARVESTER: 2, HAULER: 0, UPGRADER: 1, BUILDER: 0 };
+    }
+
+    const phase = this.getPhase();
+    const sources = state.sources.length;
+    const hasContainers = state.structures.containers.length > 0;
+    const hasStorage = !!state.structures.storage;
+    const constructionSites = state.constructionSites.length;
+
+    // Harvesters: 1 per source with containers, 2 per source without
+    const harvesters = hasContainers ? sources : sources * 2;
+
+    // Haulers: 0 without containers, 2 with containers, 3 with storage
+    let haulers = 0;
+    if (hasContainers) haulers = 2;
+    if (hasStorage) haulers = 3;
+
+    // Upgraders: varies by phase
+    let upgraders = 1;
+    if (phase === ColonyPhase.DEVELOPING) upgraders = 2;
+    if (phase === ColonyPhase.STABLE) upgraders = 3;
+
+    // Builders: 0 if no sites, 1-2 based on site count
+    let builders = 0;
+    if (constructionSites > 0) {
+      builders = Math.min(2, Math.ceil(constructionSites / 5));
+    }
+
+    return {
+      HARVESTER: harvesters,
+      HAULER: haulers,
+      UPGRADER: upgraders,
+      BUILDER: builders,
+    };
+  }
+
+  /**
+   * Check if we need more of a specific role
+   */
+  needsCreep(role: string): boolean {
+    const needs = this.getWorkforceNeeds();
+    const target = needs[role as keyof WorkforceNeeds] ?? 0;
+    const current = this.getCreepCount(role);
+    return current < target;
+  }
+
+  /**
+   * Get count of creeps with a role in this room
+   */
+  getCreepCount(role: string): number {
+    return Object.values(Game.creeps).filter(
+      (c) => c.memory.room === this.roomName && c.memory.role === role
+    ).length;
   }
 
   /**

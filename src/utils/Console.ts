@@ -3,6 +3,8 @@
  * Usage: In Screeps console, type: help(), status(), creeps(), etc.
  */
 
+import { ColonyManager } from "../core/ColonyManager";
+
 // Screeps global object
 declare const global: {
   [key: string]: unknown;
@@ -14,6 +16,8 @@ export function registerConsoleCommands(): void {
     console.log(`
 === Screeps Swarm Console Commands ===
 status()         - Overview of all colonies
+colony()         - Detailed ColonyManager status (phase, workforce, tasks)
+colony("W1N1")   - Colony status for specific room
 creeps()         - List all creeps
 creeps("ROLE")   - List creeps by role (HARVESTER, HAULER, UPGRADER, BUILDER)
 rooms()          - List owned rooms
@@ -56,6 +60,50 @@ construction()   - Show construction status and priorities
     }
 
     console.log(lines.join("\n"));
+  };
+
+  // Colony manager status - detailed view
+  global.colony = (roomName?: string) => {
+    const rooms = roomName
+      ? [roomName]
+      : Object.keys(Game.rooms).filter((r) => Game.rooms[r].controller?.my);
+
+    for (const name of rooms) {
+      const manager = ColonyManager.getInstance(name);
+      const state = manager.getState();
+      const phase = manager.getPhase();
+      const needs = manager.getWorkforceNeeds();
+      const tasks = manager.getTasks();
+
+      console.log(`\n=== ${name} ===`);
+      console.log(`Phase: ${phase}`);
+      console.log(`RCL: ${state?.rcl || "?"}`);
+      console.log(`Energy: ${state?.energy.available}/${state?.energy.capacity}`);
+
+      // Workforce
+      console.log(`\nWorkforce:`);
+      for (const [role, target] of Object.entries(needs)) {
+        const current = manager.getCreepCount(role);
+        const status = current >= target ? "✓" : "✗";
+        console.log(`  ${status} ${role}: ${current}/${target}`);
+      }
+
+      // Tasks
+      console.log(`\nTasks (${tasks.length}):`);
+      const byType: Record<string, number> = {};
+      const assigned: Record<string, number> = {};
+      for (const t of tasks) {
+        byType[t.type] = (byType[t.type] || 0) + 1;
+        if (t.assignedCreep) {
+          assigned[t.type] = (assigned[t.type] || 0) + 1;
+        }
+      }
+      for (const [type, count] of Object.entries(byType)) {
+        console.log(`  ${type}: ${assigned[type] || 0}/${count} assigned`);
+      }
+    }
+
+    return "OK";
   };
 
   // List creeps

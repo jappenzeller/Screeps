@@ -2,6 +2,7 @@ import { logger } from "../utils/Logger";
 import { CONFIG, Role } from "../config";
 import { Colony, ColonyState } from "./Colony";
 import { ROLE_BODIES } from "../creeps/roles";
+import { ColonyManager } from "./ColonyManager";
 
 interface SpawnRequest {
   role: Role;
@@ -58,11 +59,12 @@ export class Spawner {
   private buildSpawnQueue(state: ColonyState): SpawnRequest[] {
     const queue: SpawnRequest[] = [];
     const energyCapacity = state.energy.capacity;
+    const manager = ColonyManager.getInstance(this.colony.roomName);
 
-    // Core economy roles - always check
+    // Core economy roles - use ColonyManager for workforce decisions
     const coreRoles: Role[] = ["HARVESTER", "HAULER", "UPGRADER", "BUILDER"];
     for (const role of coreRoles) {
-      if (this.colony.needsCreep(role)) {
+      if (manager.needsCreep(role)) {
         const body = this.getBody(role, energyCapacity);
         if (body.length > 0) {
           queue.push({
@@ -77,7 +79,7 @@ export class Spawner {
 
     // Defender - spawn when hostiles detected
     if (state.threat.hostiles.length > 0) {
-      const defenderCount = this.colony.getCreepCount("DEFENDER");
+      const defenderCount = manager.getCreepCount("DEFENDER");
       const maxDefenders = CONFIG.MAX_CREEPS.DEFENDER || 3;
       if (defenderCount < Math.min(state.threat.hostiles.length, maxDefenders)) {
         const body = this.getBody("DEFENDER", energyCapacity);
@@ -95,7 +97,7 @@ export class Spawner {
     // Scout - spawn 1 for exploration at RCL 3+
     const room = Game.rooms[this.colony.roomName];
     if (room && room.controller && room.controller.level >= 3) {
-      const scoutCount = this.colony.getCreepCount("SCOUT");
+      const scoutCount = manager.getCreepCount("SCOUT");
       const minScouts = CONFIG.MIN_CREEPS.SCOUT || 0;
       if (scoutCount < minScouts) {
         const body = this.getBody("SCOUT", energyCapacity);
@@ -114,7 +116,7 @@ export class Spawner {
     if (room && room.controller && room.controller.level >= 4 && energyCapacity >= 550) {
       const remoteRooms = this.getRemoteMiningTargets();
       if (remoteRooms.length > 0) {
-        const remoteMinerCount = this.colony.getCreepCount("REMOTE_MINER");
+        const remoteMinerCount = manager.getCreepCount("REMOTE_MINER");
         const maxRemoteMiners = Math.min(remoteRooms.length * 2, CONFIG.MAX_CREEPS.REMOTE_MINER || 4);
         if (remoteMinerCount < maxRemoteMiners) {
           const body = this.getBody("REMOTE_MINER", energyCapacity);

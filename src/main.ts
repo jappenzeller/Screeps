@@ -74,12 +74,25 @@ function runCreeps(): void {
 }
 
 function cleanupMemory(): void {
-  // Only run every 100 ticks
-  if (Game.time % 100 !== 0) return;
-
+  // Dead creep cleanup - EVERY tick (it's cheap)
   for (const name in Memory.creeps) {
     if (!Game.creeps[name]) {
       delete Memory.creeps[name];
+    }
+  }
+
+  // Room memory cleanup - less frequent
+  if (Game.time % 100 === 0) {
+    for (const roomName in Memory.rooms) {
+      // Clean up task references to dead creeps
+      const roomMem = Memory.rooms[roomName];
+      if (roomMem.tasks) {
+        for (const task of roomMem.tasks) {
+          if (task.assignedCreep && !Game.creeps[task.assignedCreep]) {
+            task.assignedCreep = null;
+          }
+        }
+      }
     }
   }
 }

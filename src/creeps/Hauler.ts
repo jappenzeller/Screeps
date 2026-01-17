@@ -1,3 +1,5 @@
+import { ColonyManager } from "../core/ColonyManager";
+
 /**
  * Hauler: Picks up energy from containers/ground and delivers to structures.
  * Simple implementation - no task manager dependency.
@@ -30,6 +32,28 @@ function moveOffRoad(creep: Creep): void {
 }
 
 export function runHauler(creep: Creep): void {
+  const manager = ColonyManager.getInstance(creep.memory.room);
+
+  // Task tracking
+  if (creep.memory.taskId) {
+    const tasks = manager.getTasks();
+    const myTask = tasks.find((t) => t.id === creep.memory.taskId);
+    if (!myTask || myTask.assignedCreep !== creep.name) {
+      delete creep.memory.taskId;
+    }
+  }
+
+  // Request task based on current state
+  if (!creep.memory.taskId) {
+    const task = manager.getAvailableTask(creep);
+    if (task) {
+      // Accept SUPPLY_SPAWN, SUPPLY_TOWER, or HAUL tasks
+      if (["SUPPLY_SPAWN", "SUPPLY_TOWER", "HAUL"].includes(task.type)) {
+        manager.assignTask(task.id, creep.name);
+      }
+    }
+  }
+
   // Initialize state if needed
   if (!creep.memory.state) {
     creep.memory.state = creep.store[RESOURCE_ENERGY] > 0 ? "DELIVERING" : "COLLECTING";
@@ -37,6 +61,10 @@ export function runHauler(creep: Creep): void {
 
   // State transitions
   if (creep.memory.state === "DELIVERING" && creep.store[RESOURCE_ENERGY] === 0) {
+    // Task complete when we finish delivering
+    if (creep.memory.taskId) {
+      manager.completeTask(creep.memory.taskId);
+    }
     creep.memory.state = "COLLECTING";
     creep.say("🔄");
   }
@@ -48,7 +76,7 @@ export function runHauler(creep: Creep): void {
 
   // Also switch to deliver earlier if spawn critically needs energy
   if (creep.memory.state === "COLLECTING" && creep.store[RESOURCE_ENERGY] >= 50) {
-    const spawnCritical = creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.5;
+    const spawnCritical = creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.3;
     if (spawnCritical) {
       creep.memory.state = "DELIVERING";
       creep.say("⚡");

@@ -7,8 +7,9 @@ You are developing a Screeps bot - an AI for a real-time strategy MMO where you 
 This is a TypeScript Screeps bot targeting the official MMO server (shard0). The codebase uses Rollup for bundling and deploys via the Screeps API. There is also an AWS monitoring stack (Fargate + Lambda) for external alerting.
 
 ### Current State
-- Functional RCL 1-4 economy with role-based creeps
-- ColonyManager for centralized task generation (foundation for future task-based creeps)
+- Functional RCL 1-4 economy with task-based creeps
+- ColonyManager as single source of truth for colony coordination
+- Phase-aware task priorities (BOOTSTRAP, DEVELOPING, STABLE, EMERGENCY)
 - Simple structure placement and spawning
 - Basic tower defense
 - No link/terminal/lab/factory management
@@ -16,10 +17,13 @@ This is a TypeScript Screeps bot targeting the official MMO server (shard0). The
 
 ### Core Systems
 
-- **ColonyManager** (`src/core/ColonyManager.ts`): Central coordinator that generates tasks based on room state. Tasks stored in `Memory.rooms[name].tasks`. Currently generates tasks but creeps don't consume them yet.
+- **ColonyManager** (`src/core/ColonyManager.ts`): Central coordinator that generates tasks and manages workforce. Tasks stored in `Memory.rooms[name].tasks`. Creeps request tasks via `getAvailableTask()` and spawning uses `needsCreep()` for workforce decisions.
+  - Task types: `HARVEST`, `SUPPLY_SPAWN`, `SUPPLY_TOWER`, `BUILD`, `UPGRADE`, `HAUL`
+  - Colony phases: `BOOTSTRAP` (RCL 1-2), `DEVELOPING` (RCL 3-4), `STABLE` (RCL 5+), `EMERGENCY` (under attack)
+  - Priorities adjust by phase (e.g., SUPPLY_SPAWN more urgent in BOOTSTRAP/EMERGENCY)
 - **ColonyStateManager** (`src/core/ColonyState.ts`): Cached room state with tiered refresh intervals.
-- **Simple spawning** (`src/spawning/spawnCreeps.ts`): Predictable creep counts based on room state.
-- **Simple structure placement** (`src/structures/placeStructures.ts`): One structure per tick, priority-based.
+- **Spawning** (`src/spawning/spawnCreeps.ts`): Uses ColonyManager.needsCreep() for workforce decisions.
+- **Structure placement** (`src/structures/placeStructures.ts`): One structure per tick, priority-based.
 
 ### Tech Stack
 - TypeScript with strict mode
@@ -344,17 +348,25 @@ When adding a new system:
 
 ## Current Codebase Issues to Fix
 
-1. **ColonyManager tasks not consumed** - Tasks are generated but creeps still use role-based logic
+1. **Harvester static miner** - No handling for full container; creep just idles
 
-2. **Harvester static miner** - No handling for full container; creep just idles
+2. **RemoteMiner** - No distance limiting on target room selection
 
-3. **RemoteMiner** - No distance limiting on target room selection
+3. **Reserver/Claimer** - Listed in roles.ts but not implemented
 
-4. **Reserver/Claimer** - Listed in roles.ts but not implemented
+4. **No link support** - Missing entirely
 
-5. **No link support** - Missing entirely
+5. **AWS task-definition.json** - Hardcoded Screeps token, should use Secrets Manager
 
-6. **AWS task-definition.json** - Hardcoded Screeps token, should use Secrets Manager
+## Console Commands
+
+- `colony()` - Shows ColonyManager status for all owned rooms (phase, workforce, tasks)
+- `colony("W1N1")` - Shows status for specific room
+- `status()` - Quick overview of all colonies
+- `tasks()` - Shows current task assignments
+- `creeps()` - List all creeps
+- `cpu()` - CPU and bucket status
+- `construction()` - Show construction status and priorities
 
 ---
 

@@ -19,6 +19,7 @@ interface CreepMemory {
 
   // Task system
   taskId?: string;
+  targetSiteId?: Id<ConstructionSite>;
   state?: CreepState;
   emergency?: boolean;
 

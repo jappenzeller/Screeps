@@ -1,9 +1,32 @@
+import { ColonyManager } from "../core/ColonyManager";
+
 /**
  * Harvester: Worker that harvests energy and delivers to spawn/extensions.
  * Early game: Does both harvesting AND delivering (bootstrap)
  * Late game: If container at source, becomes static miner (sits on container)
  */
 export function runHarvester(creep: Creep): void {
+  const manager = ColonyManager.getInstance(creep.memory.room);
+
+  // Task tracking
+  if (creep.memory.taskId) {
+    const tasks = manager.getTasks();
+    const myTask = tasks.find((t) => t.id === creep.memory.taskId);
+    if (!myTask || myTask.assignedCreep !== creep.name) {
+      delete creep.memory.taskId;
+    }
+  }
+
+  // Request HARVEST task if we don't have one
+  if (!creep.memory.taskId) {
+    const task = manager.getAvailableTask(creep);
+    if (task && task.type === "HARVEST") {
+      manager.assignTask(task.id, creep.name);
+      // Store source from task
+      creep.memory.sourceId = task.targetId as Id<Source>;
+    }
+  }
+
   // Initialize state
   if (!creep.memory.state) {
     creep.memory.state = creep.store[RESOURCE_ENERGY] > 0 ? "DELIVERING" : "HARVESTING";

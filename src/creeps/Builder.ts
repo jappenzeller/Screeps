@@ -1,3 +1,5 @@
+import { ColonyManager } from "../core/ColonyManager";
+
 /**
  * Builder: Builds construction sites and repairs structures.
  * Simple implementation - no external dependencies.
@@ -30,6 +32,27 @@ function moveOffRoad(creep: Creep): void {
 }
 
 export function runBuilder(creep: Creep): void {
+  const manager = ColonyManager.getInstance(creep.memory.room);
+
+  // Task tracking
+  if (creep.memory.taskId) {
+    const tasks = manager.getTasks();
+    const myTask = tasks.find((t) => t.id === creep.memory.taskId);
+    if (!myTask || myTask.assignedCreep !== creep.name) {
+      delete creep.memory.taskId;
+    }
+  }
+
+  // Request BUILD task if idle
+  if (!creep.memory.taskId) {
+    const task = manager.getAvailableTask(creep);
+    if (task && task.type === "BUILD") {
+      manager.assignTask(task.id, creep.name);
+      // Store target site
+      creep.memory.targetSiteId = task.targetId as Id<ConstructionSite>;
+    }
+  }
+
   // Initialize state
   if (!creep.memory.state) {
     creep.memory.state = creep.store[RESOURCE_ENERGY] > 0 ? "BUILDING" : "COLLECTING";
@@ -53,38 +76,33 @@ export function runBuilder(creep: Creep): void {
 }
 
 function buildOrRepair(creep: Creep): void {
-  // Priority 1: Construction sites (non-roads first, then roads from spawn outward)
-  const sites = creep.room.find(FIND_CONSTRUCTION_SITES);
+  // Priority 1: Construction sites
+  // Prefer assigned target from task
+  let site: ConstructionSite | null = null;
 
-  if (sites.length > 0) {
-    const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
-
-    // Sort: non-roads first, then roads by distance from spawn (closer first)
-    sites.sort((a, b) => {
-      const aIsRoad = a.structureType === STRUCTURE_ROAD;
-      const bIsRoad = b.structureType === STRUCTURE_ROAD;
-
-      // Non-roads before roads
-      if (!aIsRoad && bIsRoad) return -1;
-      if (aIsRoad && !bIsRoad) return 1;
-
-      // For roads, sort by distance from spawn (closer = higher priority)
-      if (aIsRoad && bIsRoad && spawn) {
-        return a.pos.getRangeTo(spawn) - b.pos.getRangeTo(spawn);
+  if (creep.memory.targetSiteId) {
+    site = Game.getObjectById(creep.memory.targetSiteId);
+    if (!site) {
+      // Site complete or removed
+      delete creep.memory.targetSiteId;
+      if (creep.memory.taskId) {
+        const manager = ColonyManager.getInstance(creep.memory.room);
+        manager.completeTask(creep.memory.taskId);
       }
-
-      return 0;
-    });
-
-    // Build closest reachable site
-    const site = creep.pos.findClosestByPath(sites);
-    if (site) {
-      const result = creep.build(site);
-      if (result === ERR_NOT_IN_RANGE) {
-        creep.moveTo(site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
-      }
-      return;
     }
+  }
+
+  // Fallback to closest site
+  if (!site) {
+    site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+  }
+
+  if (site) {
+    const result = creep.build(site);
+    if (result === ERR_NOT_IN_RANGE) {
+      creep.moveTo(site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+    }
+    return;
   }
 
   // Priority 2: Repair damaged structures
