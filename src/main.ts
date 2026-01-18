@@ -13,6 +13,7 @@ import { runCreep } from "./creeps/roles";
 import { ColonyManager } from "./core/ColonyManager";
 import { StatsCollector, EventType } from "./utils/StatsCollector";
 import { AWSExporter } from "./utils/AWSExporter";
+import { checkAutoSafeMode } from "./defense/AutoSafeMode";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -60,17 +61,20 @@ export function loop(): void {
 }
 
 function runRoom(room: Room): void {
-  // 0. Run ColonyManager to generate/refresh tasks
+  // 0. Check auto safe mode (defense emergency)
+  checkAutoSafeMode(room);
+
+  // 1. Run ColonyManager to generate/refresh tasks
   const manager = ColonyManager.getInstance(room.name);
   manager.run();
 
-  // 1. Place construction sites (simple, direct)
+  // 2. Place construction sites (simple, direct)
   placeStructures(room);
 
-  // 2. Spawn creeps
+  // 3. Spawn creeps
   spawnCreeps(room);
 
-  // 3. Run towers
+  // 4. Run towers
   const towerManager = new TowerManager(room);
   towerManager.run();
 }

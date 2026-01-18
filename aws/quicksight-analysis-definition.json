@@ -1,0 +1,452 @@
+{
+  "DataSetIdentifierDeclarations": [
+    {
+      "Identifier": "screeps-snapshots",
+      "DataSetArn": "arn:aws:quicksight:us-east-1:488218643044:dataset/screeps-snapshots"
+    }
+  ],
+  "Sheets": [
+    {
+      "SheetId": "colony-overview",
+      "Name": "Colony Overview",
+      "Visuals": [
+        {
+          "LineChartVisual": {
+            "VisualId": "energy-over-time",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Energy Stored Over Time"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "energystored-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "energystored"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "creeps-over-time",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Total Creeps Over Time"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-2",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-2"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "creepstotal-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "creepstotal"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-2",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-2",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "cpu-over-time",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "CPU Usage Over Time"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-3",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-3"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "cpuused-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "cpuused"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-3",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-3",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "bucket-over-time",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "CPU Bucket Over Time"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-4",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-4"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "cpubucket-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "cpubucket"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-4",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-4",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "rcl-progress",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "RCL Progress Over Time"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-5",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-5"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "rclprogress-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "rclprogress"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "MAX"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-5",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-5",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "gametick-progress",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Game Tick Over Time"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-6",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-6"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "gametick-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "gametick"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "MAX"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-6",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-6",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "Layouts": [
+        {
+          "Configuration": {
+            "GridLayout": {
+              "Elements": [
+                {
+                  "ElementId": "energy-over-time",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 0,
+                  "ColumnSpan": 18,
+                  "RowIndex": 0,
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "creeps-over-time",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 18,
+                  "ColumnSpan": 18,
+                  "RowIndex": 0,
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "cpu-over-time",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 0,
+                  "ColumnSpan": 12,
+                  "RowIndex": 8,
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "bucket-over-time",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 12,
+                  "ColumnSpan": 12,
+                  "RowIndex": 8,
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "rcl-progress",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 24,
+                  "ColumnSpan": 12,
+                  "RowIndex": 8,
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "gametick-progress",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 0,
+                  "ColumnSpan": 36,
+                  "RowIndex": 16,
+                  "RowSpan": 6
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

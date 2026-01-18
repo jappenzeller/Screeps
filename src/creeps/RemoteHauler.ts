@@ -1,3 +1,5 @@
+import { moveToRoom } from "../utils/movement";
+
 /**
  * RemoteHauler - Collects energy from remote mining rooms and delivers home
  * State machine: COLLECTING (in remote room) or DELIVERING (bringing home)
@@ -34,13 +36,7 @@ export function runRemoteHauler(creep: Creep): void {
 function collect(creep: Creep, targetRoom: string): void {
   // Travel to target room if not there
   if (creep.room.name !== targetRoom) {
-    const exitDir = creep.room.findExitTo(targetRoom);
-    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
-      const exit = creep.pos.findClosestByPath(exitDir);
-      if (exit) {
-        creep.moveTo(exit, { visualizePathStyle: { stroke: "#ffaa00" } });
-      }
-    }
+    moveToRoom(creep, targetRoom, "#ffaa00");
     return;
   }
 
@@ -51,13 +47,7 @@ function collect(creep: Creep, targetRoom: string): void {
   );
   if (dangerous.length > 0) {
     // Flee to home
-    const exitDir = creep.room.findExitTo(creep.memory.room);
-    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
-      const exit = creep.pos.findClosestByPath(exitDir);
-      if (exit) {
-        creep.moveTo(exit, { visualizePathStyle: { stroke: "#ff0000" } });
-      }
-    }
+    moveToRoom(creep, creep.memory.room, "#ff0000");
     return;
   }
 
@@ -106,13 +96,7 @@ function collect(creep: Creep, targetRoom: string): void {
 function deliver(creep: Creep, homeRoom: string): void {
   // Travel to home room if not there
   if (creep.room.name !== homeRoom) {
-    const exitDir = creep.room.findExitTo(homeRoom);
-    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
-      const exit = creep.pos.findClosestByPath(exitDir);
-      if (exit) {
-        creep.moveTo(exit, { visualizePathStyle: { stroke: "#00ff00" } });
-      }
-    }
+    moveToRoom(creep, homeRoom, "#00ff00");
     return;
   }
 

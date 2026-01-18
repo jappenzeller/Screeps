@@ -4,6 +4,7 @@
  */
 
 import { ColonyManager } from "../core/ColonyManager";
+import { getSafeModeStatus } from "../defense/AutoSafeMode";
 
 // Screeps global object
 declare const global: {
@@ -32,6 +33,8 @@ tasks("W1N1")    - Show tasks for specific room
 creepStates()    - Show current creep state assignments
 remote()         - Remote mining status and targets
 threats()        - Show hostile creeps and threat levels
+safemode()       - Show safe mode status and threat assessment
+safemode("W1N1") - Safe mode status for specific room
 stats()          - Show collected stats for AWS monitoring
 clearStats()     - Clear all collected stats
 awsExport()      - Show AWS memory segment export status
@@ -426,6 +429,23 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       }
     }
 
+    return "OK";
+  };
+
+  // Safe mode status
+  global.safemode = (roomName?: string) => {
+    const room = roomName
+      ? Game.rooms[roomName]
+      : Object.values(Game.rooms).find(r => r.controller?.my);
+
+    if (!room) {
+      console.log("No room found");
+      return "Error";
+    }
+
+    const status = getSafeModeStatus(room);
+    console.log(`=== Safe Mode Status for ${room.name} ===`);
+    console.log(JSON.stringify(status, null, 2));
     return "OK";
   };
 

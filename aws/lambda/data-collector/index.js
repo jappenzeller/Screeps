@@ -1,13 +1,16 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const secretsClient = new SecretsManagerClient({});
+const s3Client = new S3Client({});
 
 const SNAPSHOTS_TABLE = process.env.SNAPSHOTS_TABLE;
 const EVENTS_TABLE = process.env.EVENTS_TABLE;
+const ANALYTICS_BUCKET = process.env.ANALYTICS_BUCKET;
 const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
 const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "7", 10);
 
@@ -117,6 +120,67 @@ async function storeEvents(events, roomName) {
   console.log(`Stored ${events.length} events`);
 }
 
+async function writeToS3(snapshot) {
+  if (!ANALYTICS_BUCKET) {
+    console.log("ANALYTICS_BUCKET not configured, skipping S3 export");
+    return;
+  }
+
+  const now = new Date();
+  const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+  const hourStr = now.toISOString().split("T")[1].split(":")[0]; // HH
+
+  // Flatten snapshot data for Athena
+  for (const colony of snapshot.colonies || []) {
+    const flatRecord = {
+      timestamp: now.toISOString(),
+      timestampMs: Date.now(),
+      gameTick: snapshot.gameTick,
+      shard: snapshot.shard,
+      roomName: colony.roomName,
+      rcl: colony.rcl,
+      rclProgress: colony.rclProgress,
+      rclProgressTotal: colony.rclProgressTotal,
+      energyAvailable: colony.energy?.available || 0,
+      energyCapacity: colony.energy?.capacity || 0,
+      energyStored: colony.energy?.stored || 0,
+      creepsTotal: colony.creeps?.total || 0,
+      creepsHarvester: colony.creeps?.byRole?.HARVESTER || 0,
+      creepsHauler: colony.creeps?.byRole?.HAULER || 0,
+      creepsUpgrader: colony.creeps?.byRole?.UPGRADER || 0,
+      creepsBuilder: colony.creeps?.byRole?.BUILDER || 0,
+      creepsDefender: colony.creeps?.byRole?.DEFENDER || 0,
+      creepsRemoteMiner: colony.creeps?.byRole?.REMOTE_MINER || 0,
+      creepsRemoteHauler: colony.creeps?.byRole?.REMOTE_HAULER || 0,
+      creepsReserver: colony.creeps?.byRole?.RESERVER || 0,
+      hostileCount: colony.threats?.hostileCount || 0,
+      hostileDPS: colony.threats?.hostileDPS || 0,
+      constructionSites: colony.structures?.constructionSites || 0,
+      damagedStructures: colony.structures?.damagedCount || 0,
+      cpuUsed: snapshot.global?.cpu?.used || 0,
+      cpuLimit: snapshot.global?.cpu?.limit || 0,
+      cpuBucket: snapshot.global?.cpu?.bucket || 0,
+      gclLevel: snapshot.global?.gcl?.level || 0,
+      gclProgress: snapshot.global?.gcl?.progress || 0,
+      gclProgressTotal: snapshot.global?.gcl?.progressTotal || 0,
+    };
+
+    // Write as newline-delimited JSON (one record per line)
+    const key = `snapshots/dt=${dateStr}/hour=${hourStr}/${colony.roomName}_${snapshot.gameTick}.json`;
+
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: ANALYTICS_BUCKET,
+        Key: key,
+        Body: JSON.stringify(flatRecord),
+        ContentType: "application/json",
+      })
+    );
+  }
+
+  console.log(`Wrote ${snapshot.colonies?.length || 0} records to S3`);
+}
+
 export async function handler(event) {
   console.log("Data collector starting...");
 
@@ -131,8 +195,11 @@ export async function handler(event) {
 
     console.log(`Received data from tick ${data.gameTick}, ${data.colonies?.length || 0} colonies`);
 
-    // Store snapshots
+    // Store snapshots to DynamoDB
     await storeSnapshot(data);
+
+    // Store snapshots to S3 for analytics
+    await writeToS3(data);
 
     // Store events if present
     if (data.events && data.events.length > 0) {

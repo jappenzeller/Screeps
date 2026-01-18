@@ -1,3 +1,5 @@
+import { moveToRoom } from "../utils/movement";
+
 /**
  * Scout - Explores adjacent rooms and records intel
  * Stores room data in Memory.rooms for expansion planning and remote mining
@@ -16,25 +18,24 @@ export function runScout(creep: Creep): void {
   }
 
   if (!targetRoom) {
-    // No rooms to scout - return home
+    // No rooms to scout - return home and idle at center
     const homeRoom = creep.memory.room;
     if (creep.room.name !== homeRoom) {
-      creep.moveTo(new RoomPosition(25, 25, homeRoom), {
-        visualizePathStyle: { stroke: "#00ffff" },
-      });
+      moveToRoom(creep, homeRoom, "#00ffff");
+    } else {
+      // Already home - stay away from borders to avoid getting stuck
+      const pos = creep.pos;
+      if (pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47) {
+        const center = new RoomPosition(25, 25, creep.room.name);
+        creep.moveTo(center, { visualizePathStyle: { stroke: "#00ffff" } });
+      }
     }
     return;
   }
 
   // Move to target room
   if (creep.room.name !== targetRoom) {
-    const exitDir = creep.room.findExitTo(targetRoom);
-    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
-      const exit = creep.pos.findClosestByPath(exitDir);
-      if (exit) {
-        creep.moveTo(exit, { visualizePathStyle: { stroke: "#00ffff" } });
-      }
-    }
+    moveToRoom(creep, targetRoom, "#00ffff");
   } else {
     // In target room - move to center for full visibility
     const center = new RoomPosition(25, 25, creep.room.name);

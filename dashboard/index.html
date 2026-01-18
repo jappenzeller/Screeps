@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Screeps Colony Dashboard</title>
+  <style>
+    :root {
+      --bg-primary: #1a1a1a;
+      --bg-secondary: #2d2d2d;
+      --bg-tertiary: #3d3d3d;
+      --text-primary: #e0e0e0;
+      --text-secondary: #888;
+      --accent-green: #5cb85c;
+      --accent-yellow: #f0ad4e;
+      --accent-red: #d9534f;
+      --accent-blue: #5bc0de;
+      --border-color: #444;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .dashboard {
+      max-width: 800px;
+      margin: 0 auto;
+      border: 1px solid var(--border-color);
+      background: var(--bg-secondary);
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px 20px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: normal;
+      color: var(--accent-green);
+    }
+
+    .header .last-update {
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .header .last-update.stale {
+      color: var(--accent-yellow);
+    }
+
+    .section {
+      padding: 20px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .section:last-child {
+      border-bottom: none;
+    }
+
+    .rcl-section {
+      text-align: center;
+    }
+
+    .rcl-title {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+
+    .rcl-title span {
+      color: var(--accent-blue);
+    }
+
+    .progress-bar {
+      height: 20px;
+      background: var(--bg-primary);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-green), var(--accent-blue));
+      transition: width 0.5s ease;
+    }
+
+    .progress-text {
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border-color);
+    }
+
+    .stat-box {
+      background: var(--bg-secondary);
+      padding: 15px;
+    }
+
+    .stat-box h3 {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+      font-size: 14px;
+    }
+
+    .stat-row .label {
+      color: var(--text-secondary);
+    }
+
+    .stat-row .value {
+      color: var(--text-primary);
+    }
+
+    .stat-row .value.highlight {
+      color: var(--accent-green);
+    }
+
+    .stat-row .value.warning {
+      color: var(--accent-yellow);
+    }
+
+    .stat-row .value.danger {
+      color: var(--accent-red);
+    }
+
+    .stat-row.total {
+      border-top: 1px solid var(--border-color);
+      margin-top: 5px;
+      padding-top: 8px;
+      font-weight: bold;
+    }
+
+    .threat-status {
+      font-size: 16px;
+      padding: 5px 0;
+    }
+
+    .threat-status.safe {
+      color: var(--accent-green);
+    }
+
+    .threat-status.danger {
+      color: var(--accent-red);
+    }
+
+    .performance-section {
+      padding: 15px 20px;
+    }
+
+    .performance-section h3 {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .perf-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 5px 0;
+      font-size: 14px;
+    }
+
+    .cpu-bar {
+      width: 200px;
+      height: 8px;
+      background: var(--bg-primary);
+      border-radius: 2px;
+      overflow: hidden;
+      display: inline-block;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+
+    .cpu-fill {
+      height: 100%;
+      background: var(--accent-green);
+      transition: width 0.3s ease;
+    }
+
+    .cpu-fill.warning {
+      background: var(--accent-yellow);
+    }
+
+    .cpu-fill.danger {
+      background: var(--accent-red);
+    }
+
+    .alerts-section {
+      padding: 15px 20px;
+      background: var(--bg-tertiary);
+    }
+
+    .alerts-section h3 {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .alert {
+      padding: 8px 12px;
+      margin: 5px 0;
+      border-radius: 3px;
+      font-size: 14px;
+    }
+
+    .alert.warning {
+      background: rgba(240, 173, 78, 0.2);
+      border-left: 3px solid var(--accent-yellow);
+      color: var(--accent-yellow);
+    }
+
+    .alert.danger {
+      background: rgba(217, 83, 79, 0.2);
+      border-left: 3px solid var(--accent-red);
+      color: var(--accent-red);
+    }
+
+    .alert.info {
+      background: rgba(91, 192, 222, 0.2);
+      border-left: 3px solid var(--accent-blue);
+      color: var(--accent-blue);
+    }
+
+    .no-alerts {
+      color: var(--text-secondary);
+      font-style: italic;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-secondary);
+    }
+
+    .error {
+      text-align: center;
+      padding: 40px;
+      color: var(--accent-red);
+    }
+
+    .tick-info {
+      text-align: center;
+      padding: 10px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      background: var(--bg-primary);
+    }
+
+    .nav-link {
+      color: var(--accent-blue);
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .nav-link:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 600px) {
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .header {
+        flex-direction: column;
+        gap: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="dashboard" id="dashboard">
+    <div class="loading">Loading colony data...</div>
+  </div>
+
+  <script>
+    const API_BASE = 'https://dossn1w7n5.execute-api.us-east-1.amazonaws.com';
+    const ROOM_NAME = 'E46N37';
+    const REFRESH_INTERVAL = 30000; // 30 seconds
+
+    let lastFetchTime = null;
+
+    function formatNumber(num) {
+      return num?.toLocaleString() ?? '—';
+    }
+
+    function formatTimeSince(timestamp) {
+      if (!timestamp) return 'never';
+      const seconds = Math.floor((Date.now() - timestamp) / 1000);
+      if (seconds < 60) return `${seconds}s ago`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      return `${Math.floor(seconds / 3600)}h ago`;
+    }
+
+    function getAlerts(data) {
+      const alerts = [];
+      const snapshot = data.snapshot;
+
+      if (!snapshot) {
+        alerts.push({ type: 'danger', message: 'No snapshot data available' });
+        return alerts;
+      }
+
+      // Hostile threat
+      if (snapshot.threats?.hostileCount > 0) {
+        alerts.push({
+          type: 'danger',
+          message: `${snapshot.threats.hostileCount} hostile(s) in room!`
+        });
+      }
+
+      // Low storage energy
+      if (snapshot.energy?.stored < 10000) {
+        alerts.push({
+          type: 'warning',
+          message: `Low storage energy: ${formatNumber(snapshot.energy.stored)}`
+        });
+      }
+
+      // Low harvester count
+      const harvesters = snapshot.creeps?.byRole?.HARVESTER ?? 0;
+      if (harvesters < 2) {
+        alerts.push({
+          type: 'warning',
+          message: `Low harvester count: ${harvesters}`
+        });
+      }
+
+      // Stale data (older than 10 minutes)
+      const dataAge = Date.now() - snapshot.timestamp;
+      if (dataAge > 10 * 60 * 1000) {
+        alerts.push({
+          type: 'warning',
+          message: `Stale data: ${formatTimeSince(snapshot.timestamp)}`
+        });
+      }
+
+      // Low CPU bucket
+      if (snapshot.global?.cpu?.bucket < 5000) {
+        alerts.push({
+          type: 'warning',
+          message: `Low CPU bucket: ${formatNumber(snapshot.global.cpu.bucket)}`
+        });
+      }
+
+      return alerts;
+    }
+
+    function renderDashboard(data) {
+      const snapshot = data.snapshot;
+      if (!snapshot) {
+        document.getElementById('dashboard').innerHTML = `
+          <div class="error">No snapshot data available</div>
+        `;
+        return;
+      }
+
+      const alerts = getAlerts(data);
+      const rclPercent = Math.floor((snapshot.rclProgress / snapshot.rclProgressTotal) * 100);
+      const cpuPercent = Math.floor((snapshot.global?.cpu?.used / snapshot.global?.cpu?.limit) * 100);
+      const gclPercent = Math.floor((snapshot.global?.gcl?.progress / snapshot.global?.gcl?.progressTotal) * 100);
+
+      const dataAge = Date.now() - snapshot.timestamp;
+      const isStale = dataAge > 10 * 60 * 1000;
+
+      const creepRoles = snapshot.creeps?.byRole || {};
+      const roleOrder = ['HARVESTER', 'HAULER', 'UPGRADER', 'BUILDER', 'DEFENDER', 'REMOTE_MINER', 'REMOTE_HAULER', 'RESERVER', 'SCOUT', 'CLAIMER'];
+
+      let creepRows = '';
+      for (const role of roleOrder) {
+        if (creepRoles[role]) {
+          const displayName = role.replace('REMOTE_', 'R.').replace('_', ' ');
+          creepRows += `
+            <div class="stat-row">
+              <span class="label">${displayName}</span>
+              <span class="value">${creepRoles[role]}</span>
+            </div>
+          `;
+        }
+      }
+
+      const threatClass = snapshot.threats?.hostileCount > 0 ? 'danger' : 'safe';
+      const threatText = snapshot.threats?.hostileCount > 0
+        ? `${snapshot.threats.hostileCount} HOSTILE(S)`
+        : 'NONE';
+
+      let cpuBarClass = '';
+      if (cpuPercent > 80) cpuBarClass = 'danger';
+      else if (cpuPercent > 50) cpuBarClass = 'warning';
+
+      let alertsHtml = '<div class="no-alerts">(none)</div>';
+      if (alerts.length > 0) {
+        alertsHtml = alerts.map(a => `
+          <div class="alert ${a.type}">${a.message}</div>
+        `).join('');
+      }
+
+      document.getElementById('dashboard').innerHTML = `
+        <div class="header">
+          <h1>SCREEPS COLONY: ${data.roomName}</h1>
+          <div>
+            <a href="analytics.html" class="nav-link">Historical Analytics</a>
+            <span style="margin: 0 10px; color: var(--text-secondary);">|</span>
+            <span class="last-update ${isStale ? 'stale' : ''}">
+              Last: ${formatTimeSince(lastFetchTime)}
+            </span>
+          </div>
+        </div>
+
+        <div class="section rcl-section">
+          <div class="rcl-title">RCL <span>${snapshot.rcl}</span></div>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: ${rclPercent}%"></div>
+          </div>
+          <div class="progress-text">
+            ${formatNumber(snapshot.rclProgress)} / ${formatNumber(snapshot.rclProgressTotal)} (${rclPercent}%)
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <h3>Energy</h3>
+            <div class="stat-row">
+              <span class="label">Available</span>
+              <span class="value">${formatNumber(snapshot.energy?.available)}</span>
+            </div>
+            <div class="stat-row">
+              <span class="label">Capacity</span>
+              <span class="value">${formatNumber(snapshot.energy?.capacity)}</span>
+            </div>
+            <div class="stat-row">
+              <span class="label">Storage</span>
+              <span class="value highlight">${formatNumber(snapshot.energy?.stored)}</span>
+            </div>
+          </div>
+
+          <div class="stat-box">
+            <h3>Creeps</h3>
+            ${creepRows}
+            <div class="stat-row total">
+              <span class="label">Total</span>
+              <span class="value">${snapshot.creeps?.total ?? 0}</span>
+            </div>
+          </div>
+
+          <div class="stat-box">
+            <h3>Defense</h3>
+            <div class="threat-status ${threatClass}">
+              Threat: ${threatText}
+            </div>
+            <div class="stat-row">
+              <span class="label">Hostiles</span>
+              <span class="value ${snapshot.threats?.hostileCount > 0 ? 'danger' : ''}">${snapshot.threats?.hostileCount ?? 0}</span>
+            </div>
+            <div class="stat-row">
+              <span class="label">DPS</span>
+              <span class="value">${snapshot.threats?.hostileDPS ?? 0}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section performance-section">
+          <h3>Performance</h3>
+          <div class="perf-row">
+            <span>CPU: ${snapshot.global?.cpu?.used?.toFixed(1) ?? '—'} / ${snapshot.global?.cpu?.limit ?? '—'}</span>
+            <span>
+              <span class="cpu-bar">
+                <span class="cpu-fill ${cpuBarClass}" style="width: ${cpuPercent}%"></span>
+              </span>
+              Bucket: ${formatNumber(snapshot.global?.cpu?.bucket)}
+            </span>
+          </div>
+          <div class="perf-row">
+            <span>GCL ${snapshot.global?.gcl?.level ?? '—'}: ${gclPercent}% to next level</span>
+          </div>
+        </div>
+
+        <div class="alerts-section">
+          <h3>Alerts</h3>
+          ${alertsHtml}
+        </div>
+
+        <div class="tick-info">
+          Game Tick: ${formatNumber(snapshot.gameTick)} | Shard: ${snapshot.shard}
+        </div>
+      `;
+    }
+
+    async function fetchData() {
+      try {
+        const response = await fetch(`${API_BASE}/summary/${ROOM_NAME}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+        lastFetchTime = Date.now();
+        renderDashboard(data);
+      } catch (error) {
+        console.error('Fetch error:', error);
+        document.getElementById('dashboard').innerHTML = `
+          <div class="header">
+            <h1>SCREEPS COLONY: ${ROOM_NAME}</h1>
+            <div class="last-update">Error</div>
+          </div>
+          <div class="error">
+            Failed to fetch data: ${error.message}<br>
+            <small>Retrying in ${REFRESH_INTERVAL / 1000}s...</small>
+          </div>
+        `;
+      }
+    }
+
+    // Initial fetch
+    fetchData();
+
+    // Auto-refresh
+    setInterval(fetchData, REFRESH_INTERVAL);
+
+    // Update "time since" display every second
+    setInterval(() => {
+      const el = document.querySelector('.last-update');
+      if (el && lastFetchTime) {
+        const dataAge = Date.now() - lastFetchTime;
+        el.textContent = `Last: ${formatTimeSince(lastFetchTime)}`;
+        el.classList.toggle('stale', dataAge > 60000);
+      }
+    }, 1000);
+  </script>
+</body>
+</html>

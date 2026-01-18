@@ -669,6 +669,9 @@ export class ColonyManager {
 
     if (!exits || !Memory.rooms) return targets;
 
+    // Get our username dynamically
+    const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+
     for (const dir in exits) {
       const roomName = exits[dir as ExitKey];
       if (!roomName) continue;
@@ -677,15 +680,15 @@ export class ColonyManager {
       if (!intel || !intel.lastScan) continue;
 
       // Check if room is a valid remote mining target
-      const isOwned = intel.controller?.owner;
+      const isOwnedByOther = intel.controller?.owner && intel.controller.owner !== myUsername;
       const isReservedByOther =
         intel.controller?.reservation &&
-        intel.controller.reservation.username !== "Invader";
+        intel.controller.reservation.username !== myUsername;
       const hasSources = intel.sources && intel.sources.length > 0;
       const isSafe = !intel.hasKeepers && !intel.hasInvaderCore && (intel.hostiles || 0) === 0;
       const recentScan = Game.time - intel.lastScan < 2000;
 
-      if (!isOwned && !isReservedByOther && hasSources && isSafe && recentScan) {
+      if (!isOwnedByOther && !isReservedByOther && hasSources && isSafe && recentScan) {
         targets.push(roomName);
       }
     }

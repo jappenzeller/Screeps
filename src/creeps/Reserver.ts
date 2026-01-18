@@ -1,4 +1,5 @@
 import { logger } from "../utils/Logger";
+import { moveToRoom } from "../utils/movement";
 
 /**
  * Reserver - Reserves controllers in remote rooms
@@ -14,13 +15,7 @@ export function runReserver(creep: Creep): void {
 
   // Move to target room if not there
   if (creep.room.name !== targetRoom) {
-    const exitDir = creep.room.findExitTo(targetRoom);
-    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
-      const exit = creep.pos.findClosestByPath(exitDir);
-      if (exit) {
-        creep.moveTo(exit, { visualizePathStyle: { stroke: "#00ffff" } });
-      }
-    }
+    moveToRoom(creep, targetRoom, "#00ffff");
     return;
   }
 
@@ -31,14 +26,7 @@ export function runReserver(creep: Creep): void {
       h.getActiveBodyparts(ATTACK) > 0 || h.getActiveBodyparts(RANGED_ATTACK) > 0
   );
   if (dangerous.length > 0) {
-    const homeRoom = creep.memory.room;
-    const exitDir = creep.room.findExitTo(homeRoom);
-    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
-      const exit = creep.pos.findClosestByPath(exitDir);
-      if (exit) {
-        creep.moveTo(exit, { visualizePathStyle: { stroke: "#ff0000" } });
-      }
-    }
+    moveToRoom(creep, creep.memory.room, "#ff0000");
     return;
   }
 

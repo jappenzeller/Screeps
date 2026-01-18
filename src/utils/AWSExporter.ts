@@ -3,6 +3,8 @@
  * Uses segment 90 (reserved for external monitoring)
  */
 
+import { ColonyManager } from "../core/ColonyManager";
+
 const AWS_SEGMENT = 90;
 
 interface AWSExportData {
@@ -35,6 +37,78 @@ interface ColonyExport {
     constructionSites: number;
     damagedCount: number;
   };
+  // New fields
+  defense: DefenseExport;
+  adjacentRooms: AdjacentRoomExport[];
+  remoteMining: RemoteMiningExport;
+  scouting: ScoutingExport;
+}
+
+interface DefenseExport {
+  towerCount: number;
+  towerEnergyTotal: number;
+  towerEnergyCapacity: number;
+  safeModeAvailable: number;
+  safeModeCooldown: number;
+  safeModeActive: number;
+}
+
+interface AdjacentRoomExport {
+  roomName: string;
+  direction: string;
+  sources: number;
+  owner: string | null;
+  reservation: {
+    username: string;
+    ticksToEnd: number;
+  } | null;
+  hostiles: number;
+  hasKeepers: boolean;
+  hasInvaderCore: boolean;
+  lastScan: number;
+  lastScanAge: number;
+  isValidRemoteTarget: boolean;
+}
+
+interface RemoteMiningExport {
+  targetRooms: RemoteRoomExport[];
+  totalMiners: number;
+  totalHaulers: number;
+  totalReservers: number;
+}
+
+interface RemoteRoomExport {
+  roomName: string;
+  status: "ACTIVE" | "NO_MINERS" | "HOSTILE" | "NO_INTEL" | "RESERVED_OTHER" | "OWNED";
+  sources: number;
+  miners: RemoteCreepExport[];
+  haulers: RemoteCreepExport[];
+  reserver: RemoteCreepExport | null;
+  reservation: {
+    username: string;
+    ticksToEnd: number;
+  } | null;
+}
+
+interface RemoteCreepExport {
+  name: string;
+  sourceId?: string;
+  ttl: number;
+  room: string;
+}
+
+interface ScoutingExport {
+  scouts: ScoutCreepExport[];
+  roomsNeedingScan: string[];
+}
+
+interface ScoutCreepExport {
+  name: string;
+  room: string;
+  targetRoom: string | null;
+  state: string;
+  ttl: number;
+  pos: { x: number; y: number };
 }
 
 interface GlobalExport {
@@ -134,10 +208,239 @@ export class AWSExporter {
           constructionSites: room.find(FIND_CONSTRUCTION_SITES).length,
           damagedCount,
         },
+        defense: this.getDefenseStatus(room),
+        adjacentRooms: this.getAdjacentRoomIntel(roomName),
+        remoteMining: this.getRemoteMiningStatus(roomName),
+        scouting: this.getScoutingStatus(roomName),
       });
     }
 
     return colonies;
+  }
+
+  /**
+   * Get defense status for a room
+   */
+  private static getDefenseStatus(room: Room): DefenseExport {
+    const towers = room.find(FIND_MY_STRUCTURES, {
+      filter: { structureType: STRUCTURE_TOWER },
+    }) as StructureTower[];
+
+    const towerEnergyTotal = towers.reduce((sum, t) => sum + t.store[RESOURCE_ENERGY], 0);
+    const towerEnergyCapacity = towers.length * TOWER_CAPACITY;
+
+    const controller = room.controller;
+
+    return {
+      towerCount: towers.length,
+      towerEnergyTotal,
+      towerEnergyCapacity,
+      safeModeAvailable: controller?.safeModeAvailable || 0,
+      safeModeCooldown: controller?.safeModeCooldown || 0,
+      safeModeActive: controller?.safeMode || 0,
+    };
+  }
+
+  /**
+   * Get intel for all adjacent rooms
+   */
+  private static getAdjacentRoomIntel(homeRoom: string): AdjacentRoomExport[] {
+    const adjacent: AdjacentRoomExport[] = [];
+    const exits = Game.map.describeExits(homeRoom);
+
+    if (!exits) return adjacent;
+
+    // Get our username
+    const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+    const colonyManager = ColonyManager.getInstance(homeRoom);
+    const validRemoteTargets = new Set(colonyManager.getRemoteMiningTargets());
+
+    const directionNames: Record<string, string> = {
+      "1": "TOP",
+      "3": "RIGHT",
+      "5": "BOTTOM",
+      "7": "LEFT",
+    };
+
+    for (const dir in exits) {
+      const roomName = exits[dir as ExitKey];
+      if (!roomName) continue;
+
+      const intel = Memory.rooms?.[roomName];
+      const lastScan = intel?.lastScan || 0;
+      const lastScanAge = Game.time - lastScan;
+
+      // Check ownership
+      const owner = intel?.controller?.owner || null;
+      const reservation = intel?.controller?.reservation || null;
+
+      // Determine if valid remote target using same logic as ColonyManager
+      const isValidRemoteTarget = validRemoteTargets.has(roomName);
+
+      adjacent.push({
+        roomName,
+        direction: directionNames[dir] || dir,
+        sources: intel?.sources?.length || 0,
+        owner,
+        reservation,
+        hostiles: intel?.hostiles || 0,
+        hasKeepers: intel?.hasKeepers || false,
+        hasInvaderCore: intel?.hasInvaderCore || false,
+        lastScan,
+        lastScanAge,
+        isValidRemoteTarget,
+      });
+    }
+
+    return adjacent;
+  }
+
+  /**
+   * Get remote mining status for all target rooms
+   */
+  private static getRemoteMiningStatus(homeRoom: string): RemoteMiningExport {
+    const colonyManager = ColonyManager.getInstance(homeRoom);
+    const targetRoomNames = colonyManager.getRemoteMiningTargets();
+
+    // Also include rooms with active miners that aren't in the target list
+    const allRemoteCreeps = Object.values(Game.creeps).filter(
+      (c) =>
+        c.memory.room === homeRoom &&
+        (c.memory.role === "REMOTE_MINER" ||
+          c.memory.role === "REMOTE_HAULER" ||
+          c.memory.role === "RESERVER")
+    );
+
+    // Find all remote rooms with creeps
+    const roomsWithCreeps = new Set<string>();
+    for (const creep of allRemoteCreeps) {
+      if (creep.memory.targetRoom) {
+        roomsWithCreeps.add(creep.memory.targetRoom);
+      }
+    }
+
+    // Combine both lists
+    const allRemoteRooms = new Set([...targetRoomNames, ...roomsWithCreeps]);
+
+    const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+
+    const targetRooms: RemoteRoomExport[] = [];
+    let totalMiners = 0;
+    let totalHaulers = 0;
+    let totalReservers = 0;
+
+    for (const roomName of allRemoteRooms) {
+      const intel = Memory.rooms?.[roomName];
+
+      // Get creeps assigned to this remote room
+      const miners = allRemoteCreeps
+        .filter((c) => c.memory.role === "REMOTE_MINER" && c.memory.targetRoom === roomName)
+        .map((c) => ({
+          name: c.name,
+          sourceId: c.memory.sourceId,
+          ttl: c.ticksToLive || 0,
+          room: c.room?.name || "unknown",
+        }));
+
+      const haulers = allRemoteCreeps
+        .filter((c) => c.memory.role === "REMOTE_HAULER" && c.memory.targetRoom === roomName)
+        .map((c) => ({
+          name: c.name,
+          ttl: c.ticksToLive || 0,
+          room: c.room?.name || "unknown",
+        }));
+
+      const reserverCreep = allRemoteCreeps.find(
+        (c) => c.memory.role === "RESERVER" && c.memory.targetRoom === roomName
+      );
+      const reserver = reserverCreep
+        ? {
+            name: reserverCreep.name,
+            ttl: reserverCreep.ticksToLive || 0,
+            room: reserverCreep.room?.name || "unknown",
+          }
+        : null;
+
+      // Determine status
+      let status: RemoteRoomExport["status"] = "ACTIVE";
+
+      if (!intel || !intel.lastScan) {
+        status = "NO_INTEL";
+      } else if (intel.controller?.owner && intel.controller.owner !== myUsername) {
+        status = "OWNED";
+      } else if (
+        intel.controller?.reservation &&
+        intel.controller.reservation.username !== myUsername
+      ) {
+        status = "RESERVED_OTHER";
+      } else if ((intel.hostiles || 0) > 0) {
+        status = "HOSTILE";
+      } else if (miners.length === 0) {
+        status = "NO_MINERS";
+      }
+
+      totalMiners += miners.length;
+      totalHaulers += haulers.length;
+      if (reserver) totalReservers++;
+
+      targetRooms.push({
+        roomName,
+        status,
+        sources: intel?.sources?.length || 0,
+        miners,
+        haulers,
+        reserver,
+        reservation: intel?.controller?.reservation || null,
+      });
+    }
+
+    return {
+      targetRooms,
+      totalMiners,
+      totalHaulers,
+      totalReservers,
+    };
+  }
+
+  /**
+   * Get scouting status
+   */
+  private static getScoutingStatus(homeRoom: string): ScoutingExport {
+    // Get scout creeps for this home room
+    const scouts = Object.values(Game.creeps)
+      .filter((c) => c.memory.room === homeRoom && c.memory.role === "SCOUT")
+      .map((c) => ({
+        name: c.name,
+        room: c.room?.name || "unknown",
+        targetRoom: c.memory.targetRoom || null,
+        state: c.memory.state || "SCOUTING",
+        ttl: c.ticksToLive || 0,
+        pos: { x: c.pos.x, y: c.pos.y },
+      }));
+
+    // Find rooms needing scan (adjacent rooms with stale intel)
+    const roomsNeedingScan: string[] = [];
+    const exits = Game.map.describeExits(homeRoom);
+
+    if (exits) {
+      for (const dir in exits) {
+        const roomName = exits[dir as ExitKey];
+        if (!roomName) continue;
+
+        const intel = Memory.rooms?.[roomName];
+        const lastScan = intel?.lastScan || 0;
+
+        // Room needs scan if never scanned or > 2000 ticks stale
+        if (Game.time - lastScan > 2000) {
+          roomsNeedingScan.push(roomName);
+        }
+      }
+    }
+
+    return {
+      scouts,
+      roomsNeedingScan,
+    };
   }
 
   private static getGlobalStats(): GlobalExport {

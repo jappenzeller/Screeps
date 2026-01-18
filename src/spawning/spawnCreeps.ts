@@ -180,6 +180,9 @@ function getRemoteMiningTargets(homeRoom: string): RemoteTarget[] {
   const exits = Game.map.describeExits(homeRoom);
   if (!exits) return targets;
 
+  // Get our username dynamically
+  const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+
   for (const dir in exits) {
     const roomName = exits[dir as ExitKey];
     if (!roomName) continue;
@@ -192,8 +195,11 @@ function getRemoteMiningTargets(homeRoom: string): RemoteTarget[] {
     if (intel.hasKeepers) continue;
     if (intel.hasInvaderCore) continue;
 
-    // Skip owned or reserved rooms (not by us)
-    if (intel.controller?.owner && intel.controller.owner !== "YOUR_USERNAME") continue;
+    // Skip owned rooms (unless ours)
+    if (intel.controller?.owner && intel.controller.owner !== myUsername) continue;
+
+    // Skip rooms reserved by others (but allow our own reservations)
+    if (intel.controller?.reservation && intel.controller.reservation.username !== myUsername) continue;
 
     for (const sourceId of intel.sources) {
       targets.push({ roomName, sourceId: sourceId as Id<Source> });

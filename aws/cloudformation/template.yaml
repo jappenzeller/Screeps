@@ -1,0 +1,462 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Screeps AI Advisor - Colony monitoring and analysis
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, prod]
+  ProjectName:
+    Type: String
+    Default: screeps-advisor
+  ScreepsShard:
+    Type: String
+    Default: shard0
+  RetentionDays:
+    Type: Number
+    Default: 7
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda code packages (created before stack deployment)
+
+Resources:
+  # ==================== DynamoDB Tables ====================
+  SnapshotsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-snapshots
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: roomName
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: roomName
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-events
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: roomName
+          AttributeType: S
+        - AttributeName: eventId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: roomName
+          KeyType: HASH
+        - AttributeName: eventId
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: timestamp-index
+          KeySchema:
+            - AttributeName: roomName
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  RecommendationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-recommendations
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: roomName
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: N
+        - AttributeName: status
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: room-index
+          KeySchema:
+            - AttributeName: roomName
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PatternStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-pattern-state
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: patternId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: patternId
+          KeyType: HASH
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==================== Secrets ====================
+  ScreepsTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: screeps/api-token
+      Description: Screeps API token for data collection
+      SecretString: PLACEHOLDER_SET_AFTER_DEPLOY
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AnthropicKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: screeps/anthropic-api-key
+      Description: Anthropic API key for Claude analysis
+      SecretString: PLACEHOLDER_SET_AFTER_DEPLOY
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==================== IAM Roles ====================
+  DataCollectorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-data-collector-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DataCollectorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt SnapshotsTable.Arn
+                  - !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref ScreepsTokenSecret
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  AnalysisEngineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-analysis-engine-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AnalysisEnginePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt SnapshotsTable.Arn
+                  - !Sub ${SnapshotsTable.Arn}/index/*
+                  - !GetAtt EventsTable.Arn
+                  - !Sub ${EventsTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt RecommendationsTable.Arn
+                  - !Sub ${RecommendationsTable.Arn}/index/*
+                  - !GetAtt PatternStateTable.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref AnthropicKeySecret
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-api-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ApiPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt SnapshotsTable.Arn
+                  - !Sub ${SnapshotsTable.Arn}/index/*
+                  - !GetAtt EventsTable.Arn
+                  - !Sub ${EventsTable.Arn}/index/*
+                  - !GetAtt RecommendationsTable.Arn
+                  - !Sub ${RecommendationsTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # ==================== Lambda Functions ====================
+  DataCollectorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-data-collector-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt DataCollectorRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: data-collector.zip
+      Environment:
+        Variables:
+          SNAPSHOTS_TABLE: !Ref SnapshotsTable
+          EVENTS_TABLE: !Ref EventsTable
+          SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
+          SCREEPS_SHARD: !Ref ScreepsShard
+          RETENTION_DAYS: !Ref RetentionDays
+
+  AnalysisEngineFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-analysis-engine-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt AnalysisEngineRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: analysis-engine.zip
+      Environment:
+        Variables:
+          SNAPSHOTS_TABLE: !Ref SnapshotsTable
+          EVENTS_TABLE: !Ref EventsTable
+          RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+          ANTHROPIC_KEY_SECRET: !Ref AnthropicKeySecret
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-api-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt ApiRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: api.zip
+      Environment:
+        Variables:
+          SNAPSHOTS_TABLE: !Ref SnapshotsTable
+          EVENTS_TABLE: !Ref EventsTable
+          RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+
+  # ==================== API Gateway ====================
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub screeps-ai-advisor-${Environment}
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  RouteSummary:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /summary/{roomName}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecommendations:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /recommendations/{roomName}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteMetrics:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /metrics/{roomName}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteFeedback:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /feedback/{recommendationId}
+      Target: !Sub integrations/${ApiIntegration}
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+
+  # ==================== EventBridge Schedules ====================
+  DataCollectSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub screeps-collect-data-${Environment}
+      Description: Collect Screeps colony data every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Id: data-collector
+          Arn: !GetAtt DataCollectorFunction.Arn
+
+  DataCollectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DataCollectorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DataCollectSchedule.Arn
+
+  AnalysisSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub screeps-run-analysis-${Environment}
+      Description: Run Screeps AI analysis every hour
+      ScheduleExpression: rate(1 hour)
+      State: ENABLED
+      Targets:
+        - Id: analysis-engine
+          Arn: !GetAtt AnalysisEngineFunction.Arn
+
+  AnalysisPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AnalysisEngineFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AnalysisSchedule.Arn
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !GetAtt HttpApi.ApiEndpoint
+    Export:
+      Name: !Sub ${ProjectName}-api-endpoint
+
+  SnapshotsTableName:
+    Description: DynamoDB snapshots table name
+    Value: !Ref SnapshotsTable
+
+  EventsTableName:
+    Description: DynamoDB events table name
+    Value: !Ref EventsTable
+
+  RecommendationsTableName:
+    Description: DynamoDB recommendations table name
+    Value: !Ref RecommendationsTable
+
+  ScreepsTokenSecretArn:
+    Description: ARN of Screeps token secret
+    Value: !Ref ScreepsTokenSecret
+
+  AnthropicKeySecretArn:
+    Description: ARN of Anthropic API key secret
+    Value: !Ref AnthropicKeySecret
