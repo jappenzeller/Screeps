@@ -93,8 +93,8 @@ function findNextScoutTarget(creep: Creep): string | undefined {
 
   if (!exits) return undefined;
 
-  // Find adjacent rooms that haven't been scouted recently
-  const candidates: string[] = [];
+  // Find adjacent rooms that need scouting
+  const candidates: Array<{ roomName: string; priority: number }> = [];
 
   for (const dir in exits) {
     const roomName = exits[dir as ExitKey];
@@ -102,22 +102,32 @@ function findNextScoutTarget(creep: Creep): string | undefined {
 
     const mem = Memory.rooms?.[roomName];
     const lastScan = mem?.lastScan || 0;
+    const age = Game.time - lastScan;
+    const hasHostiles = (mem?.hostiles || 0) > 0 || mem?.hasInvaderCore;
 
-    // Scout if never scanned or >2000 ticks old
-    if (Game.time - lastScan > 2000) {
-      candidates.push(roomName);
+    // Priority scouting intervals:
+    // - Hostile rooms: every 200 ticks (detect when cleared)
+    // - Normal rooms: every 2000 ticks
+    const scanInterval = hasHostiles ? 200 : 2000;
+
+    if (age > scanInterval) {
+      // Higher priority for hostile rooms (lower number = higher priority)
+      const priority = hasHostiles ? 0 : 1;
+      candidates.push({ roomName, priority });
     }
   }
 
-  // Prefer rooms closer to home
-  if (candidates.length > 0) {
-    candidates.sort((a, b) => {
-      const distA = Game.map.getRoomLinearDistance(homeRoom, a);
-      const distB = Game.map.getRoomLinearDistance(homeRoom, b);
-      return distA - distB;
-    });
-    return candidates[0];
-  }
+  if (candidates.length === 0) return undefined;
 
-  return undefined;
+  // Sort by priority (hostile rooms first), then by distance
+  candidates.sort((a, b) => {
+    if (a.priority !== b.priority) {
+      return a.priority - b.priority;
+    }
+    const distA = Game.map.getRoomLinearDistance(homeRoom, a.roomName);
+    const distB = Game.map.getRoomLinearDistance(homeRoom, b.roomName);
+    return distA - distB;
+  });
+
+  return candidates[0].roomName;
 }

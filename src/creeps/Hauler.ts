@@ -162,7 +162,7 @@ function collect(creep: Creep): void {
 }
 
 function deliver(creep: Creep): void {
-  // Priority 1: Spawn and Extensions
+  // Priority 1: Spawn and Extensions (critical for spawning)
   const spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
     filter: (s) =>
       (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
@@ -176,21 +176,37 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  // Priority 2: Towers
-  const tower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+  // Priority 2: Towers below 50% (defensive readiness - CRITICAL)
+  const criticalTower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
     filter: (s) =>
-      s.structureType === STRUCTURE_TOWER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 200,
-  });
+      s.structureType === STRUCTURE_TOWER &&
+      s.store[RESOURCE_ENERGY] < 500, // 50% of 1000 capacity
+  }) as StructureTower | null;
 
-  if (tower) {
-    if (creep.transfer(tower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, tower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
+  if (criticalTower) {
+    if (creep.transfer(criticalTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, criticalTower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
     }
     return;
   }
 
-  // Priority 3: Storage
+  // Priority 3: Storage link (feeds controller link for upgraders)
   const storage = creep.room.storage;
+  if (storage) {
+    const storageLink = storage.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+      filter: (s) =>
+        s.structureType === STRUCTURE_LINK && s.store.getFreeCapacity(RESOURCE_ENERGY) > 100,
+    })[0] as StructureLink | undefined;
+
+    if (storageLink) {
+      if (creep.transfer(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, storageLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
+      }
+      return;
+    }
+  }
+
+  // Priority 4: Storage
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
@@ -198,7 +214,21 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  // Priority 4: Controller container (for upgraders)
+  // Priority 5: Top off towers to 80% (when nothing else needs energy)
+  const towerTopOff = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+    filter: (s) =>
+      s.structureType === STRUCTURE_TOWER &&
+      s.store.getFreeCapacity(RESOURCE_ENERGY) > 200, // Below 80%
+  }) as StructureTower | null;
+
+  if (towerTopOff) {
+    if (creep.transfer(towerTopOff, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, towerTopOff, { visualizePathStyle: { stroke: "#ff6600" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // Priority 6: Controller container (for upgraders)
   const controller = creep.room.controller;
   if (controller) {
     const controllerContainer = controller.pos.findInRange(FIND_STRUCTURES, 3, {

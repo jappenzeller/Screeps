@@ -54,9 +54,9 @@ if ($bucketMissing) {
     Write-Host "Bucket already exists: $BucketName" -ForegroundColor Green
 }
 
-# Step 2: Package Lambda functions
+# Step 2: Install dependencies and package Lambda functions
 Write-Host ""
-Write-Host "Step 2: Packaging Lambda functions..." -ForegroundColor Yellow
+Write-Host "Step 2: Installing dependencies and packaging Lambda functions..." -ForegroundColor Yellow
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LambdaDir = Join-Path (Split-Path -Parent $ScriptDir) "lambda"
@@ -67,7 +67,17 @@ if (-not (Test-Path $BuildDir)) {
     New-Item -ItemType Directory -Path $BuildDir | Out-Null
 }
 
-$functions = @("data-collector", "analysis-engine", "api")
+$functions = @(
+    "data-collector",
+    "analysis-engine",
+    "api",
+    "stream-processor",
+    "metrics-writer",
+    "context-builder",
+    "claude-analyzer",
+    "recommendation-writer",
+    "outcome-evaluator"
+)
 
 foreach ($func in $functions) {
     $funcDir = Join-Path $LambdaDir $func
@@ -76,8 +86,20 @@ foreach ($func in $functions) {
     Write-Host "  Packaging $func..."
 
     if (-not (Test-Path $funcDir)) {
-        Write-Host "  ERROR: Directory not found: $funcDir" -ForegroundColor Red
-        exit 1
+        Write-Host "  WARNING: Directory not found: $funcDir - skipping" -ForegroundColor Yellow
+        continue
+    }
+
+    # Install npm dependencies if package.json exists
+    $packageJson = Join-Path $funcDir "package.json"
+    if (Test-Path $packageJson) {
+        $nodeModules = Join-Path $funcDir "node_modules"
+        if (-not (Test-Path $nodeModules)) {
+            Write-Host "    Installing npm dependencies..."
+            Push-Location $funcDir
+            npm install --production 2>&1 | Out-Null
+            Pop-Location
+        }
     }
 
     # Remove old zip if exists
@@ -219,6 +241,16 @@ Write-Host "  GET  $apiEndpoint/summary/{roomName}"
 Write-Host "  GET  $apiEndpoint/recommendations/{roomName}"
 Write-Host "  GET  $apiEndpoint/metrics/{roomName}"
 Write-Host "  POST $apiEndpoint/feedback/{recommendationId}"
+Write-Host "  GET  $apiEndpoint/live                       (real-time segment 90)"
+Write-Host "  GET  $apiEndpoint/live/{roomName}            (real-time for room)"
+Write-Host "  GET  $apiEndpoint/room/{roomName}            (room objects + terrain)"
+Write-Host ""
+Write-Host "Event-Driven Architecture:" -ForegroundColor Cyan
+Write-Host "  - DynamoDB Streams -> Stream Processor -> EventBridge"
+Write-Host "  - EventBridge -> Metrics Writer -> TimeStream"
+Write-Host "  - EventBridge -> Step Functions Analysis Workflow"
+Write-Host "  - Outcome Evaluator -> Knowledge Table (learning loop)"
+Write-Host "  - Firehose -> S3 Archive (historical analysis)"
 Write-Host ""
 Write-Host "Example:" -ForegroundColor Yellow
 Write-Host "  curl `"$apiEndpoint/summary/E48N36`""

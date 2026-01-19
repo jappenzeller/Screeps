@@ -508,22 +508,26 @@ export class StatsCollector {
   }
 
   /**
-   * Export traffic metrics for AWS analysis
+   * Export traffic metrics for AWS analysis (desire-path model)
+   *
+   * In the desire-path model, we ONLY track unroaded tiles.
+   * High traffic on unroaded tiles = places that NEED roads.
+   * Once a road is built, that tile stops being tracked (self-correcting).
    */
   static exportTrafficMetrics(room: Room): TrafficExport {
     const mem = Memory.traffic?.[room.name];
     if (!mem) {
       return {
         trackedTiles: 0,
-        highTrafficTiles: 0,
+        desirePaths: 0,
         windowSize: 1000,
         windowProgress: 0,
-        roads: { total: 0, coveringHighTraffic: 0, coveragePercent: 1 },
+        roads: { total: 0, builtByPlanner: 0 },
         hotspots: [],
-        efficiency: { swampTilesTraversed: 0, stuckEvents: 0, oscillationEvents: 0 },
-        paths: {
-          spawnToSource: [],
-          spawnToController: { distance: 0, roadsOnPath: 0, roadCoverage: 0, avgTraffic: 0 },
+        efficiency: { swampTraffic: 0 },
+        pathCoverage: {
+          spawnToSources: [],
+          spawnToController: { coverage: 0, distance: 0 },
           spawnToStorage: null,
         },
       };
@@ -534,172 +538,153 @@ export class StatsCollector {
       filter: (s) => s.structureType === STRUCTURE_ROAD,
     });
 
-    // Calculate high-traffic tiles (100+ visits)
-    const highTrafficTiles: Array<{ x: number; y: number; visits: number }> = [];
+    // Count desire paths (tiles with 50+ visits = road candidates)
+    // Note: All tracked tiles are unroaded by definition in the desire-path model
+    let desirePaths = 0;
     for (const key in mem.heatmap) {
-      if (mem.heatmap[key] >= 100) {
-        const [x, y] = key.split(":").map(Number);
-        highTrafficTiles.push({ x, y, visits: mem.heatmap[key] });
+      if (mem.heatmap[key] >= 50) {
+        desirePaths++;
       }
     }
 
-    // Calculate road coverage of high-traffic areas
-    let coveringHighTraffic = 0;
-    for (const tile of highTrafficTiles) {
-      const hasRoad = roads.some((r) => r.pos.x === tile.x && r.pos.y === tile.y);
-      if (hasRoad) coveringHighTraffic++;
-    }
-
-    // Build hotspots array (high traffic without roads)
-    const hotspots = highTrafficTiles
-      .filter((t) => !roads.some((r) => r.pos.x === t.x && r.pos.y === t.y))
-      .map((t) => {
-        const isSwamp = terrain.get(t.x, t.y) === TERRAIN_MASK_SWAMP;
-        return {
-          x: t.x,
-          y: t.y,
-          visits: t.visits,
-          terrain: (isSwamp ? "swamp" : "plain") as "swamp" | "plain",
-          hasRoad: false,
-          priority: t.visits * (isSwamp ? 3 : 1), // Swamp roads save more fatigue
-        };
-      })
-      .sort((a, b) => b.priority - a.priority)
-      .slice(0, 10);
-
-    // Count swamp traffic (swamp tiles without roads being used)
-    let swampTilesTraversed = 0;
+    // Build hotspots array (all entries are unroaded tiles)
+    const hotspots: TrafficExport["hotspots"] = [];
     for (const key in mem.heatmap) {
+      const visits = mem.heatmap[key];
+      if (visits < 10) continue; // Skip very low traffic
+
       const [x, y] = key.split(":").map(Number);
       const isSwamp = terrain.get(x, y) === TERRAIN_MASK_SWAMP;
-      const hasRoad = roads.some((r) => r.pos.x === x && r.pos.y === y);
-      if (isSwamp && !hasRoad && mem.heatmap[key] > 0) {
-        swampTilesTraversed += mem.heatmap[key];
+
+      hotspots.push({
+        x,
+        y,
+        visits,
+        terrain: isSwamp ? "swamp" : "plain",
+        priority: visits * (isSwamp ? 3 : 1), // Swamp roads save more fatigue
+      });
+    }
+
+    // Sort by priority and take top 10
+    hotspots.sort((a, b) => b.priority - a.priority);
+    const topHotspots = hotspots.slice(0, 10);
+
+    // Count swamp traffic (total visits on unroaded swamp tiles)
+    let swampTraffic = 0;
+    for (const key in mem.heatmap) {
+      const [x, y] = key.split(":").map(Number);
+      if (terrain.get(x, y) === TERRAIN_MASK_SWAMP) {
+        swampTraffic += mem.heatmap[key];
       }
     }
 
-    // Get recent stuck/oscillation events from tick stats
-    const recentTicks = Memory.stats?.tickStats?.slice(-10) || [];
-    const stuckEvents = recentTicks.reduce(
-      (sum, s) => sum + (s.traffic?.stuckEvents?.length || 0),
-      0
-    );
-    const oscillationEvents = recentTicks.reduce(
-      (sum, s) => sum + (s.traffic?.oscillationEvents?.length || 0),
-      0
-    );
-
-    // Calculate path metrics
+    // Calculate path coverage (separate from heatmap - just road presence)
     const spawn = room.find(FIND_MY_SPAWNS)[0];
     const sources = room.find(FIND_SOURCES);
-    const paths = {
-      spawnToSource: sources.map((source) =>
-        this.calculatePathMetrics(room, spawn?.pos, source.pos, mem.heatmap, roads, source.id)
-      ),
-      spawnToController: this.calculatePathMetrics(
-        room,
-        spawn?.pos,
-        room.controller?.pos,
-        mem.heatmap,
-        roads
-      ),
-      spawnToStorage: room.storage
-        ? this.calculatePathMetrics(room, spawn?.pos, room.storage.pos, mem.heatmap, roads)
-        : null,
-    };
+
+    const spawnToSources = sources.map((source) =>
+      this.calculatePathCoverage(room, spawn?.pos, source.pos, roads, source.id)
+    );
+
+    const spawnToController = this.calculatePathCoverage(
+      room,
+      spawn?.pos,
+      room.controller?.pos,
+      roads
+    );
+
+    const spawnToStorage = room.storage
+      ? this.calculatePathCoverage(room, spawn?.pos, room.storage.pos, roads)
+      : null;
 
     return {
       trackedTiles: Object.keys(mem.heatmap).length,
-      highTrafficTiles: highTrafficTiles.length,
+      desirePaths,
       windowSize: mem.windowSize,
       windowProgress: Game.time - mem.lastReset,
       roads: {
         total: roads.length,
-        coveringHighTraffic,
-        coveragePercent: highTrafficTiles.length > 0 ? coveringHighTraffic / highTrafficTiles.length : 1,
+        builtByPlanner: mem.roadsBuilt.length,
       },
-      hotspots,
+      hotspots: topHotspots,
       efficiency: {
-        swampTilesTraversed,
-        stuckEvents,
-        oscillationEvents,
+        swampTraffic,
       },
-      paths,
+      pathCoverage: {
+        spawnToSources,
+        spawnToController,
+        spawnToStorage,
+      },
     };
   }
 
   /**
-   * Calculate metrics for a path between two positions
+   * Calculate road coverage for a path (simple: just roads on path, no traffic data)
    */
-  private static calculatePathMetrics(
+  private static calculatePathCoverage(
     room: Room,
     from: RoomPosition | undefined,
     to: RoomPosition | undefined,
-    heatmap: Record<string, number>,
     roads: Structure[],
     sourceId?: string
-  ): PathMetrics {
+  ): { sourceId?: string; coverage: number; distance: number } {
     if (!from || !to) {
-      return { sourceId, distance: 0, roadsOnPath: 0, roadCoverage: 0, avgTraffic: 0 };
+      return { sourceId, coverage: 0, distance: 0 };
     }
 
     const path = room.findPath(from, to, { ignoreCreeps: true, range: 1 });
+    if (path.length === 0) {
+      return { sourceId, coverage: 1, distance: 0 };
+    }
 
     let roadsOnPath = 0;
-    let totalTraffic = 0;
-
     for (const step of path) {
       if (roads.some((r) => r.pos.x === step.x && r.pos.y === step.y)) {
         roadsOnPath++;
       }
-      totalTraffic += heatmap[`${step.x}:${step.y}`] || 0;
     }
 
     return {
       sourceId,
+      coverage: roadsOnPath / path.length,
       distance: path.length,
-      roadsOnPath,
-      roadCoverage: path.length > 0 ? roadsOnPath / path.length : 0,
-      avgTraffic: path.length > 0 ? totalTraffic / path.length : 0,
     };
   }
 }
 
-// Traffic export interfaces
+// Traffic export interfaces for desire-path model
+// Only unroaded tiles are tracked, so high traffic = places that NEED roads
 export interface TrafficExport {
-  trackedTiles: number;
-  highTrafficTiles: number;
+  // Desire path tracking
+  trackedTiles: number;         // Total unroaded tiles with any traffic
+  desirePaths: number;          // Tiles with 50+ visits (road candidates)
   windowSize: number;
   windowProgress: number;
+
+  // Road status
   roads: {
-    total: number;
-    coveringHighTraffic: number;
-    coveragePercent: number;
+    total: number;              // Total roads in room
+    builtByPlanner: number;     // Roads placed by SmartRoadPlanner
   };
+
+  // Hotspots - the main output (unroaded tiles with highest traffic)
   hotspots: Array<{
     x: number;
     y: number;
     visits: number;
     terrain: "plain" | "swamp";
-    hasRoad: boolean;
-    priority: number;
+    priority: number;           // visits * terrain multiplier (swamp=3x)
   }>;
-  efficiency: {
-    swampTilesTraversed: number;
-    stuckEvents: number;
-    oscillationEvents: number;
-  };
-  paths: {
-    spawnToSource: PathMetrics[];
-    spawnToController: PathMetrics;
-    spawnToStorage: PathMetrics | null;
-  };
-}
 
-export interface PathMetrics {
-  sourceId?: string;
-  distance: number;
-  roadsOnPath: number;
-  roadCoverage: number;
-  avgTraffic: number;
+  // Efficiency indicators
+  efficiency: {
+    swampTraffic: number;       // Total visits on unroaded swamps (high = bad)
+  };
+
+  // Path coverage (calculated separately, not from heatmap)
+  pathCoverage: {
+    spawnToSources: Array<{ sourceId?: string; coverage: number; distance: number }>;
+    spawnToController: { coverage: number; distance: number };
+    spawnToStorage: { coverage: number; distance: number } | null;
+  };
 }

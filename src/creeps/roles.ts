@@ -9,6 +9,7 @@ import { runRemoteMiner } from "./RemoteMiner";
 import { runRemoteHauler } from "./RemoteHauler";
 import { runReserver } from "./Reserver";
 import { runClaimer } from "./Claimer";
+import { runRemoteDefender } from "./RemoteDefender";
 
 export interface BodyConfig {
   base: BodyPartConstant[];
@@ -44,9 +45,15 @@ export const ROLE_BODIES: Record<Role, BodyConfig> = {
     scale: [WORK, CARRY, MOVE],
   },
 
-  // Defender: attacks hostiles
+  // Defender: attacks hostiles (local room)
   DEFENDER: {
     base: [TOUGH, ATTACK, ATTACK, MOVE, MOVE, MOVE],
+    scale: [ATTACK, MOVE],
+  },
+
+  // Remote Defender: clears hostiles from remote mining rooms
+  REMOTE_DEFENDER: {
+    base: [TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE, MOVE],
     scale: [ATTACK, MOVE],
   },
 
@@ -86,6 +93,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   UPGRADER: runUpgrader,
   BUILDER: runBuilder,
   DEFENDER: runDefender,
+  REMOTE_DEFENDER: runRemoteDefender,
   SCOUT: runScout,
   REMOTE_MINER: runRemoteMiner,
   REMOTE_HAULER: runRemoteHauler,

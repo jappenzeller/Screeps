@@ -92,6 +92,19 @@ resource "aws_apigatewayv2_route" "get_report" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+# Live data routes (real-time segment 90 read)
+resource "aws_apigatewayv2_route" "get_live_room" {
+  api_id    = aws_apigatewayv2_api.advisor.id
+  route_key = "GET /live/{roomName}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_live_all" {
+  api_id    = aws_apigatewayv2_api.advisor.id
+  route_key = "GET /live"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 # Lambda permission for API Gateway
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"

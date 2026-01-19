@@ -70,9 +70,11 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_SNAPSHOTS      = aws_dynamodb_table.colony_snapshots.name
-      DYNAMODB_TABLE_EVENTS         = aws_dynamodb_table.colony_events.name
+      DYNAMODB_TABLE_SNAPSHOTS       = aws_dynamodb_table.colony_snapshots.name
+      DYNAMODB_TABLE_EVENTS          = aws_dynamodb_table.colony_events.name
       DYNAMODB_TABLE_RECOMMENDATIONS = aws_dynamodb_table.recommendations.name
+      SCREEPS_TOKEN_SECRET           = aws_secretsmanager_secret.screeps_token.arn
+      SCREEPS_SHARD                  = var.screeps_shard
     }
   }
 }

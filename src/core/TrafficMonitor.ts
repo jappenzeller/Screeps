@@ -1,15 +1,16 @@
 /**
- * TrafficMonitor - Tracks creep movement to identify high-traffic tiles for road placement.
- * Records position visits in a heatmap that decays over time.
+ * TrafficMonitor - Tracks creep movement on UNROADED tiles only.
+ * This captures "desire paths" - where creeps want to walk but no road exists.
+ * Once a road is built, that tile stops being tracked (self-correcting feedback).
  */
 
 import { logger } from "../utils/Logger";
 
-// Configuration
+// Configuration - lower thresholds since we only track unroaded tiles
 const DEFAULT_WINDOW_SIZE = 1000; // Ticks per measurement window
 const DECAY_FACTOR = 0.5; // How much to keep on window reset
-const MIN_VISITS_TO_KEEP = 10; // Minimum visits to keep after decay
-const HIGH_TRAFFIC_THRESHOLD = 300; // Visits to trigger road suggestion
+const MIN_VISITS_TO_KEEP = 5; // Minimum visits to keep after decay
+const HIGH_TRAFFIC_THRESHOLD = 75; // Visits to trigger road suggestion (was 300)
 
 export class TrafficMonitor {
   private room: Room;
@@ -35,7 +36,8 @@ export class TrafficMonitor {
   }
 
   /**
-   * Call once per tick to record all creep positions in the room
+   * Call once per tick to record creep positions on UNROADED tiles only.
+   * This inverts the signal: high count = desire path = build road here.
    */
   recordTick(): void {
     // Reset window if expired
@@ -43,25 +45,57 @@ export class TrafficMonitor {
       this.resetWindow();
     }
 
-    // Record each creep's position
+    // Record each creep's position (only on unroaded tiles)
     const creeps = this.room.find(FIND_MY_CREEPS);
     for (const creep of creeps) {
-      // Skip stationary creeps (harvesters at container)
-      if (creep.memory.role === "HARVESTER" && this.isAtWorkPosition(creep)) {
-        continue;
-      }
+      // Skip stationary creeps (at work positions)
+      if (this.isStationary(creep)) continue;
 
-      const key = `${creep.pos.x}:${creep.pos.y}`;
+      const x = creep.pos.x;
+      const y = creep.pos.y;
+
+      // ONLY track unroaded tiles - this IS the signal
+      if (this.hasRoad(x, y)) continue;
+
+      // Skip walls (shouldn't happen but defensive)
+      if (this.room.getTerrain().get(x, y) === TERRAIN_MASK_WALL) continue;
+
+      const key = `${x}:${y}`;
       this.mem.heatmap[key] = (this.mem.heatmap[key] || 0) + 1;
     }
   }
 
-  private isAtWorkPosition(creep: Creep): boolean {
-    // Stationary if at assigned source container
-    const container = creep.pos.findInRange(FIND_STRUCTURES, 0, {
-      filter: (s) => s.structureType === STRUCTURE_CONTAINER,
-    })[0];
-    return !!container;
+  /**
+   * Check if creep is at a stationary work position (shouldn't count as traffic)
+   */
+  private isStationary(creep: Creep): boolean {
+    // Harvester at container
+    if (creep.memory.role === "HARVESTER") {
+      const atContainer =
+        creep.pos.findInRange(FIND_STRUCTURES, 0, {
+          filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+        }).length > 0;
+      if (atContainer) return true;
+    }
+
+    // Upgrader at controller (within range 3)
+    if (creep.memory.role === "UPGRADER" && this.room.controller) {
+      if (creep.pos.inRangeTo(this.room.controller.pos, 3)) return true;
+    }
+
+    // Any creep standing on storage
+    if (this.room.storage && creep.pos.isEqualTo(this.room.storage.pos)) {
+      return true;
+    }
+
+    // Any creep standing on a container (haulers loading/unloading)
+    const onContainer =
+      creep.pos.findInRange(FIND_STRUCTURES, 0, {
+        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+      }).length > 0;
+    if (onContainer) return true;
+
+    return false;
   }
 
   private resetWindow(): void {
@@ -86,7 +120,7 @@ export class TrafficMonitor {
       const visits = this.mem.heatmap[key];
       const [x, y] = key.split(":").map(Number);
 
-      // Skip if road already exists
+      // Skip if road was built since we recorded this
       if (this.hasRoad(x, y)) continue;
 
       // Skip terrain walls
@@ -101,7 +135,7 @@ export class TrafficMonitor {
     this.mem.roadsSuggested = suggestions;
 
     if (suggestions.length > 0) {
-      logger.info("TrafficMonitor", `${this.room.name}: ${suggestions.length} road candidates`);
+      logger.info("TrafficMonitor", `${this.room.name}: ${suggestions.length} road candidates (desire paths)`);
     }
   }
 
@@ -116,14 +150,18 @@ export class TrafficMonitor {
   }
 
   /**
-   * Get top N highest-traffic tiles without roads
+   * Get top N highest-traffic unroaded tiles
    */
   getHotspots(limit: number = 10): Array<{ x: number; y: number; visits: number }> {
     const results: Array<{ x: number; y: number; visits: number }> = [];
 
     for (const key in this.mem.heatmap) {
       const [x, y] = key.split(":").map(Number);
+
+      // Skip if road was built since we recorded this
       if (this.hasRoad(x, y)) continue;
+
+      // Skip walls (shouldn't happen but defensive)
       if (this.room.getTerrain().get(x, y) === TERRAIN_MASK_WALL) continue;
 
       results.push({ x, y, visits: this.mem.heatmap[key] });
@@ -176,6 +214,10 @@ export class TrafficMonitor {
     for (const key in this.mem.heatmap) {
       const [x, y] = key.split(":").map(Number);
       const visits = this.mem.heatmap[key];
+
+      // Skip tiles that now have roads
+      if (this.hasRoad(x, y)) continue;
+
       const intensity = visits / maxVisits;
 
       // Color from green (low) to red (high)

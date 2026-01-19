@@ -86,10 +86,19 @@ function getTargets(rcl: number, energy: number, room: Room): CreepTarget[] {
   const upgraderCount = 3;
   targets.push({ role: "UPGRADER", body: workerBody, count: upgraderCount });
 
-  // Builders: only when construction sites exist
-  const sites = room.find(FIND_CONSTRUCTION_SITES).length;
-  if (sites > 0) {
-    targets.push({ role: "BUILDER", body: workerBody, count: Math.min(2, Math.ceil(sites / 3)) });
+  // Builders: spawn when construction sites exist (home or remote rooms)
+  const sitePriority = getConstructionSitePriority(room.name);
+  if (sitePriority.total > 0) {
+    // Spawn more builders if there are high-priority sites (non-road, containers)
+    const prioritySites = sitePriority.homeNonRoad + sitePriority.remoteContainer;
+    const builderCount =
+      prioritySites > 0
+        ? Math.min(2, Math.ceil(prioritySites / 2)) // 1 builder per 2 priority sites
+        : Math.min(1, sitePriority.homeRoad); // Max 1 builder for just roads
+
+    if (builderCount > 0) {
+      targets.push({ role: "BUILDER", body: workerBody, count: builderCount });
+    }
   }
 
   // Defenders: spawn if hostiles present
@@ -105,6 +114,31 @@ function getTargets(rcl: number, energy: number, room: Room): CreepTarget[] {
     const scoutNeeded = needsScout(room.name);
     if (scoutNeeded) {
       targets.push({ role: "SCOUT", body: [MOVE], count: 1 });
+    }
+
+    // Remote Defenders: spawn when hostiles detected in remote rooms
+    const hostileRooms = getHostileRemoteRooms(room.name);
+    const currentRemoteDefenders = countRemoteDefenders(room.name);
+    const maxRemoteDefenders = 2;
+
+    if (hostileRooms.length > 0 && currentRemoteDefenders < maxRemoteDefenders) {
+      const remoteDefenderBody: BodyPartConstant[] = [
+        TOUGH, TOUGH, ATTACK, ATTACK, ATTACK,
+        MOVE, MOVE, MOVE, MOVE, MOVE,
+      ]; // 650 energy
+
+      // Prioritize room with most hostiles
+      const prioritizedRoom = hostileRooms[0];
+      const existingDefenders = countRemoteDefendersForRoom(room.name, prioritizedRoom);
+
+      if (existingDefenders < 1) {
+        targets.push({
+          role: "REMOTE_DEFENDER",
+          body: remoteDefenderBody,
+          count: 1,
+          memory: { targetRoom: prioritizedRoom },
+        });
+      }
     }
 
     // Remote miners: 1 per remote source
@@ -283,6 +317,80 @@ function countReservers(homeRoom: string): number {
   return count;
 }
 
+/**
+ * Get all visible remote rooms that we're actively mining
+ * (rooms where we have miners assigned)
+ */
+function getActiveRemoteRooms(homeRoom: string): string[] {
+  const remoteRooms: string[] = [];
+  const exits = Game.map.describeExits(homeRoom);
+
+  if (!exits) return remoteRooms;
+
+  for (const dir in exits) {
+    const roomName = exits[dir as ExitKey];
+    if (!roomName) continue;
+
+    // Only include if we have visibility
+    if (!Game.rooms[roomName]) continue;
+
+    // Only include if we have active mining creeps there
+    const hasMiners = Object.values(Game.creeps).some(
+      (c) =>
+        c.memory.room === homeRoom &&
+        c.memory.role === "REMOTE_MINER" &&
+        c.memory.targetRoom === roomName
+    );
+
+    if (hasMiners) {
+      remoteRooms.push(roomName);
+    }
+  }
+
+  return remoteRooms;
+}
+
+/**
+ * Get construction sites prioritized for building.
+ * Returns sites from home room first, then remote rooms.
+ */
+function getConstructionSitePriority(homeRoom: string): {
+  homeNonRoad: number;
+  homeRoad: number;
+  remoteContainer: number;
+  total: number;
+} {
+  let homeNonRoad = 0;
+  let homeRoad = 0;
+  let remoteContainer = 0;
+
+  // Home room
+  const home = Game.rooms[homeRoom];
+  if (home) {
+    const sites = home.find(FIND_CONSTRUCTION_SITES);
+    homeNonRoad = sites.filter((s) => s.structureType !== STRUCTURE_ROAD).length;
+    homeRoad = sites.filter((s) => s.structureType === STRUCTURE_ROAD).length;
+  }
+
+  // Remote rooms
+  const remoteRooms = getActiveRemoteRooms(homeRoom);
+  for (const roomName of remoteRooms) {
+    const room = Game.rooms[roomName];
+    if (room) {
+      remoteContainer += room.find(FIND_CONSTRUCTION_SITES, {
+        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+      }).length;
+    }
+  }
+
+  return {
+    homeNonRoad,
+    homeRoad,
+    remoteContainer,
+    total: homeNonRoad + homeRoad + remoteContainer,
+  };
+}
+
 function scaleBody(
   unit: BodyPartConstant[],
   energy: number,
@@ -302,4 +410,83 @@ function scaleBody(
   }
 
   return body;
+}
+
+/**
+ * Get remote rooms that have hostiles AND would be valid mining targets
+ * (if they weren't hostile). We need to defend these to resume mining.
+ */
+function getHostileRemoteRooms(homeRoom: string): string[] {
+  const hostileRooms: string[] = [];
+  const exits = Game.map.describeExits(homeRoom);
+
+  if (!exits) return hostileRooms;
+
+  const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+
+  for (const dir in exits) {
+    const roomName = exits[dir as ExitKey];
+    if (!roomName) continue;
+
+    const intel = Memory.rooms?.[roomName];
+    if (!intel) continue;
+
+    // Skip rooms without sources (nothing to mine)
+    if (!intel.sources || intel.sources.length === 0) continue;
+
+    // Skip source keeper rooms (we shouldn't be mining there)
+    if (intel.hasKeepers) continue;
+
+    // Skip owned rooms (unless ours)
+    if (intel.controller?.owner && intel.controller.owner !== myUsername) continue;
+
+    // Skip rooms reserved by others
+    if (intel.controller?.reservation && intel.controller.reservation.username !== myUsername) continue;
+
+    // NOW check if room has hostiles or invader core - this is what we want!
+    if ((intel.hostiles && intel.hostiles > 0) || intel.hasInvaderCore) {
+      hostileRooms.push(roomName);
+    }
+  }
+
+  // Sort by hostile count (most hostiles first)
+  hostileRooms.sort((a, b) => {
+    const aHostiles = Memory.rooms?.[a]?.hostiles || 0;
+    const bHostiles = Memory.rooms?.[b]?.hostiles || 0;
+    return bHostiles - aHostiles;
+  });
+
+  return hostileRooms;
+}
+
+/**
+ * Count all remote defenders from a home room
+ */
+function countRemoteDefenders(homeRoom: string): number {
+  let count = 0;
+  for (const name in Game.creeps) {
+    const creep = Game.creeps[name];
+    if (creep.memory.role === "REMOTE_DEFENDER" && creep.memory.room === homeRoom) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Count remote defenders assigned to a specific target room
+ */
+function countRemoteDefendersForRoom(homeRoom: string, targetRoom: string): number {
+  let count = 0;
+  for (const name in Game.creeps) {
+    const creep = Game.creeps[name];
+    if (
+      creep.memory.role === "REMOTE_DEFENDER" &&
+      creep.memory.room === homeRoom &&
+      creep.memory.targetRoom === targetRoom
+    ) {
+      count++;
+    }
+  }
+  return count;
 }

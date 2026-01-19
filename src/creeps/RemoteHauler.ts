@@ -3,7 +3,21 @@ import { moveToRoom, smartMoveTo } from "../utils/movement";
 /**
  * RemoteHauler - Collects energy from remote mining rooms and delivers home
  * State machine: COLLECTING (in remote room) or DELIVERING (bringing home)
+ * Uses road-optimized pathing for efficiency on long routes.
  */
+
+// Move options optimized for road usage
+const ROAD_OPTS: MoveToOpts = {
+  reusePath: 50,
+  plainCost: 2, // Prefer roads over plains
+  swampCost: 10, // Strongly avoid swamps
+  visualizePathStyle: { stroke: "#ffaa00", opacity: 0.3 },
+};
+
+const ROAD_OPTS_DELIVER: MoveToOpts = {
+  ...ROAD_OPTS,
+  visualizePathStyle: { stroke: "#00ff00", opacity: 0.3 },
+};
 export function runRemoteHauler(creep: Creep): void {
   const targetRoom = creep.memory.targetRoom;
   const homeRoom = creep.memory.room;
@@ -57,7 +71,7 @@ function collect(creep: Creep, targetRoom: string): void {
   });
   if (dropped) {
     if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, dropped, { visualizePathStyle: { stroke: "#ffaa00" } });
+      smartMoveTo(creep, dropped, ROAD_OPTS);
     }
     return;
   }
@@ -70,7 +84,7 @@ function collect(creep: Creep, targetRoom: string): void {
   }) as StructureContainer | null;
   if (container) {
     if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#ffaa00" } });
+      smartMoveTo(creep, container, ROAD_OPTS);
     }
     return;
   }
@@ -81,7 +95,7 @@ function collect(creep: Creep, targetRoom: string): void {
   });
   if (tombstone) {
     if (creep.withdraw(tombstone, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, tombstone, { visualizePathStyle: { stroke: "#ffaa00" } });
+      smartMoveTo(creep, tombstone, ROAD_OPTS);
     }
     return;
   }
@@ -89,7 +103,7 @@ function collect(creep: Creep, targetRoom: string): void {
   // Nothing to collect - wait near a source
   const source = creep.pos.findClosestByPath(FIND_SOURCES);
   if (source && !creep.pos.inRangeTo(source, 3)) {
-    smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#ffaa00" } });
+    smartMoveTo(creep, source, ROAD_OPTS);
   }
 }
 
@@ -104,7 +118,7 @@ function deliver(creep: Creep, homeRoom: string): void {
   const storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" } });
+      smartMoveTo(creep, storage, ROAD_OPTS_DELIVER);
     }
     return;
   }
@@ -120,7 +134,7 @@ function deliver(creep: Creep, homeRoom: string): void {
 
     if (controllerContainer) {
       if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, controllerContainer, { visualizePathStyle: { stroke: "#00ff00" } });
+        smartMoveTo(creep, controllerContainer, ROAD_OPTS_DELIVER);
       }
       return;
     }
@@ -134,7 +148,7 @@ function deliver(creep: Creep, homeRoom: string): void {
   });
   if (spawn) {
     if (creep.transfer(spawn, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" } });
+      smartMoveTo(creep, spawn, ROAD_OPTS_DELIVER);
     }
     return;
   }
@@ -147,7 +161,7 @@ function deliver(creep: Creep, homeRoom: string): void {
   });
   if (container) {
     if (creep.transfer(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#00ff00" } });
+      smartMoveTo(creep, container, ROAD_OPTS_DELIVER);
     }
     return;
   }
@@ -155,6 +169,6 @@ function deliver(creep: Creep, homeRoom: string): void {
   // Nowhere to deliver - wait near storage or spawn
   const waitTarget = storage || creep.room.find(FIND_MY_SPAWNS)[0];
   if (waitTarget && !creep.pos.inRangeTo(waitTarget, 3)) {
-    smartMoveTo(creep, waitTarget, { visualizePathStyle: { stroke: "#00ff00" } });
+    smartMoveTo(creep, waitTarget, ROAD_OPTS_DELIVER);
   }
 }

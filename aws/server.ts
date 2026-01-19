@@ -116,7 +116,7 @@ app.get("/room/:name", async (req: Request, res: Response) => {
   }
 });
 
-// Room objects
+// Room objects (raw)
 app.get("/objects/:room", async (req: Request, res: Response) => {
   try {
     const room = req.params.room;
@@ -124,6 +124,153 @@ app.get("/objects/:room", async (req: Request, res: Response) => {
       `/game/room-objects?room=${room}&shard=${SCREEPS_SHARD}`
     );
     res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Room terrain
+app.get("/terrain/:room", async (req: Request, res: Response) => {
+  try {
+    const room = req.params.room;
+    const result = await screepsRequest(
+      `/game/room-terrain?room=${room}&shard=${SCREEPS_SHARD}&encoded=true`
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Helper to extract terrain string from API response
+function getTerrainString(result: ApiResponse): string | null {
+  const terrain = result.terrain as Array<{ terrain: string }> | undefined;
+  if (terrain && terrain.length > 0 && terrain[0].terrain) {
+    return terrain[0].terrain;
+  }
+  return null;
+}
+
+// Comprehensive room data (objects organized by type + terrain)
+interface RoomObject {
+  _id: string;
+  type: string;
+  x: number;
+  y: number;
+  [key: string]: unknown;
+}
+
+interface OrganizedRoomData {
+  room: string;
+  shard: string;
+  timestamp: string;
+  terrain: string | null;
+  objects: {
+    structures: Record<string, RoomObject[]>;
+    creeps: RoomObject[];
+    constructionSites: RoomObject[];
+    sources: RoomObject[];
+    minerals: RoomObject[];
+    droppedResources: RoomObject[];
+    tombstones: RoomObject[];
+    ruins: RoomObject[];
+    other: RoomObject[];
+  };
+  counts: {
+    totalObjects: number;
+    structures: number;
+    creeps: number;
+    constructionSites: number;
+    sources: number;
+    minerals: number;
+  };
+}
+
+app.get("/room-data/:room", async (req: Request, res: Response) => {
+  try {
+    const room = req.params.room;
+
+    // Fetch objects and terrain in parallel
+    const [objectsResult, terrainResult] = await Promise.all([
+      screepsRequest(`/game/room-objects?room=${room}&shard=${SCREEPS_SHARD}`),
+      screepsRequest(`/game/room-terrain?room=${room}&shard=${SCREEPS_SHARD}&encoded=true`),
+    ]);
+
+    if (!objectsResult.ok) {
+      res.status(500).json({ error: "Failed to fetch room objects", details: objectsResult });
+      return;
+    }
+
+    // Organize objects by type
+    const objects = (objectsResult.objects || []) as RoomObject[];
+    const organized: OrganizedRoomData = {
+      room,
+      shard: SCREEPS_SHARD,
+      timestamp: new Date().toISOString(),
+      terrain: getTerrainString(terrainResult),
+      objects: {
+        structures: {},
+        creeps: [],
+        constructionSites: [],
+        sources: [],
+        minerals: [],
+        droppedResources: [],
+        tombstones: [],
+        ruins: [],
+        other: [],
+      },
+      counts: {
+        totalObjects: objects.length,
+        structures: 0,
+        creeps: 0,
+        constructionSites: 0,
+        sources: 0,
+        minerals: 0,
+      },
+    };
+
+    // Structure types from Screeps API
+    const structureTypes = new Set([
+      "spawn", "extension", "road", "constructedWall", "rampart", "keeper_lair",
+      "portal", "controller", "link", "storage", "tower", "observer", "power_bank",
+      "power_spawn", "extractor", "lab", "terminal", "container", "nuker", "factory",
+      "invader_core",
+    ]);
+
+    for (const obj of objects) {
+      const type = obj.type;
+
+      if (structureTypes.has(type)) {
+        // Group structures by their type
+        if (!organized.objects.structures[type]) {
+          organized.objects.structures[type] = [];
+        }
+        organized.objects.structures[type].push(obj);
+        organized.counts.structures++;
+      } else if (type === "creep") {
+        organized.objects.creeps.push(obj);
+        organized.counts.creeps++;
+      } else if (type === "constructionSite") {
+        organized.objects.constructionSites.push(obj);
+        organized.counts.constructionSites++;
+      } else if (type === "source") {
+        organized.objects.sources.push(obj);
+        organized.counts.sources++;
+      } else if (type === "mineral") {
+        organized.objects.minerals.push(obj);
+        organized.counts.minerals++;
+      } else if (type === "energy" || type === "resource") {
+        organized.objects.droppedResources.push(obj);
+      } else if (type === "tombstone") {
+        organized.objects.tombstones.push(obj);
+      } else if (type === "ruin") {
+        organized.objects.ruins.push(obj);
+      } else {
+        organized.objects.other.push(obj);
+      }
+    }
+
+    res.json({ ok: 1, data: organized });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

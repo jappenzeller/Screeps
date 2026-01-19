@@ -193,6 +193,15 @@ resource "aws_iam_role_policy" "api" {
       {
         Effect = "Allow"
         Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [
+          aws_secretsmanager_secret.screeps_token.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents"

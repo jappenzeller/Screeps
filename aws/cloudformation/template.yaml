@@ -36,6 +36,8 @@ Resources:
           KeyType: HASH
         - AttributeName: timestamp
           KeyType: RANGE
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
       TimeToLiveSpecification:
         AttributeName: expiresAt
         Enabled: true
@@ -128,6 +130,187 @@ Resources:
       Tags:
         - Key: Project
           Value: !Ref ProjectName
+
+  # Knowledge table for learning/feedback loop
+  KnowledgeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-knowledge
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: patternHash
+          AttributeType: S
+        - AttributeName: category
+          AttributeType: S
+        - AttributeName: successRate
+          AttributeType: N
+      KeySchema:
+        - AttributeName: patternHash
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: category-success-index
+          KeySchema:
+            - AttributeName: category
+              KeyType: HASH
+            - AttributeName: successRate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==================== Metrics Table (DynamoDB) ====================
+  # Using DynamoDB instead of TimeStream for metrics storage
+  MetricsHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-metrics-history
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: roomName
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+        - AttributeName: metricName
+          AttributeType: S
+      KeySchema:
+        - AttributeName: roomName
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: metric-index
+          KeySchema:
+            - AttributeName: roomName
+              KeyType: HASH
+            - AttributeName: metricName
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ==================== EventBridge ====================
+  ScreepsEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub ${ProjectName}-events
+
+  # Rule for snapshot events -> metrics writer
+  SnapshotMetricsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${ProjectName}-snapshot-to-metrics
+      EventBusName: !Ref ScreepsEventBus
+      EventPattern:
+        source:
+          - screeps.advisor
+        detail-type:
+          - SnapshotCreated
+      State: ENABLED
+      Targets:
+        - Id: metrics-writer
+          Arn: !GetAtt MetricsWriterFunction.Arn
+
+  # Rule for significant events -> analysis workflow
+  AnalysisTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${ProjectName}-analysis-trigger
+      EventBusName: !Ref ScreepsEventBus
+      EventPattern:
+        source:
+          - screeps.advisor
+        detail-type:
+          - SignificantChange
+          - ThreatDetected
+          - EconomyAnomaly
+          - RCLProgress
+      State: ENABLED
+      Targets:
+        - Id: analysis-workflow
+          Arn: !Ref AnalysisWorkflow
+          RoleArn: !GetAtt EventBridgeStepFunctionsRole.Arn
+
+  # Rule for recommendations -> outcome evaluator (delayed check)
+  OutcomeCheckRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${ProjectName}-outcome-check
+      EventBusName: !Ref ScreepsEventBus
+      EventPattern:
+        source:
+          - screeps.advisor
+        detail-type:
+          - RecommendationCreated
+      State: ENABLED
+      Targets:
+        - Id: outcome-evaluator
+          Arn: !GetAtt OutcomeEvaluatorFunction.Arn
+
+  # ==================== S3 Archiving ====================
+  ArchiveBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ProjectName}-archive-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveToGlacier
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 30
+          - Id: DeleteOld
+            Status: Enabled
+            ExpirationInDays: 365
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Firehose for archiving events
+  EventFirehose:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: !Sub ${ProjectName}-event-archive
+      DeliveryStreamType: DirectPut
+      S3DestinationConfiguration:
+        BucketARN: !GetAtt ArchiveBucket.Arn
+        RoleARN: !GetAtt FirehoseRole.Arn
+        Prefix: events/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/
+        ErrorOutputPrefix: errors/
+        BufferingHints:
+          IntervalInSeconds: 300
+          SizeInMBs: 5
+        CompressionFormat: GZIP
+
+  FirehoseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-firehose-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FirehoseS3Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                Resource:
+                  - !GetAtt ArchiveBucket.Arn
+                  - !Sub ${ArchiveBucket.Arn}/*
 
   # ==================== Secrets ====================
   ScreepsTokenSecret:
@@ -228,6 +411,11 @@ Resources:
                   - !Ref AnthropicKeySecret
               - Effect: Allow
                 Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/screeps-advisor/*
+              - Effect: Allow
+                Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
@@ -264,6 +452,323 @@ Resources:
                   - !Sub ${RecommendationsTable.Arn}/index/*
               - Effect: Allow
                 Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref ScreepsTokenSecret
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Stream Processor Role (DynamoDB Streams -> EventBridge)
+  StreamProcessorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-stream-processor-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StreamProcessorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
+                Resource:
+                  - !Sub ${SnapshotsTable.Arn}/stream/*
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt SnapshotsTable.Arn
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource:
+                  - !GetAtt ScreepsEventBus.Arn
+              - Effect: Allow
+                Action:
+                  - firehose:PutRecord
+                  - firehose:PutRecordBatch
+                Resource:
+                  - !GetAtt EventFirehose.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Metrics Writer Role (EventBridge -> DynamoDB)
+  MetricsWriterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-metrics-writer-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MetricsWriterPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt MetricsHistoryTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Outcome Evaluator Role (checks recommendation outcomes)
+  OutcomeEvaluatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-outcome-evaluator-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OutcomeEvaluatorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt SnapshotsTable.Arn
+                  - !GetAtt RecommendationsTable.Arn
+                  - !Sub ${RecommendationsTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt KnowledgeTable.Arn
+                  - !GetAtt RecommendationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt MetricsHistoryTable.Arn
+                  - !Sub ${MetricsHistoryTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:DeleteSchedule
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt SchedulerExecutionRole.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Step Functions Execution Role
+  AnalysisWorkflowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-analysis-workflow-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AnalysisWorkflowPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ContextBuilderFunction.Arn
+                  - !GetAtt ClaudeAnalyzerFunction.Arn
+                  - !GetAtt RecommendationWriterFunction.Arn
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource:
+                  - !GetAtt ScreepsEventBus.Arn
+
+  # EventBridge -> Step Functions Role
+  EventBridgeStepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-eventbridge-sfn-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStepFunctions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref AnalysisWorkflow
+
+  # Scheduler Execution Role (for delayed outcome checks)
+  # Note: Uses constructed ARN to avoid circular dependency with OutcomeEvaluatorFunction
+  SchedulerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-scheduler-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:screeps-outcome-evaluator-${Environment}
+
+  # Context Builder Role
+  ContextBuilderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-context-builder-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ContextBuilderPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt SnapshotsTable.Arn
+                  - !GetAtt EventsTable.Arn
+                  - !Sub ${EventsTable.Arn}/index/*
+                  - !GetAtt KnowledgeTable.Arn
+                  - !Sub ${KnowledgeTable.Arn}/index/*
+                  - !GetAtt RecommendationsTable.Arn
+                  - !Sub ${RecommendationsTable.Arn}/index/*
+                  - !GetAtt MetricsHistoryTable.Arn
+                  - !Sub ${MetricsHistoryTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Claude Analyzer Role
+  ClaudeAnalyzerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-claude-analyzer-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ClaudeAnalyzerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref AnthropicKeySecret
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Recommendation Writer Role
+  RecommendationWriterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-recommendation-writer-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RecommendationWriterPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt RecommendationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                Resource:
+                  - !GetAtt ScreepsEventBus.Arn
+              - Effect: Allow
+                Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
@@ -292,6 +797,7 @@ Resources:
 
   AnalysisEngineFunction:
     Type: AWS::Lambda::Function
+    DependsOn: HttpApi
     Properties:
       FunctionName: !Sub screeps-analysis-engine-${Environment}
       Runtime: nodejs20.x
@@ -308,6 +814,7 @@ Resources:
           EVENTS_TABLE: !Ref EventsTable
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
           ANTHROPIC_KEY_SECRET: !Ref AnthropicKeySecret
+          API_ENDPOINT: !GetAtt HttpApi.ApiEndpoint
 
   ApiFunction:
     Type: AWS::Lambda::Function
@@ -326,6 +833,193 @@ Resources:
           SNAPSHOTS_TABLE: !Ref SnapshotsTable
           EVENTS_TABLE: !Ref EventsTable
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+          SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
+          SCREEPS_SHARD: !Ref ScreepsShard
+
+  # Stream Processor - DynamoDB Streams -> EventBridge
+  StreamProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-stream-processor-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt StreamProcessorRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: stream-processor.zip
+      Environment:
+        Variables:
+          EVENT_BUS_NAME: !Ref ScreepsEventBus
+          FIREHOSE_STREAM: !Ref EventFirehose
+          SNAPSHOTS_TABLE: !Ref SnapshotsTable
+
+  # Event source mapping for DynamoDB Streams
+  SnapshotStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SnapshotsTable.StreamArn
+      FunctionName: !Ref StreamProcessorFunction
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 5
+
+  # Metrics Writer - EventBridge -> TimeStream
+  MetricsWriterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-metrics-writer-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt MetricsWriterRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: metrics-writer.zip
+      Environment:
+        Variables:
+          METRICS_TABLE: !Ref MetricsHistoryTable
+          
+  MetricsWriterPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MetricsWriterFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SnapshotMetricsRule.Arn
+
+  # Context Builder - gathers context for AI analysis
+  ContextBuilderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-context-builder-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt ContextBuilderRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: context-builder.zip
+      Environment:
+        Variables:
+          SNAPSHOTS_TABLE: !Ref SnapshotsTable
+          EVENTS_TABLE: !Ref EventsTable
+          KNOWLEDGE_TABLE: !Ref KnowledgeTable
+          RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+          METRICS_TABLE: !Ref MetricsHistoryTable
+          
+  # Claude Analyzer - calls Claude API for analysis
+  ClaudeAnalyzerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-claude-analyzer-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt ClaudeAnalyzerRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: claude-analyzer.zip
+      Environment:
+        Variables:
+          ANTHROPIC_KEY_SECRET: !Ref AnthropicKeySecret
+
+  # Recommendation Writer - writes recommendations to DynamoDB
+  RecommendationWriterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-recommendation-writer-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt RecommendationWriterRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: recommendation-writer.zip
+      Environment:
+        Variables:
+          RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+          EVENT_BUS_NAME: !Ref ScreepsEventBus
+
+  # Outcome Evaluator - checks if recommendations worked
+  OutcomeEvaluatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-outcome-evaluator-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt OutcomeEvaluatorRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: outcome-evaluator.zip
+      Environment:
+        Variables:
+          SNAPSHOTS_TABLE: !Ref SnapshotsTable
+          RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+          KNOWLEDGE_TABLE: !Ref KnowledgeTable
+          METRICS_TABLE: !Ref MetricsHistoryTable
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
+
+  OutcomeEvaluatorPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OutcomeEvaluatorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt OutcomeCheckRule.Arn
+
+  # ==================== Step Functions ====================
+  AnalysisWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub ${ProjectName}-analysis-workflow
+      RoleArn: !GetAtt AnalysisWorkflowRole.Arn
+      Definition:
+        Comment: Screeps AI Analysis Workflow
+        StartAt: BuildContext
+        States:
+          BuildContext:
+            Type: Task
+            Resource: !GetAtt ContextBuilderFunction.Arn
+            ResultPath: $.context
+            Next: AnalyzeWithClaude
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                ResultPath: $.error
+                Next: FailState
+          AnalyzeWithClaude:
+            Type: Task
+            Resource: !GetAtt ClaudeAnalyzerFunction.Arn
+            InputPath: $.context
+            ResultPath: $.analysis
+            Next: WriteRecommendations
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                ResultPath: $.error
+                Next: FailState
+          WriteRecommendations:
+            Type: Task
+            Resource: !GetAtt RecommendationWriterFunction.Arn
+            InputPath: $.analysis
+            ResultPath: $.recommendations
+            Next: SuccessState
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                ResultPath: $.error
+                Next: FailState
+          SuccessState:
+            Type: Succeed
+          FailState:
+            Type: Fail
+            Cause: Analysis workflow failed
+            Error: WorkflowError
 
   # ==================== API Gateway ====================
   HttpApi:
@@ -385,6 +1079,27 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: POST /feedback/{recommendationId}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteLiveRoom:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /live/{roomName}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteLiveAll:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /live
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRoomData:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /room/{roomName}
       Target: !Sub integrations/${ApiIntegration}
 
   ApiInvokePermission:
@@ -460,3 +1175,23 @@ Outputs:
   AnthropicKeySecretArn:
     Description: ARN of Anthropic API key secret
     Value: !Ref AnthropicKeySecret
+
+  KnowledgeTableName:
+    Description: DynamoDB knowledge table name
+    Value: !Ref KnowledgeTable
+
+  EventBusName:
+    Description: EventBridge bus name
+    Value: !Ref ScreepsEventBus
+
+  MetricsHistoryTableName:
+    Description: DynamoDB metrics history table name
+    Value: !Ref MetricsHistoryTable
+
+  AnalysisWorkflowArn:
+    Description: Step Functions analysis workflow ARN
+    Value: !Ref AnalysisWorkflow
+
+  ArchiveBucketName:
+    Description: S3 archive bucket name
+    Value: !Ref ArchiveBucket

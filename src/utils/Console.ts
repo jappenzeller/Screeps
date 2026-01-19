@@ -8,6 +8,27 @@ import { getSafeModeStatus } from "../defense/AutoSafeMode";
 import { TrafficMonitor } from "../core/TrafficMonitor";
 import { StatsCollector } from "./StatsCollector";
 
+// Helper function for road coverage calculation
+function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
+  const path = room.findPath(from, to, {
+    ignoreCreeps: true,
+    swampCost: 2,
+    plainCost: 2,
+    range: 1,
+  });
+
+  if (path.length === 0) return 1;
+
+  let roadsOnPath = 0;
+  for (const step of path) {
+    const hasRoad = room.lookForAt(LOOK_STRUCTURES, step.x, step.y)
+      .some((s) => s.structureType === STRUCTURE_ROAD);
+    if (hasRoad) roadsOnPath++;
+  }
+
+  return roadsOnPath / path.length;
+}
+
 // Screeps global object
 declare const global: {
   [key: string]: unknown;
@@ -34,6 +55,7 @@ tasks()          - Show ColonyManager task queue
 tasks("W1N1")    - Show tasks for specific room
 creepStates()    - Show current creep state assignments
 remote()         - Remote mining status and targets
+remoteAudit()    - Detailed remote infrastructure audit
 threats()        - Show hostile creeps and threat levels
 safemode()       - Show safe mode status and threat assessment
 safemode("W1N1") - Safe mode status for specific room
@@ -413,6 +435,127 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       console.log(`  Last scan: ${Game.time - (intel?.lastScan || 0)} ticks ago`);
       console.log(`  Hostiles: ${intel?.hostiles || 0}`);
     }
+
+    return "OK";
+  };
+
+  // Remote mining infrastructure audit
+  global.remoteAudit = () => {
+    const firstRoom = Object.keys(Game.rooms).find((r) => Game.rooms[r].controller?.my);
+    if (!firstRoom) {
+      console.log("No owned room found");
+      return "No room";
+    }
+
+    const homeRoom = Game.rooms[firstRoom];
+    const manager = ColonyManager.getInstance(firstRoom);
+    const targets = manager.getRemoteMiningTargets();
+
+    console.log("=== Remote Mining Infrastructure Audit ===");
+    console.log(`Home Room: ${firstRoom}`);
+    console.log(`Target Rooms: ${targets.length}`);
+
+    // Count creeps by type
+    const remoteMinerCount: Record<string, number> = {};
+    const remoteHaulerCount: Record<string, number> = {};
+    const reserverCount: Record<string, number> = {};
+
+    for (const name in Game.creeps) {
+      const creep = Game.creeps[name];
+      if (creep.memory.room !== firstRoom) continue;
+      const targetRoom = creep.memory.targetRoom;
+      if (!targetRoom) continue;
+
+      if (creep.memory.role === "REMOTE_MINER") {
+        remoteMinerCount[targetRoom] = (remoteMinerCount[targetRoom] || 0) + 1;
+      } else if (creep.memory.role === "REMOTE_HAULER") {
+        remoteHaulerCount[targetRoom] = (remoteHaulerCount[targetRoom] || 0) + 1;
+      } else if (creep.memory.role === "RESERVER") {
+        reserverCount[targetRoom] = (reserverCount[targetRoom] || 0) + 1;
+      }
+    }
+
+    for (const roomName of targets) {
+      const room = Game.rooms[roomName];
+      const intel = Memory.rooms?.[roomName];
+      const sourceCount = intel?.sources?.length || 0;
+
+      console.log(`\n--- ${roomName} ---`);
+      console.log(`  Sources: ${sourceCount}`);
+      console.log(`  Last scan: ${intel?.lastScan ? (Game.time - intel.lastScan) + " ticks ago" : "never"}`);
+
+      // Creep status
+      const miners = remoteMinerCount[roomName] || 0;
+      const haulers = remoteHaulerCount[roomName] || 0;
+      const reservers = reserverCount[roomName] || 0;
+      console.log(`  Miners: ${miners}/${sourceCount} (1 per source)`);
+      console.log(`  Haulers: ${haulers}/2`);
+      console.log(`  Reservers: ${reservers}`);
+
+      // Container status
+      if (room) {
+        const sources = room.find(FIND_SOURCES);
+        let containersBuilt = 0;
+        let containerSites = 0;
+
+        for (const source of sources) {
+          const containers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+            filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+          });
+          const sites = source.pos.findInRange(FIND_CONSTRUCTION_SITES, 1, {
+            filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+          });
+
+          if (containers.length > 0) containersBuilt++;
+          else if (sites.length > 0) containerSites++;
+        }
+
+        const containerStatus = containersBuilt === sourceCount
+          ? "COMPLETE"
+          : containerSites > 0
+          ? `${containersBuilt}/${sourceCount} built, ${containerSites} building`
+          : `${containersBuilt}/${sourceCount} NEED ${sourceCount - containersBuilt} more`;
+        console.log(`  Containers: ${containerStatus}`);
+      } else {
+        console.log(`  Containers: [no visibility]`);
+      }
+
+      // Road status
+      const exitDir = homeRoom.findExitTo(roomName);
+      if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS && homeRoom.storage) {
+        const exitTiles = homeRoom.find(exitDir);
+        if (exitTiles.length > 0) {
+          const exitCenter = exitTiles[Math.floor(exitTiles.length / 2)];
+          const roadCoverage = calculatePathRoadCoverage(homeRoom, homeRoom.storage.pos, exitCenter);
+          const roadStatus = roadCoverage >= 0.8 ? "COMPLETE" : `${Math.floor(roadCoverage * 100)}% (need roads)`;
+          console.log(`  Road to exit: ${roadStatus}`);
+        }
+      }
+
+      // Controller reservation status
+      if (intel?.controller?.reservation) {
+        const res = intel.controller.reservation;
+        console.log(`  Reservation: ${res.username} (${res.ticksToEnd} ticks)`);
+      } else {
+        console.log(`  Reservation: NONE (need reserver)`);
+      }
+
+      // Threats
+      console.log(`  Hostiles: ${intel?.hostiles || 0}`);
+      if (intel?.hasKeepers) console.log(`  WARNING: Source keepers present`);
+      if (intel?.hasInvaderCore) console.log(`  WARNING: Invader core present`);
+    }
+
+    // Summary
+    console.log(`\n=== Summary ===`);
+    const totalMiners = Object.values(remoteMinerCount).reduce((a, b) => a + b, 0);
+    const totalHaulers = Object.values(remoteHaulerCount).reduce((a, b) => a + b, 0);
+    const neededMiners = targets.reduce((sum, r) => sum + (Memory.rooms?.[r]?.sources?.length || 0), 0);
+    const neededHaulers = targets.length * 2;
+
+    console.log(`Total Miners: ${totalMiners}/${neededMiners}`);
+    console.log(`Total Haulers: ${totalHaulers}/${neededHaulers}`);
+    console.log(`Target Rooms: ${targets.length}`);
 
     return "OK";
   };
@@ -803,7 +946,8 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     return "OK";
   };
 
-  // Detailed traffic report with path coverage
+  // Detailed traffic report for desire-path model
+  // Shows unroaded tiles with high traffic (= places that need roads)
   global.trafficReport = (roomName: string) => {
     if (!roomName) {
       // Use first owned room
@@ -818,73 +962,69 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
 
     const metrics = StatsCollector.exportTrafficMetrics(room);
 
-    console.log(`\n=== Traffic Report: ${roomName} ===`);
-    console.log(`Tracked tiles: ${metrics.trackedTiles}`);
-    console.log(`High-traffic tiles: ${metrics.highTrafficTiles}`);
-    console.log(`Road coverage: ${(metrics.roads.coveragePercent * 100).toFixed(1)}% (${metrics.roads.coveringHighTraffic}/${metrics.highTrafficTiles} high-traffic tiles)`);
-    console.log(`Total roads: ${metrics.roads.total}`);
+    console.log(`\n=== Traffic Report: ${roomName} (Desire-Path Model) ===`);
+    console.log(`\nUnroaded Traffic Tracking:`);
+    console.log(`  Tiles tracked: ${metrics.trackedTiles} (unroaded tiles with traffic)`);
+    console.log(`  Desire paths: ${metrics.desirePaths} (tiles with 50+ visits - ready for roads)`);
+    console.log(`  Window: ${metrics.windowProgress}/${metrics.windowSize} ticks`);
 
-    console.log(`\nTop hotspots (need roads):`);
-    for (const h of metrics.hotspots.slice(0, 5)) {
-      console.log(`  (${h.x},${h.y}): ${h.visits} visits [${h.terrain}] priority=${h.priority}`);
+    console.log(`\nRoad Status:`);
+    console.log(`  Total roads: ${metrics.roads.total}`);
+    console.log(`  Built by planner: ${metrics.roads.builtByPlanner}`);
+
+    if (metrics.hotspots.length > 0) {
+      console.log(`\nTop Hotspots (NEED ROADS):`);
+      for (const h of metrics.hotspots.slice(0, 5)) {
+        const swampNote = h.terrain === "swamp" ? " ★SWAMP" : "";
+        console.log(`  (${h.x},${h.y}): ${h.visits} visits [${h.terrain}]${swampNote} priority=${h.priority}`);
+      }
+    } else {
+      console.log(`\nNo hotspots yet - traffic data accumulating.`);
     }
 
-    console.log(`\nPath coverage:`);
-    for (const p of metrics.paths.spawnToSource) {
-      console.log(`  spawn→source: ${(p.roadCoverage * 100).toFixed(0)}% (${p.roadsOnPath}/${p.distance} tiles, avg traffic: ${p.avgTraffic.toFixed(0)})`);
+    console.log(`\nPath Coverage (roads on optimal paths):`);
+    for (const p of metrics.pathCoverage.spawnToSources) {
+      const pct = (p.coverage * 100).toFixed(0);
+      const status = p.coverage >= 0.8 ? "✓" : p.coverage >= 0.5 ? "~" : "✗";
+      console.log(`  ${status} spawn→source: ${pct}% (${p.distance} tiles)`);
     }
-    console.log(`  spawn→controller: ${(metrics.paths.spawnToController.roadCoverage * 100).toFixed(0)}% (${metrics.paths.spawnToController.roadsOnPath}/${metrics.paths.spawnToController.distance} tiles)`);
-    if (metrics.paths.spawnToStorage) {
-      console.log(`  spawn→storage: ${(metrics.paths.spawnToStorage.roadCoverage * 100).toFixed(0)}% (${metrics.paths.spawnToStorage.roadsOnPath}/${metrics.paths.spawnToStorage.distance} tiles)`);
+    const ctrlPct = (metrics.pathCoverage.spawnToController.coverage * 100).toFixed(0);
+    const ctrlStatus = metrics.pathCoverage.spawnToController.coverage >= 0.8 ? "✓" : "~";
+    console.log(`  ${ctrlStatus} spawn→controller: ${ctrlPct}% (${metrics.pathCoverage.spawnToController.distance} tiles)`);
+
+    if (metrics.pathCoverage.spawnToStorage) {
+      const storagePct = (metrics.pathCoverage.spawnToStorage.coverage * 100).toFixed(0);
+      const storageStatus = metrics.pathCoverage.spawnToStorage.coverage >= 0.8 ? "✓" : "~";
+      console.log(`  ${storageStatus} spawn→storage: ${storagePct}% (${metrics.pathCoverage.spawnToStorage.distance} tiles)`);
     }
 
     console.log(`\nEfficiency:`);
-    console.log(`  Stuck events (recent): ${metrics.efficiency.stuckEvents}`);
-    console.log(`  Oscillation events: ${metrics.efficiency.oscillationEvents}`);
-    console.log(`  Swamp tile visits (unroaded): ${metrics.efficiency.swampTilesTraversed}`);
+    console.log(`  Swamp traffic: ${metrics.efficiency.swampTraffic} visits (lower is better)`);
+    if (metrics.efficiency.swampTraffic > 100) {
+      console.log(`    ⚠ Consider prioritizing swamp roads to reduce fatigue`);
+    }
 
     return "OK";
   };
 
-  // Movement stats - show stuck/oscillation data
+  // Movement stats - show creep positions (simplified after removing complex movement tracking)
   global.moveStats = () => {
     const lines: string[] = ["=== Movement Stats ==="];
-    let stuckCount = 0;
-    let oscillating = 0;
+    const byRole: Record<string, number> = {};
 
     for (const name in Game.creeps) {
       const creep = Game.creeps[name];
-      const mem = creep.memory._move;
-
-      if (mem && (mem.stuckCount > 0 || (mem.posHistory && mem.posHistory.length >= 4))) {
-        // Check for oscillation pattern
-        const history = mem.posHistory;
-        let isOscillating = false;
-        if (history && history.length >= 4) {
-          const len = history.length;
-          const p1 = history[len - 4];
-          const p2 = history[len - 3];
-          const p3 = history[len - 2];
-          const p4 = history[len - 1];
-          if (p1.x === p3.x && p1.y === p3.y && p2.x === p4.x && p2.y === p4.y) {
-            isOscillating = true;
-            oscillating++;
-          }
-        }
-
-        if (mem.stuckCount >= 2 || isOscillating) {
-          stuckCount++;
-          const status = isOscillating ? "OSCILLATING" : `stuck=${mem.stuckCount}`;
-          lines.push(`  ${name} (${creep.memory.role}): ${status} @ ${creep.pos.x},${creep.pos.y}`);
-        }
-      }
+      const role = creep.memory.role || "UNKNOWN";
+      byRole[role] = (byRole[role] || 0) + 1;
     }
 
-    if (stuckCount === 0) {
-      lines.push("  No creeps currently stuck or oscillating");
-    } else {
-      lines.push(`\nSummary: ${stuckCount} creeps with issues (${oscillating} oscillating)`);
+    lines.push("Creep counts by role:");
+    for (const [role, count] of Object.entries(byRole)) {
+      lines.push(`  ${role}: ${count}`);
     }
+
+    lines.push("\nNote: Complex movement tracking was removed for stability.");
+    lines.push("Use traffic() to see high-traffic areas.");
 
     console.log(lines.join("\n"));
     return "OK";
@@ -906,8 +1046,8 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     const metrics = StatsCollector.exportTrafficMetrics(room);
 
     console.log(`\n=== Road Suggestions: ${roomName} ===`);
-    console.log(`Current road coverage: ${(metrics.roads.coveragePercent * 100).toFixed(1)}%`);
-    console.log(`\nCopy-paste these commands to build roads:\n`);
+    console.log(`Desire paths (50+ visits): ${metrics.desirePaths}`);
+    console.log(`\nCopy-paste these commands to build roads at top hotspots:\n`);
 
     for (const h of metrics.hotspots.slice(0, 5)) {
       const priority = h.terrain === "swamp" ? "HIGH (swamp)" : "medium";
@@ -915,7 +1055,8 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     if (metrics.hotspots.length === 0) {
-      console.log("No hotspots found - road coverage is good or not enough traffic data yet.");
+      console.log("No hotspots found yet. Traffic data accumulates over time.");
+      console.log("Note: Only unroaded tiles are tracked - if paths are roaded, no data shows.");
     }
 
     return "OK";

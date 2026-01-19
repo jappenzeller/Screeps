@@ -1,0 +1,9 @@
+{
+  "name": "screeps-claude-analyzer",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.0.0"
+  }
+}

@@ -26,6 +26,10 @@ interface CreepMemory {
   // Energy acquisition coordination
   energyTarget?: Id<StructureContainer | StructureStorage | StructureLink | Resource | Tombstone | Ruin>;
 
+  // Movement stuck detection
+  _lastPos?: string;
+  _stuckCount?: number;
+
   // Legacy support
   working?: boolean;
 }

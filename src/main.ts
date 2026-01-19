@@ -9,6 +9,7 @@ import { registerConsoleCommands } from "./utils/Console";
 import { placeStructures } from "./structures/placeStructures";
 import { spawnCreeps } from "./spawning/spawnCreeps";
 import { TowerManager } from "./structures/TowerManager";
+import { LinkManager } from "./structures/LinkManager";
 import { runCreep } from "./creeps/roles";
 import { ColonyManager } from "./core/ColonyManager";
 import { StatsCollector, EventType } from "./utils/StatsCollector";
@@ -16,6 +17,7 @@ import { AWSExporter } from "./utils/AWSExporter";
 import { checkAutoSafeMode } from "./defense/AutoSafeMode";
 import { TrafficMonitor } from "./core/TrafficMonitor";
 import { SmartRoadPlanner } from "./core/SmartRoadPlanner";
+import { RemoteContainerPlanner } from "./core/RemoteContainerPlanner";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -80,7 +82,13 @@ function runRoom(room: Room): void {
   const towerManager = new TowerManager(room);
   towerManager.run();
 
-  // 5. Traffic monitoring - record every tick
+  // 5. Run links (RCL 5+)
+  if (room.controller && room.controller.level >= 5) {
+    const linkManager = new LinkManager(room);
+    linkManager.run();
+  }
+
+  // 6. Traffic monitoring - record every tick
   const trafficMonitor = new TrafficMonitor(room);
   trafficMonitor.recordTick();
 
@@ -89,10 +97,16 @@ function runRoom(room: Room): void {
     trafficMonitor.visualize();
   }
 
-  // 6. Smart road planning - every 100 ticks
+  // 7. Smart road planning - every 100 ticks
   if (Game.time % 100 === 0) {
     const roadPlanner = new SmartRoadPlanner(room);
     roadPlanner.run();
+  }
+
+  // 8. Remote container planning - every 100 ticks
+  if (Game.time % 100 === 0) {
+    const containerPlanner = new RemoteContainerPlanner(room);
+    containerPlanner.run();
   }
 }
 

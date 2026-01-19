@@ -11,11 +11,12 @@ export const CONFIG = {
     UPGRADER: 3,
     BUILDER: 4,
     DEFENDER: 5,
-    RESERVER: 6,
-    REMOTE_MINER: 7,
-    REMOTE_HAULER: 8,
-    SCOUT: 9,
-    CLAIMER: 10,
+    REMOTE_DEFENDER: 6,
+    RESERVER: 7,
+    REMOTE_MINER: 8,
+    REMOTE_HAULER: 9,
+    SCOUT: 10,
+    CLAIMER: 11,
   } as const,
 
   // Minimum creep counts per room

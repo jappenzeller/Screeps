@@ -1,10 +1,83 @@
 import { ColonyManager } from "../core/ColonyManager";
-import { smartMoveTo } from "../utils/movement";
+import { smartMoveTo, moveToRoom } from "../utils/movement";
 
 /**
  * Builder: Builds construction sites and repairs structures.
- * Simple implementation - no external dependencies.
+ * Supports building in remote rooms (containers for remote mining).
  */
+
+/**
+ * Find the highest priority construction site.
+ * Priority: home non-road > remote containers > home roads
+ */
+function findConstructionSite(creep: Creep): ConstructionSite | null {
+  const homeRoom = Game.rooms[creep.memory.room];
+
+  // Priority 1: Non-road sites in home room
+  if (homeRoom) {
+    const homeSites = homeRoom.find(FIND_CONSTRUCTION_SITES);
+    const nonRoad = homeSites.filter((s) => s.structureType !== STRUCTURE_ROAD);
+    if (nonRoad.length > 0) {
+      return creep.pos.findClosestByPath(nonRoad) || nonRoad[0];
+    }
+  }
+
+  // Priority 2: Container sites in adjacent remote rooms we're mining
+  const exits = Game.map.describeExits(creep.memory.room);
+  if (exits) {
+    for (const dir in exits) {
+      const roomName = exits[dir as ExitKey];
+      if (!roomName || !Game.rooms[roomName]) continue;
+
+      // Only build in rooms we're actively mining
+      const hasMiner = Object.values(Game.creeps).some(
+        (c) =>
+          c.memory.role === "REMOTE_MINER" &&
+          c.memory.targetRoom === roomName &&
+          c.memory.room === creep.memory.room
+      );
+      if (!hasMiner) continue;
+
+      const remoteSites = Game.rooms[roomName].find(FIND_CONSTRUCTION_SITES, {
+        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+      });
+
+      if (remoteSites.length > 0) {
+        // Return first remote container site found
+        return remoteSites[0];
+      }
+    }
+  }
+
+  // Priority 3: Road sites in home room (lowest priority)
+  if (homeRoom) {
+    const roads = homeRoom.find(FIND_CONSTRUCTION_SITES, {
+      filter: (s) => s.structureType === STRUCTURE_ROAD,
+    });
+    if (roads.length > 0) {
+      return creep.pos.findClosestByPath(roads) || roads[0];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Move to a construction site, handling inter-room travel
+ */
+function moveToSite(creep: Creep, site: ConstructionSite): void {
+  // If site is in a different room, travel there first
+  if (site.pos.roomName !== creep.room.name) {
+    moveToRoom(creep, site.pos.roomName, "#ffaa00");
+    return;
+  }
+
+  // Same room - move directly to site
+  smartMoveTo(creep, site, {
+    visualizePathStyle: { stroke: "#00ff00" },
+    reusePath: 5,
+  });
+}
 
 function moveOffRoad(creep: Creep): void {
   const onRoad = creep.pos.lookFor(LOOK_STRUCTURES).some(s => s.structureType === STRUCTURE_ROAD);
@@ -77,7 +150,7 @@ export function runBuilder(creep: Creep): void {
 }
 
 function buildOrRepair(creep: Creep): void {
-  // Priority 1: Construction sites
+  // Priority 1: Construction sites (home and remote rooms)
   // Prefer assigned target from task
   let site: ConstructionSite | null = null;
 
@@ -93,15 +166,21 @@ function buildOrRepair(creep: Creep): void {
     }
   }
 
-  // Fallback to closest site
+  // Find site across home and remote rooms
   if (!site) {
-    site = creep.pos.findClosestByPath(FIND_CONSTRUCTION_SITES);
+    site = findConstructionSite(creep);
+    if (site) {
+      creep.memory.targetSiteId = site.id;
+    }
   }
 
   if (site) {
     const result = creep.build(site);
     if (result === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+      moveToSite(creep, site);
+    } else if (result === ERR_INVALID_TARGET) {
+      // Site completed or removed
+      delete creep.memory.targetSiteId;
     }
     return;
   }
@@ -150,6 +229,12 @@ function buildOrRepair(creep: Creep): void {
 }
 
 function getEnergy(creep: Creep): void {
+  // If in a remote room, return to home room for energy
+  if (creep.room.name !== creep.memory.room) {
+    moveToRoom(creep, creep.memory.room, "#ffaa00");
+    return;
+  }
+
   // Priority 1: Storage
   const storage = creep.room.storage;
   if (storage && storage.store[RESOURCE_ENERGY] > 0) {
