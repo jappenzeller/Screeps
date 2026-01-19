@@ -1,5 +1,5 @@
 import { logger } from "../utils/Logger";
-import { moveToRoom } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
 /**
  * Reserver - Reserves controllers in remote rooms
@@ -45,7 +45,7 @@ export function runReserver(creep: Creep): void {
 
   const result = creep.reserveController(controller);
   if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(controller, { visualizePathStyle: { stroke: "#00ffff" } });
+    smartMoveTo(creep, controller, { visualizePathStyle: { stroke: "#00ffff" } });
   } else if (result === OK) {
     creep.say("📋");
   }

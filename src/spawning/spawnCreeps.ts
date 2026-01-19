@@ -26,7 +26,26 @@ export function spawnCreeps(room: Room): void {
 
   // Spawn first thing that's under target
   for (const target of targets) {
-    if (countRole(target.role) < target.count) {
+    let shouldSpawn = false;
+
+    if (target.memory?.sourceId) {
+      // Per-source roles (REMOTE_MINER) - count miners for this specific source
+      const sourceCreeps = creeps.filter(
+        (c) => c.memory.role === target.role && c.memory.sourceId === target.memory?.sourceId
+      ).length;
+      shouldSpawn = sourceCreeps < target.count;
+    } else if (target.memory?.targetRoom && !target.memory?.sourceId) {
+      // Per-room roles (REMOTE_HAULER, RESERVER) - count creeps for this specific room
+      const roomCreeps = creeps.filter(
+        (c) => c.memory.role === target.role && c.memory.targetRoom === target.memory?.targetRoom
+      ).length;
+      shouldSpawn = roomCreeps < target.count;
+    } else {
+      // Global roles (HARVESTER, HAULER, UPGRADER, etc)
+      shouldSpawn = countRole(target.role) < target.count;
+    }
+
+    if (shouldSpawn) {
       const name = `${target.role}_${Game.time}`;
       const memory: CreepMemory = {
         role: target.role,
@@ -90,6 +109,7 @@ function getTargets(rcl: number, energy: number, room: Room): CreepTarget[] {
 
     // Remote miners: 1 per remote source
     const remoteTargets = getRemoteMiningTargets(room.name);
+
     for (const target of remoteTargets) {
       const remoteMinerBody: BodyPartConstant[] = [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];
       const currentMiners = countRemoteMiners(room.name, target.roomName, target.sourceId);

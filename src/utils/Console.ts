@@ -5,6 +5,8 @@
 
 import { ColonyManager } from "../core/ColonyManager";
 import { getSafeModeStatus } from "../defense/AutoSafeMode";
+import { TrafficMonitor } from "../core/TrafficMonitor";
+import { StatsCollector } from "./StatsCollector";
 
 // Screeps global object
 declare const global: {
@@ -41,6 +43,13 @@ awsExport()      - Show AWS memory segment export status
 construction()   - Show construction status and priorities
 advisor()        - Show AI Advisor API endpoints
 fetchAdvisor("W1N1") - Show cached recommendations for room
+traffic()        - Show traffic heatmap stats for all rooms
+traffic("W1N1")  - Show traffic stats for specific room
+showTraffic(true/false) - Toggle traffic heatmap visualization
+clearTraffic("W1N1") - Clear traffic data for a room
+trafficReport("W1N1") - Detailed traffic report with path coverage
+suggestRoads("W1N1") - Get road construction commands for hotspots
+moveStats()          - Show creeps with movement issues (stuck/oscillating)
 `);
   };
 
@@ -706,5 +715,209 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     return 'OK';
+  };
+
+  // Traffic monitoring commands
+  global.traffic = (roomName?: string) => {
+    const rooms = roomName
+      ? [roomName]
+      : Object.keys(Memory.traffic || {});
+
+    if (rooms.length === 0) {
+      console.log("No traffic data collected yet. Data accumulates over time.");
+      return "No data";
+    }
+
+    for (const name of rooms) {
+      const mem = Memory.traffic?.[name];
+      if (!mem) {
+        console.log(`${name}: No traffic data`);
+        continue;
+      }
+
+      const room = Game.rooms[name];
+      if (!room) {
+        console.log(`${name}: No visibility (have ${Object.keys(mem.heatmap).length} cached tiles)`);
+        continue;
+      }
+
+      const monitor = new TrafficMonitor(room);
+      const hotspots = monitor.getHotspots(5);
+      const stats = monitor.getStats();
+
+      console.log(`\n=== ${name} Traffic ===`);
+      console.log(`Window: ${stats.windowProgress}/${mem.windowSize} ticks`);
+      console.log(`Tracked tiles: ${stats.trackedTiles}`);
+      console.log(`High-traffic tiles: ${stats.highTrafficTiles}`);
+      console.log(`Roads suggested: ${stats.suggestedRoads}`);
+      console.log(`Roads built (by planner): ${mem.roadsBuilt.length}`);
+
+      if (hotspots.length > 0) {
+        console.log(`\nTop hotspots:`);
+        for (const spot of hotspots) {
+          console.log(`  ${spot.x},${spot.y}: ${spot.visits} visits`);
+        }
+      }
+    }
+
+    return "OK";
+  };
+
+  // Toggle traffic heatmap visualization
+  global.showTraffic = (enable: boolean = true) => {
+    Memory.debug ??= {};
+    Memory.debug.showTraffic = enable;
+    console.log(`Traffic visualization ${enable ? "enabled" : "disabled"}`);
+    console.log("Heatmap will display on owned rooms.");
+    return enable ? "enabled" : "disabled";
+  };
+
+  // Clear traffic data for a room
+  global.clearTraffic = (roomName: string) => {
+    if (!roomName) {
+      console.log("Usage: clearTraffic('W1N1')");
+      return "Error: specify room name";
+    }
+
+    if (Memory.traffic?.[roomName]) {
+      const room = Game.rooms[roomName];
+      if (room) {
+        const monitor = new TrafficMonitor(room);
+        monitor.clear();
+        console.log(`Traffic data cleared for ${roomName}`);
+      } else {
+        // Clear memory directly if no visibility
+        Memory.traffic[roomName] = {
+          heatmap: {},
+          lastReset: Game.time,
+          windowSize: 1000,
+          roadsSuggested: [],
+          roadsBuilt: [],
+        };
+        console.log(`Traffic memory cleared for ${roomName} (no visibility)`);
+      }
+    } else {
+      console.log(`No traffic data exists for ${roomName}`);
+    }
+
+    return "OK";
+  };
+
+  // Detailed traffic report with path coverage
+  global.trafficReport = (roomName: string) => {
+    if (!roomName) {
+      // Use first owned room
+      roomName = Object.keys(Game.rooms).find((r) => Game.rooms[r].controller?.my) || "";
+    }
+
+    const room = Game.rooms[roomName];
+    if (!room) {
+      console.log(`Room ${roomName} not visible`);
+      return "Error: room not visible";
+    }
+
+    const metrics = StatsCollector.exportTrafficMetrics(room);
+
+    console.log(`\n=== Traffic Report: ${roomName} ===`);
+    console.log(`Tracked tiles: ${metrics.trackedTiles}`);
+    console.log(`High-traffic tiles: ${metrics.highTrafficTiles}`);
+    console.log(`Road coverage: ${(metrics.roads.coveragePercent * 100).toFixed(1)}% (${metrics.roads.coveringHighTraffic}/${metrics.highTrafficTiles} high-traffic tiles)`);
+    console.log(`Total roads: ${metrics.roads.total}`);
+
+    console.log(`\nTop hotspots (need roads):`);
+    for (const h of metrics.hotspots.slice(0, 5)) {
+      console.log(`  (${h.x},${h.y}): ${h.visits} visits [${h.terrain}] priority=${h.priority}`);
+    }
+
+    console.log(`\nPath coverage:`);
+    for (const p of metrics.paths.spawnToSource) {
+      console.log(`  spawn→source: ${(p.roadCoverage * 100).toFixed(0)}% (${p.roadsOnPath}/${p.distance} tiles, avg traffic: ${p.avgTraffic.toFixed(0)})`);
+    }
+    console.log(`  spawn→controller: ${(metrics.paths.spawnToController.roadCoverage * 100).toFixed(0)}% (${metrics.paths.spawnToController.roadsOnPath}/${metrics.paths.spawnToController.distance} tiles)`);
+    if (metrics.paths.spawnToStorage) {
+      console.log(`  spawn→storage: ${(metrics.paths.spawnToStorage.roadCoverage * 100).toFixed(0)}% (${metrics.paths.spawnToStorage.roadsOnPath}/${metrics.paths.spawnToStorage.distance} tiles)`);
+    }
+
+    console.log(`\nEfficiency:`);
+    console.log(`  Stuck events (recent): ${metrics.efficiency.stuckEvents}`);
+    console.log(`  Oscillation events: ${metrics.efficiency.oscillationEvents}`);
+    console.log(`  Swamp tile visits (unroaded): ${metrics.efficiency.swampTilesTraversed}`);
+
+    return "OK";
+  };
+
+  // Movement stats - show stuck/oscillation data
+  global.moveStats = () => {
+    const lines: string[] = ["=== Movement Stats ==="];
+    let stuckCount = 0;
+    let oscillating = 0;
+
+    for (const name in Game.creeps) {
+      const creep = Game.creeps[name];
+      const mem = creep.memory._move;
+
+      if (mem && (mem.stuckCount > 0 || (mem.posHistory && mem.posHistory.length >= 4))) {
+        // Check for oscillation pattern
+        const history = mem.posHistory;
+        let isOscillating = false;
+        if (history && history.length >= 4) {
+          const len = history.length;
+          const p1 = history[len - 4];
+          const p2 = history[len - 3];
+          const p3 = history[len - 2];
+          const p4 = history[len - 1];
+          if (p1.x === p3.x && p1.y === p3.y && p2.x === p4.x && p2.y === p4.y) {
+            isOscillating = true;
+            oscillating++;
+          }
+        }
+
+        if (mem.stuckCount >= 2 || isOscillating) {
+          stuckCount++;
+          const status = isOscillating ? "OSCILLATING" : `stuck=${mem.stuckCount}`;
+          lines.push(`  ${name} (${creep.memory.role}): ${status} @ ${creep.pos.x},${creep.pos.y}`);
+        }
+      }
+    }
+
+    if (stuckCount === 0) {
+      lines.push("  No creeps currently stuck or oscillating");
+    } else {
+      lines.push(`\nSummary: ${stuckCount} creeps with issues (${oscillating} oscillating)`);
+    }
+
+    console.log(lines.join("\n"));
+    return "OK";
+  };
+
+  // Get road construction commands for hotspots
+  global.suggestRoads = (roomName: string) => {
+    if (!roomName) {
+      // Use first owned room
+      roomName = Object.keys(Game.rooms).find((r) => Game.rooms[r].controller?.my) || "";
+    }
+
+    const room = Game.rooms[roomName];
+    if (!room) {
+      console.log(`Room ${roomName} not visible`);
+      return "Error: room not visible";
+    }
+
+    const metrics = StatsCollector.exportTrafficMetrics(room);
+
+    console.log(`\n=== Road Suggestions: ${roomName} ===`);
+    console.log(`Current road coverage: ${(metrics.roads.coveragePercent * 100).toFixed(1)}%`);
+    console.log(`\nCopy-paste these commands to build roads:\n`);
+
+    for (const h of metrics.hotspots.slice(0, 5)) {
+      const priority = h.terrain === "swamp" ? "HIGH (swamp)" : "medium";
+      console.log(`Game.rooms['${roomName}'].createConstructionSite(${h.x}, ${h.y}, STRUCTURE_ROAD); // ${h.visits} visits, ${h.terrain}, ${priority}`);
+    }
+
+    if (metrics.hotspots.length === 0) {
+      console.log("No hotspots found - road coverage is good or not enough traffic data yet.");
+    }
+
+    return "OK";
   };
 }

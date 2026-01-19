@@ -1,4 +1,4 @@
-import { moveToRoom } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
 /**
  * RemoteHauler - Collects energy from remote mining rooms and delivers home
@@ -57,7 +57,7 @@ function collect(creep: Creep, targetRoom: string): void {
   });
   if (dropped) {
     if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(dropped, { visualizePathStyle: { stroke: "#ffaa00" } });
+      smartMoveTo(creep, dropped, { visualizePathStyle: { stroke: "#ffaa00" } });
     }
     return;
   }
@@ -70,7 +70,7 @@ function collect(creep: Creep, targetRoom: string): void {
   }) as StructureContainer | null;
   if (container) {
     if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(container, { visualizePathStyle: { stroke: "#ffaa00" } });
+      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#ffaa00" } });
     }
     return;
   }
@@ -81,7 +81,7 @@ function collect(creep: Creep, targetRoom: string): void {
   });
   if (tombstone) {
     if (creep.withdraw(tombstone, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(tombstone, { visualizePathStyle: { stroke: "#ffaa00" } });
+      smartMoveTo(creep, tombstone, { visualizePathStyle: { stroke: "#ffaa00" } });
     }
     return;
   }
@@ -89,7 +89,7 @@ function collect(creep: Creep, targetRoom: string): void {
   // Nothing to collect - wait near a source
   const source = creep.pos.findClosestByPath(FIND_SOURCES);
   if (source && !creep.pos.inRangeTo(source, 3)) {
-    creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
+    smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#ffaa00" } });
   }
 }
 
@@ -104,7 +104,7 @@ function deliver(creep: Creep, homeRoom: string): void {
   const storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(storage, { visualizePathStyle: { stroke: "#00ff00" } });
+      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" } });
     }
     return;
   }
@@ -120,7 +120,7 @@ function deliver(creep: Creep, homeRoom: string): void {
 
     if (controllerContainer) {
       if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(controllerContainer, { visualizePathStyle: { stroke: "#00ff00" } });
+        smartMoveTo(creep, controllerContainer, { visualizePathStyle: { stroke: "#00ff00" } });
       }
       return;
     }
@@ -134,7 +134,7 @@ function deliver(creep: Creep, homeRoom: string): void {
   });
   if (spawn) {
     if (creep.transfer(spawn, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(spawn, { visualizePathStyle: { stroke: "#00ff00" } });
+      smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" } });
     }
     return;
   }
@@ -147,7 +147,7 @@ function deliver(creep: Creep, homeRoom: string): void {
   });
   if (container) {
     if (creep.transfer(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(container, { visualizePathStyle: { stroke: "#00ff00" } });
+      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#00ff00" } });
     }
     return;
   }
@@ -155,6 +155,6 @@ function deliver(creep: Creep, homeRoom: string): void {
   // Nowhere to deliver - wait near storage or spawn
   const waitTarget = storage || creep.room.find(FIND_MY_SPAWNS)[0];
   if (waitTarget && !creep.pos.inRangeTo(waitTarget, 3)) {
-    creep.moveTo(waitTarget, { visualizePathStyle: { stroke: "#00ff00" } });
+    smartMoveTo(creep, waitTarget, { visualizePathStyle: { stroke: "#00ff00" } });
   }
 }

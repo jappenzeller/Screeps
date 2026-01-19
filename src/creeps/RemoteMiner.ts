@@ -1,5 +1,5 @@
 import { logger } from "../utils/Logger";
-import { moveToRoom } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
 /**
  * RemoteMiner - Harvests sources in adjacent rooms
@@ -57,7 +57,7 @@ export function runRemoteMiner(creep: Creep): void {
   // Harvest the source
   const result = creep.harvest(source);
   if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" } });
+    smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#ffaa00" } });
   }
 
   // If we have carry parts and are full, drop energy (or find container)

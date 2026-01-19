@@ -1,4 +1,5 @@
 import { ColonyManager } from "../core/ColonyManager";
+import { smartMoveTo } from "../utils/movement";
 
 /**
  * Builder: Builds construction sites and repairs structures.
@@ -23,7 +24,7 @@ function moveOffRoad(creep: Creep): void {
         const hasRoad = creep.room.lookForAt(LOOK_STRUCTURES, x, y).some(s => s.structureType === STRUCTURE_ROAD);
         const hasCreep = creep.room.lookForAt(LOOK_CREEPS, x, y).length > 0;
         if (!hasRoad && !hasCreep) {
-          creep.moveTo(x, y, { visualizePathStyle: { stroke: "#888888" }, reusePath: 3 });
+          smartMoveTo(creep, new RoomPosition(x, y, creep.room.name), { visualizePathStyle: { stroke: "#888888" }, reusePath: 3 });
           return;
         }
       }
@@ -100,7 +101,7 @@ function buildOrRepair(creep: Creep): void {
   if (site) {
     const result = creep.build(site);
     if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+      smartMoveTo(creep, site, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
     }
     return;
   }
@@ -118,7 +119,7 @@ function buildOrRepair(creep: Creep): void {
   if (damaged) {
     const result = creep.repair(damaged);
     if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(damaged, { visualizePathStyle: { stroke: "#ff8800" }, reusePath: 5 });
+      smartMoveTo(creep, damaged, { visualizePathStyle: { stroke: "#ff8800" }, reusePath: 5 });
     }
     return;
   }
@@ -133,7 +134,7 @@ function buildOrRepair(creep: Creep): void {
   if (wall) {
     const result = creep.repair(wall);
     if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(wall, { visualizePathStyle: { stroke: "#888888" }, reusePath: 5 });
+      smartMoveTo(creep, wall, { visualizePathStyle: { stroke: "#888888" }, reusePath: 5 });
     }
     return;
   }
@@ -143,7 +144,7 @@ function buildOrRepair(creep: Creep): void {
   if (controller) {
     const result = creep.upgradeController(controller);
     if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(controller, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 10 });
+      smartMoveTo(creep, controller, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 10 });
     }
   }
 }
@@ -153,7 +154,7 @@ function getEnergy(creep: Creep): void {
   const storage = creep.room.storage;
   if (storage && storage.store[RESOURCE_ENERGY] > 0) {
     if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(storage, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
     }
     return;
   }
@@ -165,7 +166,7 @@ function getEnergy(creep: Creep): void {
 
   if (container) {
     if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(container, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
     }
     return;
   }
@@ -177,7 +178,7 @@ function getEnergy(creep: Creep): void {
 
   if (droppedEnergy) {
     if (creep.pickup(droppedEnergy) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(droppedEnergy, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+      smartMoveTo(creep, droppedEnergy, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
     }
     return;
   }
@@ -186,7 +187,7 @@ function getEnergy(creep: Creep): void {
   const source = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
   if (source) {
     if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(source, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+      smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
     }
     return;
   }
@@ -194,7 +195,7 @@ function getEnergy(creep: Creep): void {
   // No energy available - wait near spawn but off road
   const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
   if (spawn && creep.pos.getRangeTo(spawn) > 3) {
-    creep.moveTo(spawn, { visualizePathStyle: { stroke: "#888888" } });
+    smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#888888" } });
   } else {
     moveOffRoad(creep);
     creep.say("💤");

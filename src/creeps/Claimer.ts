@@ -1,5 +1,5 @@
 import { logger } from "../utils/Logger";
-import { moveToRoom } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
 /**
  * Claimer - Claims controllers in target rooms for expansion
@@ -46,7 +46,7 @@ export function runClaimer(creep: Creep): void {
   if (controller.reservation && controller.reservation.username !== creep.owner.username) {
     const result = creep.attackController(controller);
     if (result === ERR_NOT_IN_RANGE) {
-      creep.moveTo(controller, { visualizePathStyle: { stroke: "#ff00ff" } });
+      smartMoveTo(creep, controller, { visualizePathStyle: { stroke: "#ff00ff" } });
     }
     return;
   }
@@ -54,7 +54,7 @@ export function runClaimer(creep: Creep): void {
   // Claim the controller
   const result = creep.claimController(controller);
   if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(controller, { visualizePathStyle: { stroke: "#ff00ff" } });
+    smartMoveTo(creep, controller, { visualizePathStyle: { stroke: "#ff00ff" } });
   } else if (result === OK) {
     creep.say("🏴");
     logger.info("Claimer", `Claimed room ${targetRoom}!`);

@@ -14,6 +14,8 @@ import { ColonyManager } from "./core/ColonyManager";
 import { StatsCollector, EventType } from "./utils/StatsCollector";
 import { AWSExporter } from "./utils/AWSExporter";
 import { checkAutoSafeMode } from "./defense/AutoSafeMode";
+import { TrafficMonitor } from "./core/TrafficMonitor";
+import { SmartRoadPlanner } from "./core/SmartRoadPlanner";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -77,6 +79,21 @@ function runRoom(room: Room): void {
   // 4. Run towers
   const towerManager = new TowerManager(room);
   towerManager.run();
+
+  // 5. Traffic monitoring - record every tick
+  const trafficMonitor = new TrafficMonitor(room);
+  trafficMonitor.recordTick();
+
+  // Visualize traffic heatmap if debug flag is set
+  if (Memory.debug?.showTraffic) {
+    trafficMonitor.visualize();
+  }
+
+  // 6. Smart road planning - every 100 ticks
+  if (Game.time % 100 === 0) {
+    const roadPlanner = new SmartRoadPlanner(room);
+    roadPlanner.run();
+  }
 }
 
 function runCreeps(): void {
@@ -85,11 +102,14 @@ function runCreeps(): void {
     try {
       runCreep(creep);
     } catch (error) {
-      logger.error("Main", `Error running creep ${name}:`, error);
+      const errMsg = error instanceof Error
+        ? (error.stack || error.message)
+        : String(error);
+      console.log(`[ERROR] Creep ${name} (${creep.memory.role}): ${errMsg}`);
       StatsCollector.recordEvent(EventType.CREEP_DEATH, creep.room?.name || "unknown", {
         creep: name,
         role: creep.memory.role,
-        error: String(error),
+        error: errMsg,
         type: "ERROR",
       });
     }

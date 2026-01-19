@@ -1,4 +1,5 @@
 import { ColonyManager } from "../core/ColonyManager";
+import { smartMoveTo } from "../utils/movement";
 
 /**
  * Hauler: Picks up energy from containers/ground and delivers to structures.
@@ -23,7 +24,7 @@ function moveOffRoad(creep: Creep): void {
         const hasRoad = creep.room.lookForAt(LOOK_STRUCTURES, x, y).some(s => s.structureType === STRUCTURE_ROAD);
         const hasCreep = creep.room.lookForAt(LOOK_CREEPS, x, y).length > 0;
         if (!hasRoad && !hasCreep) {
-          creep.moveTo(x, y, { visualizePathStyle: { stroke: "#888888" }, reusePath: 3 });
+          smartMoveTo(creep, new RoomPosition(x, y, creep.room.name), { visualizePathStyle: { stroke: "#888888" }, reusePath: 3 });
           return;
         }
       }
@@ -99,7 +100,7 @@ function collect(creep: Creep): void {
 
   if (droppedEnergy) {
     if (creep.pickup(droppedEnergy) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(droppedEnergy, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+      smartMoveTo(creep, droppedEnergy, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
     }
     return;
   }
@@ -111,7 +112,7 @@ function collect(creep: Creep): void {
 
   if (tombstone) {
     if (creep.withdraw(tombstone, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(tombstone, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+      smartMoveTo(creep, tombstone, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
     }
     return;
   }
@@ -136,7 +137,7 @@ function collect(creep: Creep): void {
 
     if (target) {
       if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(target, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+        smartMoveTo(creep, target, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
       }
       return;
     }
@@ -146,7 +147,7 @@ function collect(creep: Creep): void {
   const storage = creep.room.storage;
   if (storage && storage.store[RESOURCE_ENERGY] > 10000) {
     if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(storage, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
     }
     return;
   }
@@ -154,7 +155,7 @@ function collect(creep: Creep): void {
   // Nothing to collect - wait near source but off road
   const source = creep.pos.findClosestByPath(FIND_SOURCES);
   if (source && creep.pos.getRangeTo(source) > 3) {
-    creep.moveTo(source, { visualizePathStyle: { stroke: "#888888" } });
+    smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#888888" } });
   } else {
     moveOffRoad(creep);
   }
@@ -170,7 +171,7 @@ function deliver(creep: Creep): void {
 
   if (spawnOrExtension) {
     if (creep.transfer(spawnOrExtension, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(spawnOrExtension, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
+      smartMoveTo(creep, spawnOrExtension, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
     }
     return;
   }
@@ -183,7 +184,7 @@ function deliver(creep: Creep): void {
 
   if (tower) {
     if (creep.transfer(tower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(tower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
+      smartMoveTo(creep, tower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
     }
     return;
   }
@@ -192,7 +193,7 @@ function deliver(creep: Creep): void {
   const storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
     }
     return;
   }
@@ -207,7 +208,7 @@ function deliver(creep: Creep): void {
 
     if (controllerContainer) {
       if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        creep.moveTo(controllerContainer, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
+        smartMoveTo(creep, controllerContainer, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
       }
       return;
     }
@@ -216,7 +217,7 @@ function deliver(creep: Creep): void {
   // Nothing to deliver to - wait near spawn but off road
   const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
   if (spawn && creep.pos.getRangeTo(spawn) > 3) {
-    creep.moveTo(spawn, { visualizePathStyle: { stroke: "#888888" } });
+    smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#888888" } });
   } else {
     moveOffRoad(creep);
   }

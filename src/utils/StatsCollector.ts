@@ -15,6 +15,12 @@ export enum EventType {
   RCL_UPGRADE = "RCL_UPGRADE",
   ENERGY_CRISIS = "ENERGY_CRISIS",
   CPU_THROTTLE = "CPU_THROTTLE",
+  // Traffic events
+  CREEP_STUCK = "CREEP_STUCK",
+  CREEP_OSCILLATING = "CREEP_OSCILLATING",
+  TRAFFIC_HOTSPOT = "TRAFFIC_HOTSPOT",
+  ROAD_SUGGESTED = "ROAD_SUGGESTED",
+  ROAD_BUILT = "ROAD_BUILT",
 }
 
 export interface ColonyEvent {
@@ -41,6 +47,20 @@ export interface TickStats {
     repairs: number;
     upgrades: number;
     attacks: number;
+  };
+  // Traffic tracking per tick
+  traffic: {
+    stuckEvents: Array<{
+      creepName: string;
+      role: string;
+      pos: { x: number; y: number };
+      resolution: string;
+    }>;
+    oscillationEvents: Array<{
+      creepName: string;
+      role: string;
+      positions: Array<{ x: number; y: number }>;
+    }>;
   };
 }
 
@@ -125,6 +145,7 @@ export class StatsCollector {
       energyHarvested: 0,
       energySpent: { spawning: 0, building: 0, upgrading: 0, repairing: 0 },
       creepActions: { harvests: 0, transfers: 0, builds: 0, repairs: 0, upgrades: 0, attacks: 0 },
+      traffic: { stuckEvents: [], oscillationEvents: [] },
     };
   }
 
@@ -193,6 +214,48 @@ export class StatsCollector {
     if (this.currentTickStats) {
       this.currentTickStats.creepActions.attacks++;
     }
+  }
+
+  /**
+   * Record a creep stuck event
+   */
+  static recordStuckEvent(creep: Creep, resolution: string): void {
+    if (this.currentTickStats) {
+      this.currentTickStats.traffic.stuckEvents.push({
+        creepName: creep.name,
+        role: creep.memory.role,
+        pos: { x: creep.pos.x, y: creep.pos.y },
+        resolution,
+      });
+    }
+
+    // Also record as event for longer-term tracking
+    this.recordEvent(EventType.CREEP_STUCK, creep.room?.name || "unknown", {
+      creepName: creep.name,
+      role: creep.memory.role,
+      position: { x: creep.pos.x, y: creep.pos.y },
+      resolution,
+    });
+  }
+
+  /**
+   * Record a creep oscillation event
+   */
+  static recordOscillation(creep: Creep, positions: Array<{ x: number; y: number }>): void {
+    if (this.currentTickStats) {
+      this.currentTickStats.traffic.oscillationEvents.push({
+        creepName: creep.name,
+        role: creep.memory.role,
+        positions,
+      });
+    }
+
+    // Also record as event for longer-term tracking
+    this.recordEvent(EventType.CREEP_OSCILLATING, creep.room?.name || "unknown", {
+      creepName: creep.name,
+      role: creep.memory.role,
+      positions,
+    });
   }
 
   /**
@@ -443,4 +506,200 @@ export class StatsCollector {
   static clearStats(): void {
     delete Memory.stats;
   }
+
+  /**
+   * Export traffic metrics for AWS analysis
+   */
+  static exportTrafficMetrics(room: Room): TrafficExport {
+    const mem = Memory.traffic?.[room.name];
+    if (!mem) {
+      return {
+        trackedTiles: 0,
+        highTrafficTiles: 0,
+        windowSize: 1000,
+        windowProgress: 0,
+        roads: { total: 0, coveringHighTraffic: 0, coveragePercent: 1 },
+        hotspots: [],
+        efficiency: { swampTilesTraversed: 0, stuckEvents: 0, oscillationEvents: 0 },
+        paths: {
+          spawnToSource: [],
+          spawnToController: { distance: 0, roadsOnPath: 0, roadCoverage: 0, avgTraffic: 0 },
+          spawnToStorage: null,
+        },
+      };
+    }
+
+    const terrain = room.getTerrain();
+    const roads = room.find(FIND_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_ROAD,
+    });
+
+    // Calculate high-traffic tiles (100+ visits)
+    const highTrafficTiles: Array<{ x: number; y: number; visits: number }> = [];
+    for (const key in mem.heatmap) {
+      if (mem.heatmap[key] >= 100) {
+        const [x, y] = key.split(":").map(Number);
+        highTrafficTiles.push({ x, y, visits: mem.heatmap[key] });
+      }
+    }
+
+    // Calculate road coverage of high-traffic areas
+    let coveringHighTraffic = 0;
+    for (const tile of highTrafficTiles) {
+      const hasRoad = roads.some((r) => r.pos.x === tile.x && r.pos.y === tile.y);
+      if (hasRoad) coveringHighTraffic++;
+    }
+
+    // Build hotspots array (high traffic without roads)
+    const hotspots = highTrafficTiles
+      .filter((t) => !roads.some((r) => r.pos.x === t.x && r.pos.y === t.y))
+      .map((t) => {
+        const isSwamp = terrain.get(t.x, t.y) === TERRAIN_MASK_SWAMP;
+        return {
+          x: t.x,
+          y: t.y,
+          visits: t.visits,
+          terrain: (isSwamp ? "swamp" : "plain") as "swamp" | "plain",
+          hasRoad: false,
+          priority: t.visits * (isSwamp ? 3 : 1), // Swamp roads save more fatigue
+        };
+      })
+      .sort((a, b) => b.priority - a.priority)
+      .slice(0, 10);
+
+    // Count swamp traffic (swamp tiles without roads being used)
+    let swampTilesTraversed = 0;
+    for (const key in mem.heatmap) {
+      const [x, y] = key.split(":").map(Number);
+      const isSwamp = terrain.get(x, y) === TERRAIN_MASK_SWAMP;
+      const hasRoad = roads.some((r) => r.pos.x === x && r.pos.y === y);
+      if (isSwamp && !hasRoad && mem.heatmap[key] > 0) {
+        swampTilesTraversed += mem.heatmap[key];
+      }
+    }
+
+    // Get recent stuck/oscillation events from tick stats
+    const recentTicks = Memory.stats?.tickStats?.slice(-10) || [];
+    const stuckEvents = recentTicks.reduce(
+      (sum, s) => sum + (s.traffic?.stuckEvents?.length || 0),
+      0
+    );
+    const oscillationEvents = recentTicks.reduce(
+      (sum, s) => sum + (s.traffic?.oscillationEvents?.length || 0),
+      0
+    );
+
+    // Calculate path metrics
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    const sources = room.find(FIND_SOURCES);
+    const paths = {
+      spawnToSource: sources.map((source) =>
+        this.calculatePathMetrics(room, spawn?.pos, source.pos, mem.heatmap, roads, source.id)
+      ),
+      spawnToController: this.calculatePathMetrics(
+        room,
+        spawn?.pos,
+        room.controller?.pos,
+        mem.heatmap,
+        roads
+      ),
+      spawnToStorage: room.storage
+        ? this.calculatePathMetrics(room, spawn?.pos, room.storage.pos, mem.heatmap, roads)
+        : null,
+    };
+
+    return {
+      trackedTiles: Object.keys(mem.heatmap).length,
+      highTrafficTiles: highTrafficTiles.length,
+      windowSize: mem.windowSize,
+      windowProgress: Game.time - mem.lastReset,
+      roads: {
+        total: roads.length,
+        coveringHighTraffic,
+        coveragePercent: highTrafficTiles.length > 0 ? coveringHighTraffic / highTrafficTiles.length : 1,
+      },
+      hotspots,
+      efficiency: {
+        swampTilesTraversed,
+        stuckEvents,
+        oscillationEvents,
+      },
+      paths,
+    };
+  }
+
+  /**
+   * Calculate metrics for a path between two positions
+   */
+  private static calculatePathMetrics(
+    room: Room,
+    from: RoomPosition | undefined,
+    to: RoomPosition | undefined,
+    heatmap: Record<string, number>,
+    roads: Structure[],
+    sourceId?: string
+  ): PathMetrics {
+    if (!from || !to) {
+      return { sourceId, distance: 0, roadsOnPath: 0, roadCoverage: 0, avgTraffic: 0 };
+    }
+
+    const path = room.findPath(from, to, { ignoreCreeps: true, range: 1 });
+
+    let roadsOnPath = 0;
+    let totalTraffic = 0;
+
+    for (const step of path) {
+      if (roads.some((r) => r.pos.x === step.x && r.pos.y === step.y)) {
+        roadsOnPath++;
+      }
+      totalTraffic += heatmap[`${step.x}:${step.y}`] || 0;
+    }
+
+    return {
+      sourceId,
+      distance: path.length,
+      roadsOnPath,
+      roadCoverage: path.length > 0 ? roadsOnPath / path.length : 0,
+      avgTraffic: path.length > 0 ? totalTraffic / path.length : 0,
+    };
+  }
+}
+
+// Traffic export interfaces
+export interface TrafficExport {
+  trackedTiles: number;
+  highTrafficTiles: number;
+  windowSize: number;
+  windowProgress: number;
+  roads: {
+    total: number;
+    coveringHighTraffic: number;
+    coveragePercent: number;
+  };
+  hotspots: Array<{
+    x: number;
+    y: number;
+    visits: number;
+    terrain: "plain" | "swamp";
+    hasRoad: boolean;
+    priority: number;
+  }>;
+  efficiency: {
+    swampTilesTraversed: number;
+    stuckEvents: number;
+    oscillationEvents: number;
+  };
+  paths: {
+    spawnToSource: PathMetrics[];
+    spawnToController: PathMetrics;
+    spawnToStorage: PathMetrics | null;
+  };
+}
+
+export interface PathMetrics {
+  sourceId?: string;
+  distance: number;
+  roadsOnPath: number;
+  roadCoverage: number;
+  avgTraffic: number;
 }

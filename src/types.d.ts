@@ -85,9 +85,25 @@ interface AdvisorData {
   fetchedAt?: number;
 }
 
-// Extend Memory for advisor data
+// Traffic tracking for intelligent road planning
+interface TrafficMemory {
+  heatmap: { [packedPos: string]: number }; // "x:y" → visit count
+  lastReset: number; // Game.time of last reset
+  windowSize: number; // Ticks per measurement window (default 1000)
+  roadsSuggested: string[]; // Positions suggested but not built
+  roadsBuilt: string[]; // Positions where we built roads
+}
+
+// Debug flags
+interface DebugFlags {
+  showTraffic?: boolean;
+}
+
+// Extend Memory for advisor data and traffic
 interface Memory {
   advisor?: AdvisorData;
+  traffic?: { [roomName: string]: TrafficMemory };
+  debug?: DebugFlags;
 }
 
 // Global console declaration for Screeps

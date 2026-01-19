@@ -1,4 +1,5 @@
 import { ColonyManager } from "../core/ColonyManager";
+import { smartMoveTo } from "../utils/movement";
 
 /**
  * Harvester: Worker that harvests energy and delivers to spawn/extensions.
@@ -81,7 +82,7 @@ function runStaticMiner(creep: Creep, source: Source, container: StructureContai
 
   // Move to container if not there (optimal position for both harvesting and link transfer)
   if (!creep.pos.isEqualTo(container.pos)) {
-    creep.moveTo(container, {
+    smartMoveTo(creep, container, {
       visualizePathStyle: { stroke: "#ffaa00" },
       reusePath: 10,
     });
@@ -127,7 +128,7 @@ function harvest(creep: Creep): void {
 
   const result = creep.harvest(source);
   if (result === ERR_NOT_IN_RANGE) {
-    creep.moveTo(source, {
+    smartMoveTo(creep, source, {
       visualizePathStyle: { stroke: "#ffaa00" },
       reusePath: 5,
     });
@@ -144,7 +145,7 @@ function deliver(creep: Creep): void {
 
   if (spawnOrExtension) {
     if (creep.transfer(spawnOrExtension, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(spawnOrExtension, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
+      smartMoveTo(creep, spawnOrExtension, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
     }
     return;
   }
@@ -157,7 +158,7 @@ function deliver(creep: Creep): void {
 
   if (tower) {
     if (creep.transfer(tower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(tower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
+      smartMoveTo(creep, tower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
     }
     return;
   }
@@ -166,7 +167,7 @@ function deliver(creep: Creep): void {
   const storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      creep.moveTo(storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
     }
     return;
   }
@@ -175,7 +176,7 @@ function deliver(creep: Creep): void {
   const source = creep.memory.sourceId ? Game.getObjectById(creep.memory.sourceId) : null;
   if (source) {
     if (creep.pos.getRangeTo(source) > 2) {
-      creep.moveTo(source, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
+      smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
       return;
     }
     if (creep.store[RESOURCE_ENERGY] > 0) {

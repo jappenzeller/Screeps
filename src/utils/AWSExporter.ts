@@ -4,6 +4,7 @@
  */
 
 import { ColonyManager } from "../core/ColonyManager";
+import { StatsCollector, TrafficExport } from "./StatsCollector";
 
 const AWS_SEGMENT = 90;
 
@@ -42,6 +43,7 @@ interface ColonyExport {
   adjacentRooms: AdjacentRoomExport[];
   remoteMining: RemoteMiningExport;
   scouting: ScoutingExport;
+  traffic: TrafficExport;
 }
 
 interface DefenseExport {
@@ -212,6 +214,7 @@ export class AWSExporter {
         adjacentRooms: this.getAdjacentRoomIntel(roomName),
         remoteMining: this.getRemoteMiningStatus(roomName),
         scouting: this.getScoutingStatus(roomName),
+        traffic: StatsCollector.exportTrafficMetrics(room),
       });
     }
 

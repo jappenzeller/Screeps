@@ -1,4 +1,4 @@
-import { moveToRoom } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
 /**
  * Scout - Explores adjacent rooms and records intel
@@ -27,7 +27,7 @@ export function runScout(creep: Creep): void {
       const pos = creep.pos;
       if (pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47) {
         const center = new RoomPosition(25, 25, creep.room.name);
-        creep.moveTo(center, { visualizePathStyle: { stroke: "#00ffff" } });
+        smartMoveTo(creep, center, { visualizePathStyle: { stroke: "#00ffff" } });
       }
     }
     return;
@@ -40,7 +40,7 @@ export function runScout(creep: Creep): void {
     // In target room - move to center for full visibility
     const center = new RoomPosition(25, 25, creep.room.name);
     if (!creep.pos.inRangeTo(center, 10)) {
-      creep.moveTo(center, { visualizePathStyle: { stroke: "#00ffff" } });
+      smartMoveTo(creep, center, { visualizePathStyle: { stroke: "#00ffff" } });
     }
   }
 }

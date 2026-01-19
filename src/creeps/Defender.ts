@@ -1,4 +1,5 @@
 import { ColonyManager } from "../core/ColonyManager";
+import { smartMoveTo } from "../utils/movement";
 
 /**
  * Defender - Attacks hostile creeps in the room
@@ -49,7 +50,7 @@ export function runDefender(creep: Creep): void {
   if (target) {
     const attackResult = creep.attack(target);
     if (attackResult === ERR_NOT_IN_RANGE) {
-      creep.moveTo(target, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 3 });
+      smartMoveTo(creep, target, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 3 });
     }
     // Also use ranged attack if we have it
     if (creep.getActiveBodyparts(RANGED_ATTACK) > 0) {
@@ -59,7 +60,7 @@ export function runDefender(creep: Creep): void {
     // No target - patrol near spawn
     const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
     if (spawn && creep.pos.getRangeTo(spawn) > 5) {
-      creep.moveTo(spawn, { visualizePathStyle: { stroke: "#ff0000" } });
+      smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#ff0000" } });
     }
   }
 }

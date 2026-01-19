@@ -1,5 +1,6 @@
 /**
  * Movement utilities for cross-room travel
+ * Simplified: Just use Screeps' built-in pathfinder with high reusePath
  */
 
 /**
@@ -12,7 +13,6 @@ export function isOnBorder(creep: Creep): boolean {
 
 /**
  * Move creep toward center of room to get off a border tile.
- * Used when pathfinding fails due to being on an edge.
  */
 export function stepOffBorder(creep: Creep): boolean {
   const pos = creep.pos;
@@ -27,12 +27,6 @@ export function stepOffBorder(creep: Creep): boolean {
 
 /**
  * Move creep toward a target room, handling border edge cases.
- *
- * Handles two scenarios:
- * 1. Creep is on border and needs to cross INTO next room (move across)
- * 2. Creep is on border and pathfinding fails (step off border first)
- *
- * @returns true if movement was issued, false if already in target room or no path
  */
 export function moveToRoom(creep: Creep, targetRoom: string, visualStroke?: string): boolean {
   if (creep.room.name === targetRoom) return false;
@@ -49,7 +43,6 @@ export function moveToRoom(creep: Creep, targetRoom: string, visualStroke?: stri
     (exitDir === FIND_EXIT_TOP && pos.y === 0) ||
     (exitDir === FIND_EXIT_BOTTOM && pos.y === 49)
   ) {
-    // Already on the correct exit edge - step across
     const dirMap: Record<number, DirectionConstant> = {
       [FIND_EXIT_LEFT]: LEFT,
       [FIND_EXIT_RIGHT]: RIGHT,
@@ -60,10 +53,9 @@ export function moveToRoom(creep: Creep, targetRoom: string, visualStroke?: stri
     return true;
   }
 
-  // Try normal pathfinding
+  // Try normal pathfinding to exit
   const exit = creep.pos.findClosestByPath(exitDir);
 
-  // If pathfinding fails and we're on ANY border, step off first
   if (!exit || creep.pos.isEqualTo(exit)) {
     if (isOnBorder(creep)) {
       stepOffBorder(creep);
@@ -73,7 +65,34 @@ export function moveToRoom(creep: Creep, targetRoom: string, visualStroke?: stri
   }
 
   creep.moveTo(exit, {
-    visualizePathStyle: visualStroke ? { stroke: visualStroke } : undefined,
+    reusePath: 50,
+    visualizePathStyle: visualStroke ? { stroke: visualStroke, opacity: 0.3 } : undefined,
   });
   return true;
+}
+
+/**
+ * Simple moveTo wrapper with high reusePath.
+ * Just uses Screeps' built-in pathfinder - no custom stuck detection.
+ */
+export function smartMoveTo(
+  creep: Creep,
+  target: RoomPosition | { pos: RoomPosition },
+  opts?: MoveToOpts
+): ScreepsReturnCode {
+  const targetPos = "pos" in target ? target.pos : target;
+
+  // Handle cross-room movement
+  if (targetPos.roomName !== creep.room.name) {
+    if (isOnBorder(creep)) {
+      moveToRoom(creep, targetPos.roomName, opts?.visualizePathStyle?.stroke);
+      return OK;
+    }
+  }
+
+  // Simple moveTo with high reusePath to minimize recalculation
+  return creep.moveTo(targetPos, {
+    reusePath: 50,
+    ...opts,
+  });
 }
