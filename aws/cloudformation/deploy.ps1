@@ -76,7 +76,8 @@ $functions = @(
     "context-builder",
     "claude-analyzer",
     "recommendation-writer",
-    "outcome-evaluator"
+    "outcome-evaluator",
+    "cleanup-recommendations"
 )
 
 foreach ($func in $functions) {

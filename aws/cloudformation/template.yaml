@@ -112,6 +112,17 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+        - IndexName: room-status-index
+          KeySchema:
+            - AttributeName: roomName
+              KeyType: HASH
+            - AttributeName: status
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -580,6 +591,14 @@ Resources:
                   - !Sub ${MetricsHistoryTable.Arn}/index/*
               - Effect: Allow
                 Action:
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
+                Resource:
+                  - !GetAtt SnapshotsTable.StreamArn
+              - Effect: Allow
+                Action:
                   - scheduler:CreateSchedule
                   - scheduler:DeleteSchedule
                 Resource: '*'
@@ -974,6 +993,65 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt OutcomeCheckRule.Arn
+
+  # Event Source Mapping: DynamoDB Stream -> Outcome Evaluator
+  OutcomeEvaluatorStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SnapshotsTable.StreamArn
+      FunctionName: !Ref OutcomeEvaluatorFunction
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 30
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName": ["INSERT"]}'
+
+  # Cleanup Lambda - marks stale pending recommendations as expired
+  CleanupRecommendationsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-cleanup-recs-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CleanupRecommendationsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt RecommendationsTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  CleanupRecommendationsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-cleanup-recommendations-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt CleanupRecommendationsRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: cleanup-recommendations.zip
+      Environment:
+        Variables:
+          RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
 
   # ==================== Step Functions ====================
   AnalysisWorkflow:

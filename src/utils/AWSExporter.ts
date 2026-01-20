@@ -44,6 +44,7 @@ interface ColonyExport {
   remoteMining: RemoteMiningExport;
   scouting: ScoutingExport;
   traffic: TrafficExport;
+  remoteDefense: RemoteDefenseStatus;
 }
 
 interface DefenseExport {
@@ -111,6 +112,54 @@ interface ScoutCreepExport {
   state: string;
   ttl: number;
   pos: { x: number; y: number };
+}
+
+// Remote Defense Diagnostic Interfaces
+interface RemoteDefenseStatus {
+  roomVisibility: RoomVisibility[];
+  remoteCreepStates: RemoteCreepState[];
+  spawnTriggers: RemoteDefenseTrigger[];
+}
+
+interface RoomVisibility {
+  roomName: string;
+  hasVision: boolean;
+  creepsWithVision: number;
+  hostiles: {
+    count: number;
+    details: Array<{
+      owner: string;
+      pos: { x: number; y: number };
+      bodyParts: number;
+      dangerous: boolean;
+    }>;
+  };
+  memoryHostiles: number;
+  memoryLastScan: number;
+  memoryAge: number;
+}
+
+interface RemoteCreepState {
+  name: string;
+  role: string;
+  room: string;
+  targetRoom: string;
+  state: string;
+  ttl: number;
+  pos: { x: number; y: number };
+  isFleeing: boolean;
+  fleeReason: string | null;
+}
+
+interface RemoteDefenseTrigger {
+  roomName: string;
+  shouldSpawnDefender: boolean;
+  reasons: string[];
+  blockers: string[];
+  hostileCount: number;
+  hasInvaderCore: boolean;
+  existingDefenders: number;
+  maxDefenders: number;
 }
 
 interface GlobalExport {
@@ -215,6 +264,7 @@ export class AWSExporter {
         remoteMining: this.getRemoteMiningStatus(roomName),
         scouting: this.getScoutingStatus(roomName),
         traffic: StatsCollector.exportTrafficMetrics(room),
+        remoteDefense: this.getRemoteDefenseStatus(roomName),
       });
     }
 
@@ -443,6 +493,168 @@ export class AWSExporter {
     return {
       scouts,
       roomsNeedingScan,
+    };
+  }
+
+  /**
+   * Get remote defense diagnostic status - helps diagnose why defenders aren't spawning
+   */
+  private static getRemoteDefenseStatus(homeRoom: string): RemoteDefenseStatus {
+    const exits = Game.map.describeExits(homeRoom);
+    const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+
+    const roomVisibility: RoomVisibility[] = [];
+    const remoteCreepStates: RemoteCreepState[] = [];
+    const spawnTriggers: RemoteDefenseTrigger[] = [];
+
+    // Get all remote creeps for this home room
+    const remoteCreeps = Object.values(Game.creeps).filter(
+      (c) =>
+        c.memory.room === homeRoom &&
+        (c.memory.role === "REMOTE_MINER" ||
+          c.memory.role === "REMOTE_HAULER" ||
+          c.memory.role === "REMOTE_DEFENDER" ||
+          c.memory.role === "RESERVER")
+    );
+
+    // Track which rooms we care about
+    const targetRooms = new Set<string>();
+    if (exits) {
+      for (const dir in exits) {
+        const roomName = exits[dir as ExitKey];
+        if (roomName) targetRooms.add(roomName);
+      }
+    }
+
+    // Add rooms from creep assignments
+    for (const creep of remoteCreeps) {
+      if (creep.memory.targetRoom) {
+        targetRooms.add(creep.memory.targetRoom);
+      }
+    }
+
+    // Build room visibility data
+    for (const roomName of targetRooms) {
+      const room = Game.rooms[roomName];
+      const intel = Memory.rooms?.[roomName];
+      const lastScan = intel?.lastScan || 0;
+
+      // Count creeps with vision in this room
+      const creepsWithVision = remoteCreeps.filter((c) => c.room?.name === roomName).length;
+
+      // Get real-time hostile data if we have vision
+      let hostileDetails: RoomVisibility["hostiles"]["details"] = [];
+      let realTimeHostileCount = 0;
+
+      if (room) {
+        const hostiles = room.find(FIND_HOSTILE_CREEPS);
+        realTimeHostileCount = hostiles.length;
+        hostileDetails = hostiles.map((h) => ({
+          owner: h.owner.username,
+          pos: { x: h.pos.x, y: h.pos.y },
+          bodyParts: h.body.length,
+          dangerous:
+            h.body.some((p) => p.type === ATTACK || p.type === RANGED_ATTACK) ||
+            h.owner.username === "Invader",
+        }));
+      }
+
+      roomVisibility.push({
+        roomName,
+        hasVision: !!room,
+        creepsWithVision,
+        hostiles: {
+          count: realTimeHostileCount,
+          details: hostileDetails,
+        },
+        memoryHostiles: intel?.hostiles || 0,
+        memoryLastScan: lastScan,
+        memoryAge: Game.time - lastScan,
+      });
+    }
+
+    // Build creep state data
+    for (const creep of remoteCreeps) {
+      const state = creep.memory.state as string | undefined;
+      const isFleeing =
+        state === "FLEEING" ||
+        state === "RETREAT" ||
+        (creep.memory as any).fleeing === true;
+
+      remoteCreepStates.push({
+        name: creep.name,
+        role: creep.memory.role,
+        room: creep.room?.name || "unknown",
+        targetRoom: creep.memory.targetRoom || "",
+        state: creep.memory.state || "unknown",
+        ttl: creep.ticksToLive || 0,
+        pos: { x: creep.pos.x, y: creep.pos.y },
+        isFleeing,
+        fleeReason: isFleeing ? ((creep.memory as any).fleeReason || "unknown") : null,
+      });
+    }
+
+    // Build spawn trigger analysis for each potential remote room
+    const currentDefenders = remoteCreeps.filter((c) => c.memory.role === "REMOTE_DEFENDER");
+    const totalDefenders = currentDefenders.length;
+    const maxDefenders = 2; // From spawnCreeps.ts
+
+    for (const roomName of targetRooms) {
+      const intel = Memory.rooms?.[roomName];
+      const reasons: string[] = [];
+      const blockers: string[] = [];
+
+      const hostileCount = intel?.hostiles || 0;
+      const hasInvaderCore = intel?.hasInvaderCore || false;
+      const hasSources = (intel?.sources?.length || 0) > 0;
+      const hasKeepers = intel?.hasKeepers || false;
+      const ownerOther = intel?.controller?.owner && intel.controller.owner !== myUsername;
+      const reservedOther =
+        intel?.controller?.reservation &&
+        intel.controller.reservation.username !== myUsername;
+
+      // Check what would trigger defender spawning
+      if (hostileCount > 0) reasons.push(`${hostileCount} hostiles in memory`);
+      if (hasInvaderCore) reasons.push("Has invader core");
+
+      // Check what would block spawning
+      if (!hasSources) blockers.push("No sources (not a mining target)");
+      if (hasKeepers) blockers.push("Source keeper room");
+      if (ownerOther) blockers.push("Owned by another player");
+      if (reservedOther) blockers.push("Reserved by another player");
+      if (totalDefenders >= maxDefenders) blockers.push(`At max defenders (${totalDefenders}/${maxDefenders})`);
+
+      const existingForRoom = currentDefenders.filter(
+        (c) => c.memory.targetRoom === roomName
+      ).length;
+      if (existingForRoom > 0) blockers.push(`Already has ${existingForRoom} defender(s) assigned`);
+
+      // Would this room trigger a spawn?
+      const shouldSpawn =
+        (hostileCount > 0 || hasInvaderCore) &&
+        hasSources &&
+        !hasKeepers &&
+        !ownerOther &&
+        !reservedOther &&
+        totalDefenders < maxDefenders &&
+        existingForRoom < 1;
+
+      spawnTriggers.push({
+        roomName,
+        shouldSpawnDefender: shouldSpawn,
+        reasons,
+        blockers,
+        hostileCount,
+        hasInvaderCore,
+        existingDefenders: existingForRoom,
+        maxDefenders,
+      });
+    }
+
+    return {
+      roomVisibility,
+      remoteCreepStates,
+      spawnTriggers,
     };
   }
 
