@@ -776,10 +776,8 @@ export class ColonyManager {
         remoteMiners += sourcesInRoom;
       }
 
-      // 1 reserver per 2 remote rooms (to maintain reservation)
-      if (remoteTargets.length > 0) {
-        reservers = Math.ceil(remoteTargets.length / 2);
-      }
+      // 1 reserver per remote room (reservation requires constant presence)
+      reservers = remoteTargets.length;
 
       // 2 remote haulers per remote room
       remoteHaulers = remoteTargets.length * 2;

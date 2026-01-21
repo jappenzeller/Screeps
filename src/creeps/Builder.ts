@@ -8,7 +8,7 @@ import { smartMoveTo, moveToRoom } from "../utils/movement";
 
 /**
  * Find the highest priority construction site.
- * Priority: home non-road > remote containers > home roads
+ * Priority: home non-road > remote containers > remote roads > home roads
  */
 function findConstructionSite(creep: Creep): ConstructionSite | null {
   const homeRoom = Game.rooms[creep.memory.room];
@@ -23,8 +23,10 @@ function findConstructionSite(creep: Creep): ConstructionSite | null {
   }
 
   // Priority 2: Container sites in adjacent remote rooms we're mining
+  // Priority 3: Road sites in remote rooms (for hauler efficiency)
   const exits = Game.map.describeExits(creep.memory.room);
   if (exits) {
+    // First pass: containers (higher priority)
     for (const dir in exits) {
       const roomName = exits[dir as ExitKey];
       if (!roomName || !Game.rooms[roomName]) continue;
@@ -47,9 +49,32 @@ function findConstructionSite(creep: Creep): ConstructionSite | null {
         return remoteSites[0];
       }
     }
+
+    // Second pass: roads in remote rooms
+    for (const dir in exits) {
+      const roomName = exits[dir as ExitKey];
+      if (!roomName || !Game.rooms[roomName]) continue;
+
+      // Only build roads in rooms we're actively mining
+      const hasMiner = Object.values(Game.creeps).some(
+        (c) =>
+          c.memory.role === "REMOTE_MINER" &&
+          c.memory.targetRoom === roomName &&
+          c.memory.room === creep.memory.room
+      );
+      if (!hasMiner) continue;
+
+      const remoteRoads = Game.rooms[roomName].find(FIND_CONSTRUCTION_SITES, {
+        filter: (s) => s.structureType === STRUCTURE_ROAD,
+      });
+
+      if (remoteRoads.length > 0) {
+        return remoteRoads[0];
+      }
+    }
   }
 
-  // Priority 3: Road sites in home room (lowest priority)
+  // Priority 4: Road sites in home room (lowest priority)
   if (homeRoom) {
     const roads = homeRoom.find(FIND_CONSTRUCTION_SITES, {
       filter: (s) => s.structureType === STRUCTURE_ROAD,

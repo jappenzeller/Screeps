@@ -74,7 +74,12 @@ export class SmartRoadPlanner {
     // Plan remote routes if we have budget remaining
     const remaining = MAX_CONCURRENT_ROAD_SITES - existingSites - placed;
     if (remaining > 0) {
-      this.planRemoteRoutes(remaining);
+      const routePlaced = this.planRemoteRoutes(remaining);
+      // Plan roads inside remote rooms if we still have budget
+      const remoteRemaining = remaining - routePlaced;
+      if (remoteRemaining > 0) {
+        this.planRemoteRoads(remoteRemaining);
+      }
     }
   }
 
@@ -347,5 +352,115 @@ export class SmartRoadPlanner {
     }
 
     return roadsOnPath / path.length;
+  }
+
+  /**
+   * Plan roads from room exit to remote sources.
+   * Only builds in rooms with active reservation (to prevent rapid decay).
+   */
+  planRemoteRoads(limit: number): number {
+    // Gate: only at RCL 4+
+    const rcl = this.room.controller?.level || 0;
+    if (rcl < 4) return 0;
+
+    const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+    const homeRoom = this.room.name;
+    let placed = 0;
+
+    // Get adjacent rooms we're actively mining
+    const exits = Game.map.describeExits(homeRoom);
+    if (!exits) return 0;
+
+    for (const dir in exits) {
+      if (placed >= limit) break;
+
+      const roomName = exits[dir as ExitKey];
+      if (!roomName) continue;
+
+      const room = Game.rooms[roomName];
+      if (!room) continue; // No visibility
+
+      // Only build roads in reserved rooms (otherwise they decay too fast)
+      const reservation = room.controller?.reservation;
+      if (!reservation || reservation.username !== myUsername) continue;
+
+      // Find sources we're mining
+      const sources = room.find(FIND_SOURCES);
+
+      // Find the exit tiles back to home room
+      const exitDir = this.reverseDirection(dir);
+      const exitPositions = room.find(exitDir as FindConstant) as RoomPosition[];
+      if (exitPositions.length === 0) continue;
+
+      // Use center of exit as reference point
+      const exitCenter = exitPositions[Math.floor(exitPositions.length / 2)];
+
+      for (const source of sources) {
+        if (placed >= limit) break;
+
+        // Check if we have a miner on this source
+        const hasMiner = Object.values(Game.creeps).some(
+          (c) =>
+            c.memory.role === "REMOTE_MINER" &&
+            c.memory.sourceId === source.id
+        );
+        if (!hasMiner) continue;
+
+        // Find container near source (if exists)
+        const container = source.pos.findInRange(FIND_STRUCTURES, 1, {
+          filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+        })[0];
+
+        const target = container?.pos || source.pos;
+
+        // Get path from exit to source/container
+        const path = room.findPath(exitCenter, target, {
+          ignoreCreeps: true,
+          swampCost: 2,
+          plainCost: 1,
+        });
+
+        // Place road construction sites along path
+        for (const step of path) {
+          if (placed >= limit) break;
+
+          // Skip if already has road or construction site
+          const structures = room.lookForAt(LOOK_STRUCTURES, step.x, step.y);
+          const hasRoad = structures.some((s) => s.structureType === STRUCTURE_ROAD);
+          if (hasRoad) continue;
+
+          const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, step.x, step.y);
+          if (sites.length > 0) continue;
+
+          // Check global construction site limit
+          const totalSites = Object.keys(Game.constructionSites).length;
+          if (totalSites >= 100) return placed;
+
+          const result = room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
+          if (result === OK) {
+            placed++;
+          }
+        }
+      }
+    }
+
+    if (placed > 0) {
+      logger.info("SmartRoadPlanner", `Placed ${placed} remote road(s)`);
+    }
+
+    return placed;
+  }
+
+  /**
+   * Convert exit direction to opposite direction for finding exit back.
+   */
+  private reverseDirection(dir: string): FindConstant {
+    const map: Record<string, FindConstant> = {
+      "1": FIND_EXIT_BOTTOM, // TOP -> BOTTOM
+      "3": FIND_EXIT_LEFT, // RIGHT -> LEFT
+      "5": FIND_EXIT_TOP, // BOTTOM -> TOP
+      "7": FIND_EXIT_RIGHT, // LEFT -> RIGHT
+    };
+    return map[dir] || FIND_EXIT_TOP;
   }
 }

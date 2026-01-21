@@ -177,28 +177,39 @@ function getTargets(rcl: number, energy: number, room: Room): CreepTarget[] {
       }
     }
 
-    // Reservers: 1 per 2 remote rooms, prioritize rooms needing reservation
-    const roomsNeedingReservation = remoteRooms.filter((targetRoom) => {
+    // Reservers: 1 per remote room (reservation requires constant presence)
+    // Find rooms that need a reserver (no reservation or expiring soon, and no reserver assigned)
+    const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+    for (const targetRoom of remoteRooms) {
+      if (energy < 1300) break; // Not enough energy for reserver
+
       const intel = Memory.rooms?.[targetRoom];
-      if (!intel) return true;
-      const reservation = intel.controller?.reservation;
-      // Need reserver if no reservation or reservation expiring soon
-      return !reservation || reservation.ticksToEnd < 1000;
-    });
+      const reservation = intel?.controller?.reservation;
 
-    if (roomsNeedingReservation.length > 0) {
-      const reserverBody: BodyPartConstant[] = [CLAIM, CLAIM, MOVE, MOVE]; // 1300 energy
-      const currentReservers = countReservers(room.name);
-      const neededReservers = Math.ceil(remoteRooms.length / 2);
+      // Check if room needs reservation
+      const needsReservation = !reservation ||
+        reservation.ticksToEnd < 1000 ||
+        reservation.username !== myUsername;
 
-      if (currentReservers < neededReservers && energy >= 1300) {
-        // Assign to first room needing reservation
+      if (!needsReservation) continue;
+
+      // Check if a reserver is already assigned to this room
+      const hasReserver = Object.values(Game.creeps).some(
+        (c) =>
+          c.memory.role === "RESERVER" &&
+          c.memory.targetRoom === targetRoom &&
+          c.memory.room === room.name
+      );
+
+      if (!hasReserver) {
+        const reserverBody: BodyPartConstant[] = [CLAIM, CLAIM, MOVE, MOVE]; // 1300 energy
         targets.push({
           role: "RESERVER",
           body: reserverBody,
-          count: currentReservers + 1,
-          memory: { targetRoom: roomsNeedingReservation[0] },
+          count: 1,
+          memory: { targetRoom },
         });
+        break; // Spawn one at a time
       }
     }
   }
