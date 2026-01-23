@@ -1,4 +1,5 @@
 import { moveToRoom, smartMoveTo } from "../utils/movement";
+import { updateRoomIntel, shouldFlee, fleeToSafety } from "../utils/remoteIntel";
 
 /**
  * RemoteHauler - Collects energy from remote mining rooms and delivers home
@@ -54,14 +55,12 @@ function collect(creep: Creep, targetRoom: string): void {
     return;
   }
 
-  // Check for hostiles - flee if dangerous
-  const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
-  const dangerous = hostiles.filter(
-    (h) => h.getActiveBodyparts(ATTACK) > 0 || h.getActiveBodyparts(RANGED_ATTACK) > 0
-  );
-  if (dangerous.length > 0) {
-    // Flee to home
-    moveToRoom(creep, creep.memory.room, "#ff0000");
+  // Update room intel whenever we have vision (critical for defense spawning)
+  updateRoomIntel(creep);
+
+  // Check for threats and flee if needed
+  if (shouldFlee(creep)) {
+    fleeToSafety(creep);
     return;
   }
 

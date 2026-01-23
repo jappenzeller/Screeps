@@ -1,5 +1,6 @@
 import { logger } from "../utils/Logger";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
+import { updateRoomIntel, shouldFlee, fleeToSafety } from "../utils/remoteIntel";
 
 /**
  * RemoteMiner - Harvests sources in adjacent rooms
@@ -22,19 +23,13 @@ export function runRemoteMiner(creep: Creep): void {
     return;
   }
 
-  // Check for hostiles - flee if dangerous
-  const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
-  if (hostiles.length > 0) {
-    const dangerous = hostiles.filter(
-      (h) =>
-        h.getActiveBodyparts(ATTACK) > 0 ||
-        h.getActiveBodyparts(RANGED_ATTACK) > 0
-    );
-    if (dangerous.length > 0) {
-      // Flee to home room
-      moveToRoom(creep, creep.memory.room, "#ff0000");
-      return;
-    }
+  // Update room intel whenever we have vision (critical for defense spawning)
+  updateRoomIntel(creep);
+
+  // Check for threats and flee if needed
+  if (shouldFlee(creep)) {
+    fleeToSafety(creep);
+    return;
   }
 
   // Find or validate source

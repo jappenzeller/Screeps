@@ -54,6 +54,9 @@ export class SmartRoadPlanner {
       // Only build if truly high traffic
       if (spot.visits < MIN_VISITS_FOR_ROAD) continue;
 
+      // Don't place road on important structures like containers
+      if (!this.canPlaceRoad(this.room, spot.x, spot.y)) continue;
+
       const result = this.room.createConstructionSite(spot.x, spot.y, STRUCTURE_ROAD);
       if (result === OK) {
         placed++;
@@ -118,8 +121,9 @@ export class SmartRoadPlanner {
 
       for (const pos of neighbors) {
         if (placed >= limit) break;
-        if (this.hasRoadOrSite(pos.x, pos.y)) continue;
-        if (this.room.getTerrain().get(pos.x, pos.y) === TERRAIN_MASK_WALL) continue;
+
+        // Use canPlaceRoad to check for containers and other structures
+        if (!this.canPlaceRoad(this.room, pos.x, pos.y)) continue;
 
         // Check if this position bridges to another road
         const itsNeighbors = this.getAdjacentPositions(
@@ -181,7 +185,9 @@ export class SmartRoadPlanner {
     let placed = 0;
     for (const step of path) {
       if (placed >= limit) break;
-      if (this.hasRoadOrSite(step.x, step.y)) continue;
+
+      // Use canPlaceRoad to check for containers and other structures
+      if (!this.canPlaceRoad(this.room, step.x, step.y)) continue;
 
       const result = this.room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
       if (result === OK) {
@@ -220,6 +226,36 @@ export class SmartRoadPlanner {
       .lookForAt(LOOK_CONSTRUCTION_SITES, x, y)
       .some((s) => s.structureType === STRUCTURE_ROAD);
     return hasRoad || hasSite;
+  }
+
+  /**
+   * Check if a road can be placed at this position without destroying important structures.
+   */
+  private canPlaceRoad(room: Room, x: number, y: number): boolean {
+    // Check for existing structures we don't want to replace
+    const structures = room.lookForAt(LOOK_STRUCTURES, x, y);
+    for (const struct of structures) {
+      // Don't place roads on containers, spawns, extensions, etc.
+      if (struct.structureType === STRUCTURE_CONTAINER) return false;
+      if (struct.structureType === STRUCTURE_SPAWN) return false;
+      if (struct.structureType === STRUCTURE_EXTENSION) return false;
+      if (struct.structureType === STRUCTURE_STORAGE) return false;
+      if (struct.structureType === STRUCTURE_TOWER) return false;
+      if (struct.structureType === STRUCTURE_LINK) return false;
+      if (struct.structureType === STRUCTURE_TERMINAL) return false;
+      if (struct.structureType === STRUCTURE_LAB) return false;
+      if (struct.structureType === STRUCTURE_ROAD) return false; // Already has road
+    }
+
+    // Check for construction sites too
+    const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
+    if (sites.length > 0) return false;
+
+    // Check terrain
+    const terrain = room.getTerrain();
+    if (terrain.get(x, y) === TERRAIN_MASK_WALL) return false;
+
+    return true;
   }
 
   /**
@@ -424,13 +460,8 @@ export class SmartRoadPlanner {
         for (const step of path) {
           if (placed >= limit) break;
 
-          // Skip if already has road or construction site
-          const structures = room.lookForAt(LOOK_STRUCTURES, step.x, step.y);
-          const hasRoad = structures.some((s) => s.structureType === STRUCTURE_ROAD);
-          if (hasRoad) continue;
-
-          const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, step.x, step.y);
-          if (sites.length > 0) continue;
+          // Use canPlaceRoad to check for containers and other structures
+          if (!this.canPlaceRoad(room, step.x, step.y)) continue;
 
           // Check global construction site limit
           const totalSites = Object.keys(Game.constructionSites).length;

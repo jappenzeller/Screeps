@@ -9,7 +9,7 @@ const AWS_ACCOUNT_ID = process.env.AWS_ACCOUNT_ID;
 const DASHBOARD_ID = process.env.QUICKSIGHT_DASHBOARD_ID;
 const QUICKSIGHT_NAMESPACE = "default";
 // Use existing AUTHOR user who has full permissions
-const QUICKSIGHT_USER = "jappenzeller";
+const QUICKSIGHT_USER = "jappenzeller@as-technologies.com";
 
 export async function handler(event) {
   console.log("Event:", JSON.stringify(event, null, 2));
