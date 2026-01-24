@@ -74,10 +74,10 @@ export class LinkManager {
     for (const sourceLink of this.sourceLinks) {
       // Skip if link is on cooldown or nearly empty
       if (sourceLink.cooldown > 0) continue;
-      if (sourceLink.store[RESOURCE_ENERGY] < 400) continue;
+      if (sourceLink.store[RESOURCE_ENERGY] < 100) continue;
 
       // Priority 1: Send to controller link if it needs energy
-      if (this.controllerLink && this.controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 400) {
+      if (this.controllerLink && this.controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100) {
         const result = sourceLink.transferEnergy(this.controllerLink);
         if (result === OK) {
           logger.debug("LinkManager", `Transferred energy to controller link`);
@@ -86,7 +86,7 @@ export class LinkManager {
       }
 
       // Priority 2: Send to storage link if it needs energy
-      if (this.storageLink && this.storageLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 400) {
+      if (this.storageLink && this.storageLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100) {
         const result = sourceLink.transferEnergy(this.storageLink);
         if (result === OK) {
           logger.debug("LinkManager", `Transferred energy to storage link`);
@@ -99,8 +99,8 @@ export class LinkManager {
     if (this.storageLink && this.controllerLink) {
       if (
         this.storageLink.cooldown === 0 &&
-        this.storageLink.store[RESOURCE_ENERGY] >= 400 &&
-        this.controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 400
+        this.storageLink.store[RESOURCE_ENERGY] >= 100 &&
+        this.controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100
       ) {
         this.storageLink.transferEnergy(this.controllerLink);
       }
