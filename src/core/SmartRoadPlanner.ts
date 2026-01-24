@@ -255,6 +255,14 @@ export class SmartRoadPlanner {
     const terrain = room.getTerrain();
     if (terrain.get(x, y) === TERRAIN_MASK_WALL) return false;
 
+    // Check for sources (game objects, not structures)
+    const sources = room.lookForAt(LOOK_SOURCES, x, y);
+    if (sources.length > 0) return false;
+
+    // Check for minerals
+    const minerals = room.lookForAt(LOOK_MINERALS, x, y);
+    if (minerals.length > 0) return false;
+
     return true;
   }
 
