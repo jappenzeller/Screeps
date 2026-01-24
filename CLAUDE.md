@@ -424,6 +424,8 @@ terraform init && terraform apply
 
 Always test in simulation first for major changes.
 
+**IMPORTANT**: Always commit changes before deploying to Screeps. Never deploy uncommitted code.
+
 ---
 
 ## Common Screeps API Reference
