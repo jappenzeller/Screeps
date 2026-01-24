@@ -47,6 +47,12 @@ resource "aws_apigatewayv2_route" "post_feedback" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+resource "aws_apigatewayv2_route" "get_diagnostics" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /diagnostics/{roomName}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"

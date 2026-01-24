@@ -232,6 +232,38 @@ async function getLiveData(roomName) {
   };
 }
 
+/**
+ * Get diagnostics for a specific room from segment 90
+ */
+async function getDiagnostics(roomName) {
+  const data = await fetchSegment90();
+
+  if (!data) {
+    return { error: "No data in segment 90", roomName };
+  }
+
+  if (!data.diagnostics) {
+    return { error: "No diagnostics data available. Ensure bot is exporting diagnostics.", roomName };
+  }
+
+  const diagnostics = data.diagnostics[roomName];
+  if (!diagnostics) {
+    return {
+      error: `Diagnostics for room ${roomName} not found`,
+      availableRooms: Object.keys(data.diagnostics),
+    };
+  }
+
+  return {
+    live: true,
+    fetchedAt: Date.now(),
+    gameTick: data.gameTick,
+    timestamp: data.timestamp,
+    shard: data.shard,
+    ...diagnostics,
+  };
+}
+
 // ==================== DynamoDB Route Handlers ====================
 
 // Route handlers
@@ -349,6 +381,10 @@ export async function handler(event) {
     // Room data endpoint (real-time room objects + terrain)
     else if (path === 'GET /room/{roomName}') {
       result = await getRoomData(params.roomName);
+    }
+    // Diagnostics endpoint (creep and structure state for debugging)
+    else if (path === 'GET /diagnostics/{roomName}') {
+      result = await getDiagnostics(params.roomName);
     }
     else {
       return {

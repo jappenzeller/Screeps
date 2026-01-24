@@ -14,6 +14,7 @@ interface AWSExportData {
   shard: string;
   colonies: ColonyExport[];
   global: GlobalExport;
+  diagnostics: Record<string, DiagnosticsExport>;
 }
 
 interface ColonyExport {
@@ -177,6 +178,87 @@ interface GlobalExport {
   totalCreeps: number;
 }
 
+// ==================== Diagnostics Interfaces ====================
+
+interface DiagnosticsExport {
+  roomName: string;
+  gameTick: number;
+  creeps: CreepDiagnostic[];
+  structures: {
+    links: LinkDiagnostic[];
+    containers: ContainerDiagnostic[];
+    spawns: SpawnDiagnostic[];
+    towers: TowerDiagnostic[];
+  };
+  controller: {
+    level: number;
+    progress: number;
+    progressTotal: number;
+    ticksToDowngrade: number;
+    upgradeBlocked: number;
+  } | null;
+  sources: SourceDiagnostic[];
+}
+
+interface CreepDiagnostic {
+  name: string;
+  role: string;
+  room: string;
+  pos: { x: number; y: number };
+  state: string;
+  targetId: string | null;
+  taskId: string | null;
+  ttl: number;
+  energy: number;
+  energyCapacity: number;
+  fatigue: number;
+  body: string;
+}
+
+interface LinkDiagnostic {
+  id: string;
+  pos: { x: number; y: number };
+  energy: number;
+  energyCapacity: number;
+  cooldown: number;
+}
+
+interface ContainerDiagnostic {
+  id: string;
+  pos: { x: number; y: number };
+  energy: number;
+  energyCapacity: number;
+  hits: number;
+  hitsMax: number;
+}
+
+interface SpawnDiagnostic {
+  id: string;
+  name: string;
+  pos: { x: number; y: number };
+  energy: number;
+  energyCapacity: number;
+  spawning: {
+    name: string;
+    remainingTime: number;
+  } | null;
+}
+
+interface TowerDiagnostic {
+  id: string;
+  pos: { x: number; y: number };
+  energy: number;
+  energyCapacity: number;
+}
+
+interface SourceDiagnostic {
+  id: string;
+  pos: { x: number; y: number };
+  energy: number;
+  energyCapacity: number;
+  ticksToRegeneration: number;
+}
+
 export class AWSExporter {
   /**
    * Export colony data to memory segment for AWS Lambda
@@ -186,12 +268,23 @@ export class AWSExporter {
     // Request segment for next tick
     RawMemory.setActiveSegments([AWS_SEGMENT]);
 
+    // Collect diagnostics for all owned rooms
+    const diagnostics: Record<string, DiagnosticsExport> = {};
+    for (const roomName in Game.rooms) {
+      const room = Game.rooms[roomName];
+      if (room.controller?.my) {
+        const diag = this.getDiagnostics(roomName);
+        if (diag) diagnostics[roomName] = diag;
+      }
+    }
+
     const data: AWSExportData = {
       timestamp: Date.now(),
       gameTick: Game.time,
       shard: Game.shard?.name || "unknown",
       colonies: this.getColonies(),
       global: this.getGlobalStats(),
+      diagnostics,
     };
 
     // Write to segment
@@ -672,6 +765,122 @@ export class AWSExporter {
       },
       credits: Game.market?.credits || 0,
       totalCreeps: Object.keys(Game.creeps).length,
+    };
+  }
+
+  /**
+   * Get detailed diagnostics for a specific room
+   */
+  static getDiagnostics(roomName: string): DiagnosticsExport | null {
+    const room = Game.rooms[roomName];
+    if (!room || !room.controller?.my) return null;
+
+    // Get all creeps for this room
+    const creeps = Object.values(Game.creeps)
+      .filter((c) => c.memory.room === roomName)
+      .map((c) => ({
+        name: c.name,
+        role: c.memory.role || "UNKNOWN",
+        room: c.room?.name || "unknown",
+        pos: { x: c.pos.x, y: c.pos.y },
+        state: c.memory.state || "unknown",
+        targetId: (c.memory.targetId as string) || null,
+        taskId: (c.memory.taskId as string) || null,
+        ttl: c.ticksToLive || 0,
+        energy: c.store[RESOURCE_ENERGY] || 0,
+        energyCapacity: c.store.getCapacity(RESOURCE_ENERGY) || 0,
+        fatigue: c.fatigue,
+        body: c.body.map((p) => p.type[0].toUpperCase()).join(""),
+      }));
+
+    // Get links
+    const links = (
+      room.find(FIND_MY_STRUCTURES, {
+        filter: { structureType: STRUCTURE_LINK },
+      }) as StructureLink[]
+    ).map((l) => ({
+      id: l.id,
+      pos: { x: l.pos.x, y: l.pos.y },
+      energy: l.store[RESOURCE_ENERGY],
+      energyCapacity: l.store.getCapacity(RESOURCE_ENERGY),
+      cooldown: l.cooldown,
+    }));
+
+    // Get containers
+    const containers = (
+      room.find(FIND_STRUCTURES, {
+        filter: { structureType: STRUCTURE_CONTAINER },
+      }) as StructureContainer[]
+    ).map((c) => ({
+      id: c.id,
+      pos: { x: c.pos.x, y: c.pos.y },
+      energy: c.store[RESOURCE_ENERGY],
+      energyCapacity: c.store.getCapacity(RESOURCE_ENERGY),
+      hits: c.hits,
+      hitsMax: c.hitsMax,
+    }));
+
+    // Get spawns
+    const spawns = (
+      room.find(FIND_MY_SPAWNS) as StructureSpawn[]
+    ).map((s) => ({
+      id: s.id,
+      name: s.name,
+      pos: { x: s.pos.x, y: s.pos.y },
+      energy: s.store[RESOURCE_ENERGY],
+      energyCapacity: s.store.getCapacity(RESOURCE_ENERGY),
+      spawning: s.spawning
+        ? {
+            name: s.spawning.name,
+            remainingTime: s.spawning.remainingTime,
+          }
+        : null,
+    }));
+
+    // Get towers
+    const towers = (
+      room.find(FIND_MY_STRUCTURES, {
+        filter: { structureType: STRUCTURE_TOWER },
+      }) as StructureTower[]
+    ).map((t) => ({
+      id: t.id,
+      pos: { x: t.pos.x, y: t.pos.y },
+      energy: t.store[RESOURCE_ENERGY],
+      energyCapacity: t.store.getCapacity(RESOURCE_ENERGY),
+    }));
+
+    // Get sources
+    const sources = room.find(FIND_SOURCES).map((s) => ({
+      id: s.id,
+      pos: { x: s.pos.x, y: s.pos.y },
+      energy: s.energy,
+      energyCapacity: s.energyCapacity,
+      ticksToRegeneration: s.ticksToRegeneration || 0,
+    }));
+
+    // Get controller info
+    const controller = room.controller
+      ? {
+          level: room.controller.level,
+          progress: room.controller.progress,
+          progressTotal: room.controller.progressTotal,
+          ticksToDowngrade: room.controller.ticksToDowngrade || 0,
+          upgradeBlocked: room.controller.upgradeBlocked || 0,
+        }
+      : null;
+
+    return {
+      roomName,
+      gameTick: Game.time,
+      creeps,
+      structures: {
+        links,
+        containers,
+        spawns,
+        towers,
+      },
+      controller,
+      sources,
     };
   }
 
