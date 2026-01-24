@@ -55,8 +55,8 @@ export function loop(): void {
     logStatus();
   }
 
-  // Export data to memory segment for AWS Lambda (every 100 ticks)
-  if (Game.time % 100 === 0) {
+  // Export data to memory segment for AWS Lambda (every 20 ticks)
+  if (Game.time % 20 === 0) {
     AWSExporter.export();
   }
 
