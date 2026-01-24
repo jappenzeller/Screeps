@@ -18,6 +18,7 @@ import { checkAutoSafeMode } from "./defense/AutoSafeMode";
 import { TrafficMonitor } from "./core/TrafficMonitor";
 import { SmartRoadPlanner } from "./core/SmartRoadPlanner";
 import { RemoteContainerPlanner } from "./core/RemoteContainerPlanner";
+import { RemoteSquadManager } from "./defense/RemoteSquadManager";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -107,6 +108,34 @@ function runRoom(room: Room): void {
   if (Game.time % 100 === 0) {
     const containerPlanner = new RemoteContainerPlanner(room);
     containerPlanner.run();
+  }
+
+  // 9. Remote squad management (RCL 4+)
+  if (room.controller && room.controller.level >= 4) {
+    const squadManager = new RemoteSquadManager(room);
+
+    // Analyze threats in remote rooms and request squads
+    const exits = Game.map.describeExits(room.name);
+    if (exits) {
+      for (const dir in exits) {
+        const remoteName = exits[dir as ExitKey];
+        if (!remoteName) continue;
+
+        // Skip rooms we're not mining
+        const intel = Memory.rooms?.[remoteName];
+        if (!intel?.sources || intel.sources.length === 0) continue;
+        if (intel.hasKeepers) continue;
+
+        // Check for threats
+        const threat = squadManager.analyzeThreat(remoteName);
+        if (threat.recommendedSquadSize > 0) {
+          squadManager.requestSquad(remoteName, threat.recommendedSquadSize);
+        }
+      }
+    }
+
+    // Cleanup dead members and timed out squads
+    squadManager.cleanup();
   }
 }
 

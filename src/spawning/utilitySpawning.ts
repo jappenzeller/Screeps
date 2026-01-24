@@ -7,6 +7,7 @@
  */
 
 import { getHostileCount } from "../utils/remoteIntel";
+import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 
 // All roles that can be spawned
 type SpawnRole =
@@ -465,42 +466,29 @@ function remoteHaulerUtility(deficit: number, state: ColonyState): number {
 }
 
 /**
- * Remote defender utility - based on remote threats
- * Skips Source Keeper rooms since those hostiles are permanent
+ * Remote defender utility - based on squad needs from RemoteSquadManager
+ * Uses squad-based spawning to coordinate attacks against healer-supported invaders
  */
 function remoteDefenderUtility(state: ColonyState): number {
   if (state.rcl < 4) return 0;
 
-  // Find threatened remote rooms (excluding SK rooms)
-  let maxThreat = 0;
-  let threatRoom: string | null = null;
+  // Use squad manager to determine defender needs
+  const squadManager = new RemoteSquadManager(state.room);
+  const needs = squadManager.getDefendersNeeded();
 
-  for (const [roomName, threatCount] of Object.entries(state.remoteThreatsByRoom)) {
-    // Double-check SK rooms aren't included (should be filtered in getRemoteThreats)
-    const intel = Memory.rooms?.[roomName];
-    if (intel?.hasKeepers) continue;
+  // No squad needs = no utility
+  if (needs.length === 0) return 0;
 
-    // Only consider rooms we're actually mining
-    if (!state.remoteRooms.includes(roomName)) continue;
-
-    if (threatCount > maxThreat) {
-      // Check if already have defender assigned
-      const hasDefender = Object.values(Game.creeps).some(
-        (c) => c.memory.role === "REMOTE_DEFENDER" && c.memory.targetRoom === roomName
-      );
-
-      if (!hasDefender) {
-        maxThreat = threatCount;
-        threatRoom = roomName;
-      }
-    }
+  // Find the most urgent need (most defenders needed)
+  let totalNeeded = 0;
+  for (const need of needs) {
+    totalNeeded += need.count;
   }
 
-  // No valid target = no utility
-  if (!threatRoom || maxThreat === 0) return 0;
+  if (totalNeeded === 0) return 0;
 
-  // Utility based on threat level (lower than home defense and economy)
-  let utility = maxThreat * 30;
+  // Base utility scales with number of defenders needed
+  let utility = totalNeeded * 45;
 
   // Reduce if economy is struggling
   const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
@@ -978,30 +966,24 @@ function findRemoteRoomNeedingHauler(state: ColonyState): string | null {
 }
 
 function findThreatenedRemoteRoom(state: ColonyState): string | null {
-  let maxThreat = 0;
-  let threatRoom: string | null = null;
+  // Use squad manager to find rooms that need defenders
+  const squadManager = new RemoteSquadManager(state.room);
+  const needs = squadManager.getDefendersNeeded();
 
-  for (const [roomName, threatCount] of Object.entries(state.remoteThreatsByRoom)) {
-    // Skip Source Keeper rooms - those hostiles are permanent
-    const intel = Memory.rooms?.[roomName];
-    if (intel?.hasKeepers) continue;
+  if (needs.length === 0) return null;
 
-    // Only consider rooms we're actually mining
-    if (!state.remoteRooms.includes(roomName)) continue;
+  // Return the room with the highest need
+  let bestRoom: string | null = null;
+  let maxNeeded = 0;
 
-    // Check if already have defender assigned
-    const hasDefender = Object.values(Game.creeps).some(
-      (c) => c.memory.role === "REMOTE_DEFENDER" && c.memory.targetRoom === roomName
-    );
-    if (hasDefender) continue;
-
-    if (threatCount > maxThreat) {
-      maxThreat = threatCount;
-      threatRoom = roomName;
+  for (const need of needs) {
+    if (need.count > maxNeeded) {
+      maxNeeded = need.count;
+      bestRoom = need.roomName;
     }
   }
 
-  return threatRoom;
+  return bestRoom;
 }
 
 function findRemoteRoomNeedingReserver(state: ColonyState): string | null {
