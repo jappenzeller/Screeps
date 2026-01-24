@@ -103,7 +103,7 @@ function getEnergy(creep: Creep): void {
 
     if (controllerLink) {
       // Try to withdraw if link has energy
-      if (controllerLink.store[RESOURCE_ENERGY] >= 50) {
+      if (controllerLink.store[RESOURCE_ENERGY] >= 100) {
         if (creep.withdraw(controllerLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
           smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
         }
