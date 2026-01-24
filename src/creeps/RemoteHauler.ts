@@ -49,6 +49,12 @@ export function runRemoteHauler(creep: Creep): void {
 }
 
 function collect(creep: Creep, targetRoom: string): void {
+  // Check flee state BEFORE traveling to remote room
+  if (shouldFlee(creep)) {
+    fleeToSafety(creep);
+    return;
+  }
+
   // Travel to target room if not there
   if (creep.room.name !== targetRoom) {
     moveToRoom(creep, targetRoom, "#ffaa00");
@@ -57,12 +63,6 @@ function collect(creep: Creep, targetRoom: string): void {
 
   // Update room intel whenever we have vision (critical for defense spawning)
   updateRoomIntel(creep);
-
-  // Check for threats and flee if needed
-  if (shouldFlee(creep)) {
-    fleeToSafety(creep);
-    return;
-  }
 
   // Priority 1: Pick up dropped energy
   const dropped = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {

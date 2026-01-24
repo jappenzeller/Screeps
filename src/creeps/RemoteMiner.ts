@@ -17,6 +17,12 @@ export function runRemoteMiner(creep: Creep): void {
     return;
   }
 
+  // Check if still fleeing (must check before moving to target room)
+  if (shouldFlee(creep)) {
+    fleeToSafety(creep);
+    return;
+  }
+
   // Move to target room if not there
   if (creep.room.name !== targetRoom) {
     moveToRoom(creep, targetRoom, "#ffaa00");
@@ -25,12 +31,6 @@ export function runRemoteMiner(creep: Creep): void {
 
   // Update room intel whenever we have vision (critical for defense spawning)
   updateRoomIntel(creep);
-
-  // Check for threats and flee if needed
-  if (shouldFlee(creep)) {
-    fleeToSafety(creep);
-    return;
-  }
 
   // Find or validate source
   let source: Source | null = null;

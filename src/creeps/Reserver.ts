@@ -1,5 +1,6 @@
 import { logger } from "../utils/Logger";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
+import { shouldFlee, fleeToSafety, updateRoomIntel } from "../utils/remoteIntel";
 
 /**
  * Reserver - Reserves controllers in remote rooms
@@ -13,22 +14,20 @@ export function runReserver(creep: Creep): void {
     return;
   }
 
+  // Check flee state before traveling
+  if (shouldFlee(creep)) {
+    fleeToSafety(creep);
+    return;
+  }
+
   // Move to target room if not there
   if (creep.room.name !== targetRoom) {
     moveToRoom(creep, targetRoom, "#00ffff");
     return;
   }
 
-  // Check for hostiles - flee if dangerous
-  const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
-  const dangerous = hostiles.filter(
-    (h) =>
-      h.getActiveBodyparts(ATTACK) > 0 || h.getActiveBodyparts(RANGED_ATTACK) > 0
-  );
-  if (dangerous.length > 0) {
-    moveToRoom(creep, creep.memory.room, "#ff0000");
-    return;
-  }
+  // Update room intel whenever we have vision
+  updateRoomIntel(creep);
 
   // Reserve the controller
   const controller = creep.room.controller;

@@ -48,9 +48,24 @@ export function updateRoomIntel(creep: Creep): void {
 
 /**
  * Check if the creep should flee from hostiles.
- * Returns true if there are dangerous hostiles nearby.
+ * Returns true if there are dangerous hostiles nearby OR if still fleeing from previous threat.
  */
 export function shouldFlee(creep: Creep): boolean {
+  const targetRoom = creep.memory.targetRoom;
+
+  // If already fleeing, check if remote room is safe before clearing
+  if ((creep.memory as any).isFleeing) {
+    const remoteHostiles = getHostileCount(targetRoom || "");
+    if (remoteHostiles > 0) {
+      return true; // Stay in flee mode
+    }
+    // Room is safe, clear flee state
+    (creep.memory as any).isFleeing = false;
+    (creep.memory as any).fleeReason = null;
+    return false;
+  }
+
+  // Not currently fleeing - check for new threats
   const hostiles = creep.room.find(FIND_HOSTILE_CREEPS, {
     filter: (h) =>
       h.getActiveBodyparts(ATTACK) > 0 || h.getActiveBodyparts(RANGED_ATTACK) > 0,
@@ -58,9 +73,9 @@ export function shouldFlee(creep: Creep): boolean {
 
   if (hostiles.length === 0) return false;
 
-  // Flee if any hostile is within 6 tiles
+  // Flee if any hostile is within 8 tiles (increased from 6)
   const nearest = creep.pos.findClosestByRange(hostiles);
-  if (nearest && creep.pos.getRangeTo(nearest) < 6) {
+  if (nearest && creep.pos.getRangeTo(nearest) < 8) {
     (creep.memory as any).isFleeing = true;
     (creep.memory as any).fleeReason = `${nearest.owner.username} at range ${creep.pos.getRangeTo(nearest)}`;
     return true;
@@ -70,22 +85,45 @@ export function shouldFlee(creep: Creep): boolean {
 }
 
 /**
- * Move creep to safety (home room).
+ * Move creep to safety (home room) and wait there.
  * Call this when shouldFlee() returns true.
  */
 export function fleeToSafety(creep: Creep): void {
   const homeRoom = creep.memory.room;
+  const targetRoom = creep.memory.targetRoom;
 
-  // If already in home room, clear flee state
-  if (creep.room.name === homeRoom) {
-    (creep.memory as any).isFleeing = false;
-    (creep.memory as any).fleeReason = null;
+  // If not in home room, go there
+  if (creep.room.name !== homeRoom) {
+    moveToRoom(creep, homeRoom, "#ff0000");
+    creep.say("🏃");
     return;
   }
 
-  // Move toward home room
-  moveToRoom(creep, homeRoom, "#ff0000");
-  creep.say("🏃");
+  // In home room - move away from border and wait
+  const pos = creep.pos;
+  const onBorder = pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47;
+
+  if (onBorder) {
+    // Move toward room center
+    const center = new RoomPosition(25, 25, homeRoom);
+    creep.moveTo(center, {
+      visualizePathStyle: { stroke: "#ff0000" },
+      reusePath: 5,
+    });
+    creep.say("🏃");
+    return;
+  }
+
+  // Safe position in home room - wait here
+  // Check if remote room is safe yet
+  const remoteHostiles = getHostileCount(targetRoom || "");
+  if (remoteHostiles > 0) {
+    creep.say(`⏳${remoteHostiles}`);
+    // Stay put, don't clear flee state (shouldFlee handles that)
+  } else {
+    // Room is safe, shouldFlee will clear the flag next tick
+    creep.say("✓");
+  }
 }
 
 /**
