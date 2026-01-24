@@ -1,0 +1,17 @@
+{
+  "name": "spawner-tests",
+  "version": "1.0.0",
+  "description": "Monte Carlo and simulation tests for Screeps spawner",
+  "scripts": {
+    "test": "ts-node runTests.ts",
+    "test:quick": "ts-node runTests.ts --quick",
+    "test:sim": "ts-node simTests.ts",
+    "test:all": "npm run test:quick && npm run test:sim"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/screeps": "^3.3.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  }
+}

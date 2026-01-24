@@ -89,6 +89,18 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
     if (cost > room.energyAvailable) continue;
 
     const memory = buildMemory(role, state);
+
+    // Skip remote roles that couldn't get a target room assigned
+    const requiresTargetRoom: SpawnRole[] = [
+      "REMOTE_MINER",
+      "REMOTE_HAULER",
+      "REMOTE_DEFENDER",
+      "RESERVER",
+    ];
+    if (requiresTargetRoom.includes(role) && !memory.targetRoom) {
+      continue;
+    }
+
     candidates.push({ role, utility, body, memory });
   }
 
@@ -329,7 +341,7 @@ function builderUtility(deficit: number, state: ColonyState): number {
 /**
  * Defender utility - 0 without threat, scales with threat level
  */
-function defenderUtility(deficit: number, state: ColonyState): number {
+function defenderUtility(_deficit: number, state: ColonyState): number {
   // No threat = no utility, regardless of deficit
   if (state.homeThreats === 0) return 0;
 
@@ -475,14 +487,41 @@ function scoutUtility(deficit: number, state: ColonyState): number {
 // ============================================
 
 /**
+ * Minimum energy cost for each role's smallest viable body
+ */
+const ROLE_MIN_COST: Record<SpawnRole, number> = {
+  HARVESTER: 200, // WORK + CARRY + MOVE
+  HAULER: 100, // CARRY + MOVE
+  UPGRADER: 200, // WORK + CARRY + MOVE
+  BUILDER: 200, // WORK + CARRY + MOVE
+  DEFENDER: 130, // ATTACK + MOVE + MOVE
+  REMOTE_MINER: 300, // WORK + WORK + CARRY + MOVE
+  REMOTE_HAULER: 200, // CARRY + CARRY + MOVE + MOVE
+  REMOTE_DEFENDER: 230, // TOUGH + ATTACK + ATTACK + MOVE + MOVE + MOVE
+  RESERVER: 650, // CLAIM + MOVE
+  SCOUT: 50, // MOVE
+};
+
+/**
  * Build appropriate body for a role given available energy
  */
 function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
-  const energy = state.energyCapacity;
+  // Emergency detection: no harvesters OR no haulers
+  const noHarvesters = (state.counts.HARVESTER || 0) === 0;
+  const noHaulers = (state.counts.HAULER || 0) === 0;
+  const isEmergency = noHarvesters || noHaulers;
+
+  // In emergency, build what we can afford NOW
+  // Otherwise, build for full capacity (wait for energy)
+  const energy = isEmergency ? state.energyAvailable : state.energyCapacity;
+
+  // Can't afford this role's minimum body
+  const minCost = ROLE_MIN_COST[role] || 200;
+  if (energy < minCost) return [];
 
   switch (role) {
     case "HARVESTER":
-      return buildHarvesterBody(energy, state);
+      return buildHarvesterBody(energy);
     case "HAULER":
       return buildHaulerBody(energy);
     case "UPGRADER":
@@ -506,10 +545,10 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   }
 }
 
-function buildHarvesterBody(energy: number, state: ColonyState): BodyPartConstant[] {
-  // Emergency: if no harvesters and low energy, use minimal body
-  if ((state.counts.HARVESTER || 0) === 0 && energy <= 300) {
-    return [WORK, CARRY, MOVE];
+function buildHarvesterBody(energy: number): BodyPartConstant[] {
+  // Minimum viable harvester for low energy situations
+  if (energy < 300) {
+    return [WORK, CARRY, MOVE]; // 200 energy cost
   }
 
   // Static harvester (sits on container)
