@@ -17,6 +17,46 @@ interface AWSExportData {
   diagnostics: Record<string, DiagnosticsExport>;
 }
 
+interface CreepDetail {
+  name: string;
+  role: string;
+  state: string | undefined;
+  pos: { x: number; y: number; room: string };
+  ttl: number | undefined;
+  energy: number;
+  energyCapacity: number;
+  fatigue: number;
+  workParts: number;
+  carryParts: number;
+  moveParts: number;
+  memory: Record<string, unknown>;
+}
+
+interface LinkDetail {
+  id: string;
+  pos: { x: number; y: number };
+  energy: number;
+  energyCapacity: number;
+  cooldown: number;
+  type: "source" | "controller" | "storage" | "unknown";
+}
+
+interface ContainerDetail {
+  id: string;
+  pos: { x: number; y: number };
+  energy: number;
+  hits: number;
+  hitsMax: number;
+  nearSource: boolean;
+  nearController: boolean;
+}
+
+interface StructureDetails {
+  links: LinkDetail[];
+  containers: ContainerDetail[];
+  spawns: { name: string; spawning: string | null; energy: number }[];
+}
+
 interface ColonyExport {
   roomName: string;
   rcl: number;
@@ -30,6 +70,7 @@ interface ColonyExport {
   creeps: {
     total: number;
     byRole: Record<string, number>;
+    details: CreepDetail[];
   };
   threats: {
     hostileCount: number;
@@ -39,6 +80,7 @@ interface ColonyExport {
     constructionSites: number;
     damagedCount: number;
   };
+  structureDetails: StructureDetails;
   // New fields
   defense: DefenseExport;
   adjacentRooms: AdjacentRoomExport[];
@@ -301,9 +343,26 @@ export class AWSExporter {
       // Get creeps for this room
       const creeps = Object.values(Game.creeps).filter((c) => c.memory.room === roomName);
       const byRole: Record<string, number> = {};
+      const creepDetails: CreepDetail[] = [];
+
       for (const creep of creeps) {
         const role = creep.memory.role || "UNKNOWN";
         byRole[role] = (byRole[role] || 0) + 1;
+
+        creepDetails.push({
+          name: creep.name,
+          role: role,
+          state: creep.memory.state,
+          pos: { x: creep.pos.x, y: creep.pos.y, room: creep.pos.roomName },
+          ttl: creep.ticksToLive,
+          energy: creep.store[RESOURCE_ENERGY] || 0,
+          energyCapacity: creep.store.getCapacity(RESOURCE_ENERGY) || 0,
+          fatigue: creep.fatigue,
+          workParts: creep.getActiveBodyparts(WORK),
+          carryParts: creep.getActiveBodyparts(CARRY),
+          moveParts: creep.getActiveBodyparts(MOVE),
+          memory: { ...creep.memory },
+        });
       }
 
       // Get hostiles
@@ -330,6 +389,46 @@ export class AWSExporter {
       }) as StructureContainer[];
       const containerEnergy = containers.reduce((sum, c) => sum + c.store[RESOURCE_ENERGY], 0);
 
+      // Build structure details
+      const links = room.find(FIND_MY_STRUCTURES, {
+        filter: (s) => s.structureType === STRUCTURE_LINK,
+      }) as StructureLink[];
+      const spawns = room.find(FIND_MY_SPAWNS);
+      const sources = room.find(FIND_SOURCES);
+      const controller = room.controller;
+      const storage = room.storage;
+
+      const structureDetails: StructureDetails = {
+        links: links.map((l) => ({
+          id: l.id,
+          pos: { x: l.pos.x, y: l.pos.y },
+          energy: l.store[RESOURCE_ENERGY] || 0,
+          energyCapacity: l.store.getCapacity(RESOURCE_ENERGY) || 800,
+          cooldown: l.cooldown,
+          type: sources.some((s) => l.pos.inRangeTo(s, 2))
+            ? "source"
+            : controller && l.pos.inRangeTo(controller, 4)
+              ? "controller"
+              : storage && l.pos.inRangeTo(storage, 2)
+                ? "storage"
+                : "unknown",
+        })),
+        containers: containers.map((c) => ({
+          id: c.id,
+          pos: { x: c.pos.x, y: c.pos.y },
+          energy: c.store[RESOURCE_ENERGY] || 0,
+          hits: c.hits,
+          hitsMax: c.hitsMax,
+          nearSource: sources.some((s) => c.pos.inRangeTo(s, 2)),
+          nearController: controller ? c.pos.inRangeTo(controller, 4) : false,
+        })),
+        spawns: spawns.map((s) => ({
+          name: s.name,
+          spawning: s.spawning?.name || null,
+          energy: s.store[RESOURCE_ENERGY] || 0,
+        })),
+      };
+
       colonies.push({
         roomName,
         rcl: room.controller.level,
@@ -343,6 +442,7 @@ export class AWSExporter {
         creeps: {
           total: creeps.length,
           byRole,
+          details: creepDetails,
         },
         threats: {
           hostileCount: hostiles.length,
@@ -352,6 +452,7 @@ export class AWSExporter {
           constructionSites: room.find(FIND_CONSTRUCTION_SITES).length,
           damagedCount,
         },
+        structureDetails,
         defense: this.getDefenseStatus(room),
         adjacentRooms: this.getAdjacentRoomIntel(roomName),
         remoteMining: this.getRemoteMiningStatus(roomName),
