@@ -201,11 +201,30 @@ function getCreepTargets(room: Room): Record<string, number> {
   const hasStorage = !!room.storage;
   const remoteRooms = getRemoteMiningTargets(room.name);
 
+  // Count construction sites in home AND remote rooms
+  let totalSites = room.find(FIND_CONSTRUCTION_SITES).length;
+  for (const remoteName of remoteRooms) {
+    const remoteRoom = Game.rooms[remoteName];
+    if (remoteRoom) {
+      totalSites += remoteRoom.find(FIND_CONSTRUCTION_SITES).length;
+    } else {
+      // Can't see room, but assume some sites if we're mining there
+      const intel = Memory.rooms?.[remoteName];
+      if (intel?.lastScan && Game.time - intel.lastScan < 1000) {
+        totalSites += 2; // Assume container + roads needed
+      }
+    }
+  }
+
+  // Scale builders: 1 per 5 sites, minimum 1 if any sites, max based on RCL
+  const maxBuilders = Math.min(rcl, 4);
+  const builderTarget = totalSites > 0 ? Math.min(Math.ceil(totalSites / 5), maxBuilders) : 0;
+
   const targets: Record<string, number> = {
     HARVESTER: sources,
     HAULER: hasStorage ? Math.max(2, sources) : sources,
     UPGRADER: rcl < 8 ? Math.min(rcl, 3) : 1,
-    BUILDER: room.find(FIND_CONSTRUCTION_SITES).length > 0 ? Math.min(2, rcl) : 0,
+    BUILDER: builderTarget,
     DEFENDER: 0, // Dynamic based on threats
     REMOTE_MINER: 0,
     REMOTE_HAULER: 0,
@@ -342,11 +361,29 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
 
 /**
  * Builder utility - 0 if no construction sites, scales with economy
+ * Accounts for remote room construction sites
  */
 function builderUtility(deficit: number, state: ColonyState): number {
-  // No construction = no utility
-  if (state.constructionSites === 0) return 0;
   if (deficit <= 0) return 0;
+
+  // Count total sites including remote rooms
+  let totalSites = state.constructionSites;
+  let hasRemoteContainer = false;
+
+  for (const remoteName of state.remoteRooms) {
+    const room = Game.rooms[remoteName];
+    if (room) {
+      const remoteSites = room.find(FIND_CONSTRUCTION_SITES);
+      totalSites += remoteSites.length;
+
+      // Check for remote container sites (critical infrastructure)
+      if (remoteSites.some((s) => s.structureType === STRUCTURE_CONTAINER)) {
+        hasRemoteContainer = true;
+      }
+    }
+  }
+
+  if (totalSites === 0) return 0;
 
   // Base utility
   let utility = deficit * 25;
@@ -356,7 +393,12 @@ function builderUtility(deficit: number, state: ColonyState): number {
   utility *= incomeRatio;
 
   // More sites = more urgency
-  utility *= Math.min(state.constructionSites / 5, 2);
+  utility *= Math.min(totalSites / 5, 2);
+
+  // Extra boost for remote containers (critical for remote mining)
+  if (hasRemoteContainer) {
+    utility *= 1.5;
+  }
 
   return utility;
 }

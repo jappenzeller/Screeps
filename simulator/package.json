@@ -1,0 +1,16 @@
+{
+  "name": "screeps-simulator",
+  "version": "1.0.0",
+  "description": "Economic loop simulator for testing spawner logic",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "ts-node src/index.ts",
+    "test:scenario": "ts-node src/index.ts --scenario"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  }
+}

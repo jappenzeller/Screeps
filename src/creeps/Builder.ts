@@ -254,13 +254,9 @@ function buildOrRepair(creep: Creep): void {
 }
 
 function getEnergy(creep: Creep): void {
-  // If in a remote room, return to home room for energy
-  if (creep.room.name !== creep.memory.room) {
-    moveToRoom(creep, creep.memory.room, "#ffaa00");
-    return;
-  }
+  // Check current room for energy sources first (works in home or remote)
 
-  // Priority 1: Storage
+  // Priority 1: Storage (home room only)
   const storage = creep.room.storage;
   if (storage && storage.store[RESOURCE_ENERGY] > 0) {
     if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -269,7 +265,7 @@ function getEnergy(creep: Creep): void {
     return;
   }
 
-  // Priority 2: Any container with energy
+  // Priority 2: Any container with energy (works in remote rooms too)
   const container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
     filter: (s) => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 50,
   }) as StructureContainer | null;
@@ -293,7 +289,13 @@ function getEnergy(creep: Creep): void {
     return;
   }
 
-  // Priority 4: Harvest from source as last resort
+  // Priority 4: If in remote room with no local energy, return home
+  if (creep.room.name !== creep.memory.room) {
+    moveToRoom(creep, creep.memory.room, "#ffaa00");
+    return;
+  }
+
+  // Priority 5: Harvest from source as last resort (home room only)
   const source = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
   if (source) {
     if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
