@@ -39,6 +39,7 @@ export interface SpawnCandidate {
   utility: number;
   body: BodyPartConstant[];
   memory: Partial<CreepMemory>;
+  cost: number;
 }
 
 interface ColonyState {
@@ -72,6 +73,11 @@ interface ColonyState {
 
 /**
  * Get the best spawn candidate based on utility scoring
+ *
+ * Key behavior: If economy has income, we WAIT for the highest utility role
+ * even if we can't afford it yet. This prevents spawning low-priority roles
+ * (like remote hauler #6) when a high-priority role (like builder) is needed
+ * but temporarily unaffordable.
  */
 export function getSpawnCandidate(room: Room): SpawnCandidate | null {
   const candidates: SpawnCandidate[] = [];
@@ -84,9 +90,7 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
     const body = buildBody(role, state);
     if (body.length === 0) continue;
 
-    // Check if we can afford the body
     const cost = body.reduce((sum, part) => sum + BODYPART_COST[part], 0);
-    if (cost > room.energyAvailable) continue;
 
     const memory = buildMemory(role, state);
 
@@ -101,14 +105,33 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
       continue;
     }
 
-    candidates.push({ role, utility, body, memory });
+    // DON'T filter by affordability here - collect all valid candidates
+    candidates.push({ role, utility, body, memory, cost });
   }
 
   if (candidates.length === 0) return null;
 
-  // Sort by utility descending, pick highest
+  // Sort by utility descending
   candidates.sort((a, b) => b.utility - a.utility);
-  return candidates[0];
+
+  const best = candidates[0];
+
+  // Can we afford the highest utility role?
+  if (best.cost <= room.energyAvailable) {
+    return best;
+  }
+
+  // Can't afford best. Check if economy is functional.
+  const hasIncome = state.energyIncome > 0;
+
+  if (hasIncome) {
+    // Economy is working. Wait for energy to accumulate.
+    return null;
+  }
+
+  // Economy is dead (no harvesters producing). Bootstrap with whatever we can afford.
+  const affordable = candidates.filter((c) => c.cost <= room.energyAvailable);
+  return affordable.length > 0 ? affordable[0] : null;
 }
 
 /**
