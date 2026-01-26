@@ -110,14 +110,12 @@ function getEnergy(creep: Creep): void {
         return;
       }
 
-      // Link exists but empty - wait near it
+      // Link exists but empty - stay near it, link filler will refill shortly
       if (creep.pos.getRangeTo(controllerLink) > 1) {
         smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#888888" }, reusePath: 5 });
-      } else {
-        // Already near link - just wait, move off road if needed
-        moveOffRoad(creep);
-        creep.say("⏳");
       }
+      // Already adjacent - hold position (don't wander off looking for energy)
+      creep.say("wait");
       return;
     }
   }
