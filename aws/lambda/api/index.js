@@ -348,6 +348,7 @@ export async function handler(event) {
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-store',
   };
 
   try {
