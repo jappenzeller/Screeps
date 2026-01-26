@@ -22,7 +22,8 @@ type SpawnRole =
   | "REMOTE_DEFENDER"
   | "RESERVER"
   | "SCOUT"
-  | "LINK_FILLER";
+  | "LINK_FILLER"
+  | "UPGRADE_HAULER";
 
 const ALL_ROLES: SpawnRole[] = [
   "HARVESTER",
@@ -36,6 +37,7 @@ const ALL_ROLES: SpawnRole[] = [
   "RESERVER",
   "SCOUT",
   "LINK_FILLER",
+  "UPGRADE_HAULER",
 ];
 
 export interface SpawnCandidate {
@@ -236,13 +238,26 @@ function getCreepTargets(room: Room): Record<string, number> {
     RESERVER: 0,
     SCOUT: 0,
     LINK_FILLER: 0,
+    UPGRADE_HAULER: 0,
   };
 
-  // Link filler at RCL 5+ with storage and storage link
+  // Link filler and upgrade hauler at RCL 5+ with storage and links
   if (rcl >= 5 && room.storage && room.storage.store[RESOURCE_ENERGY] > 10000) {
     const linkManager = new LinkManager(room);
     if (linkManager.getStorageLink()) {
       targets.LINK_FILLER = 1;
+    }
+
+    // Upgrade hauler: supplement link transfers when upgraders exceed link throughput
+    const controllerLink = linkManager.getControllerLink();
+    if (controllerLink) {
+      const upgraderWorkParts = Object.values(Game.creeps)
+        .filter((c) => c.memory.role === "UPGRADER" && c.memory.room === room.name)
+        .reduce((sum, c) => sum + c.getActiveBodyparts(WORK), 0);
+      // Link delivers ~35 energy/tick; each WORK part consumes 1/tick
+      if (upgraderWorkParts > 35) {
+        targets.UPGRADE_HAULER = 1;
+      }
     }
   }
 
@@ -299,6 +314,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return scoutUtility(effectiveDeficit, state);
     case "LINK_FILLER":
       return linkFillerUtility(effectiveDeficit, state);
+    case "UPGRADE_HAULER":
+      return upgradeHaulerUtility(effectiveDeficit, state);
     default:
       return 0;
   }
@@ -552,6 +569,24 @@ function linkFillerUtility(deficit: number, state: ColonyState): number {
 }
 
 /**
+ * Upgrade hauler utility - supplements link transfers to controller link
+ * Spawns after link filler, before additional upgraders
+ */
+function upgradeHaulerUtility(deficit: number, state: ColonyState): number {
+  if (state.rcl < 5) return 0;
+  if (deficit <= 0) return 0;
+
+  // Infrastructure that enables upgrader throughput - between link filler and upgrader
+  let utility = deficit * 55;
+
+  // Scale by economy health
+  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
+  utility *= incomeRatio;
+
+  return utility;
+}
+
+/**
  * Scout utility - luxury role, very low priority
  */
 function scoutUtility(deficit: number, state: ColonyState): number {
@@ -587,6 +622,7 @@ const ROLE_MIN_COST: Record<SpawnRole, number> = {
   RESERVER: 650, // CLAIM + MOVE
   SCOUT: 50, // MOVE
   LINK_FILLER: 150, // CARRY + CARRY + MOVE
+  UPGRADE_HAULER: 200, // CARRY + CARRY + MOVE + MOVE
 };
 
 /**
@@ -629,6 +665,8 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
       return [MOVE];
     case "LINK_FILLER":
       return buildLinkFillerBody(energy);
+    case "UPGRADE_HAULER":
+      return buildUpgradeHaulerBody(energy);
     default:
       return [];
   }
@@ -814,6 +852,21 @@ function buildLinkFillerBody(energy: number): BodyPartConstant[] {
   }
 
   return parts.length >= 3 ? parts : [CARRY, CARRY, MOVE];
+}
+
+function buildUpgradeHaulerBody(energy: number): BodyPartConstant[] {
+  // Balanced CARRY + MOVE for road travel (1:1 ratio)
+  // Target: 10 CARRY + 10 MOVE = 1000 energy, 500 carry capacity
+  const parts: BodyPartConstant[] = [];
+  let remaining = energy;
+
+  while (remaining >= 100 && parts.length < 20) {
+    parts.push(CARRY);
+    parts.push(MOVE);
+    remaining -= 100;
+  }
+
+  return parts.length >= 4 ? parts : [CARRY, CARRY, MOVE, MOVE];
 }
 
 // ============================================
