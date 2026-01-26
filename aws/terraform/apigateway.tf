@@ -53,6 +53,24 @@ resource "aws_apigatewayv2_route" "get_diagnostics" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+resource "aws_apigatewayv2_route" "get_live_room" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /live/{roomName}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_live_all" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /live"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_room_data" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /room/{roomName}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
