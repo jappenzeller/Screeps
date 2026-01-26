@@ -534,13 +534,15 @@ function reserverUtility(deficit: number, state: ColonyState): number {
 
 /**
  * Link filler utility - keeps storage link filled for controller upgrading
+ * Infrastructure role: without it, upgraders at controller link starve.
+ * Priority above upgraders (20 base) but below haulers (90 base).
  */
 function linkFillerUtility(deficit: number, state: ColonyState): number {
   if (state.rcl < 5) return 0;
   if (deficit <= 0) return 0;
 
-  // Moderate priority - below haulers but above scouts
-  let utility = deficit * 30;
+  // High priority - infrastructure that enables upgraders
+  let utility = deficit * 70;
 
   // Scale by economy health
   const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
