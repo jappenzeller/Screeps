@@ -10,6 +10,7 @@ import { runRemoteHauler } from "./RemoteHauler";
 import { runReserver } from "./Reserver";
 import { runClaimer } from "./Claimer";
 import { runRemoteDefender } from "./RemoteDefender";
+import { runLinkFiller } from "./LinkFiller";
 
 export interface BodyConfig {
   base: BodyPartConstant[];
@@ -83,6 +84,12 @@ export const ROLE_BODIES: Record<Role, BodyConfig> = {
   CLAIMER: {
     base: [CLAIM, MOVE],
   },
+
+  // Link Filler: sits between storage and storage link
+  LINK_FILLER: {
+    base: [CARRY, CARRY, MOVE],
+    scale: [CARRY, CARRY, MOVE],
+  },
 };
 
 export type RoleRunner = (creep: Creep) => void;
@@ -99,6 +106,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   REMOTE_HAULER: runRemoteHauler,
   RESERVER: runReserver,
   CLAIMER: runClaimer,
+  LINK_FILLER: runLinkFiller,
 };
 
 export function runCreep(creep: Creep): void {

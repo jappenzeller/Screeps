@@ -8,6 +8,7 @@
 
 import { getHostileCount } from "../utils/remoteIntel";
 import { RemoteSquadManager } from "../defense/RemoteSquadManager";
+import { LinkManager } from "../structures/LinkManager";
 
 // All roles that can be spawned
 type SpawnRole =
@@ -20,7 +21,8 @@ type SpawnRole =
   | "REMOTE_HAULER"
   | "REMOTE_DEFENDER"
   | "RESERVER"
-  | "SCOUT";
+  | "SCOUT"
+  | "LINK_FILLER";
 
 const ALL_ROLES: SpawnRole[] = [
   "HARVESTER",
@@ -33,6 +35,7 @@ const ALL_ROLES: SpawnRole[] = [
   "REMOTE_DEFENDER",
   "RESERVER",
   "SCOUT",
+  "LINK_FILLER",
 ];
 
 export interface SpawnCandidate {
@@ -232,7 +235,16 @@ function getCreepTargets(room: Room): Record<string, number> {
     REMOTE_DEFENDER: 0,
     RESERVER: 0,
     SCOUT: 0,
+    LINK_FILLER: 0,
   };
+
+  // Link filler at RCL 5+ with storage and storage link
+  if (rcl >= 5 && room.storage && room.storage.store[RESOURCE_ENERGY] > 10000) {
+    const linkManager = new LinkManager(room);
+    if (linkManager.getStorageLink()) {
+      targets.LINK_FILLER = 1;
+    }
+  }
 
   // Remote operations at RCL 4+
   if (rcl >= 4) {
@@ -285,6 +297,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return reserverUtility(effectiveDeficit, state);
     case "SCOUT":
       return scoutUtility(effectiveDeficit, state);
+    case "LINK_FILLER":
+      return linkFillerUtility(effectiveDeficit, state);
     default:
       return 0;
   }
@@ -519,6 +533,23 @@ function reserverUtility(deficit: number, state: ColonyState): number {
 }
 
 /**
+ * Link filler utility - keeps storage link filled for controller upgrading
+ */
+function linkFillerUtility(deficit: number, state: ColonyState): number {
+  if (state.rcl < 5) return 0;
+  if (deficit <= 0) return 0;
+
+  // Moderate priority - below haulers but above scouts
+  let utility = deficit * 30;
+
+  // Scale by economy health
+  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
+  utility *= incomeRatio;
+
+  return utility;
+}
+
+/**
  * Scout utility - luxury role, very low priority
  */
 function scoutUtility(deficit: number, state: ColonyState): number {
@@ -553,6 +584,7 @@ const ROLE_MIN_COST: Record<SpawnRole, number> = {
   REMOTE_DEFENDER: 230, // TOUGH + ATTACK + ATTACK + MOVE + MOVE + MOVE
   RESERVER: 650, // CLAIM + MOVE
   SCOUT: 50, // MOVE
+  LINK_FILLER: 150, // CARRY + CARRY + MOVE
 };
 
 /**
@@ -593,6 +625,8 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
       return buildReserverBody(energy);
     case "SCOUT":
       return [MOVE];
+    case "LINK_FILLER":
+      return buildLinkFillerBody(energy);
     default:
       return [];
   }
@@ -757,6 +791,27 @@ function buildReserverBody(energy: number): BodyPartConstant[] {
   }
   // 1 CLAIM, 1 MOVE = 650 energy
   return [CLAIM, MOVE];
+}
+
+function buildLinkFillerBody(energy: number): BodyPartConstant[] {
+  // Stationary creep: mostly CARRY with minimal MOVE
+  // Bigger carry = fewer ticks to fill link (800 capacity)
+  const parts: BodyPartConstant[] = [];
+  let remaining = energy;
+
+  // Add CARRY parts (max 6 = 300 capacity)
+  while (remaining >= 100 && parts.filter((p) => p === CARRY).length < 6) {
+    parts.push(CARRY);
+    remaining -= 50;
+
+    // Add 1 MOVE per 2 CARRY (just enough to reach parking spot)
+    if (parts.filter((p) => p === CARRY).length % 2 === 0 && remaining >= 50) {
+      parts.push(MOVE);
+      remaining -= 50;
+    }
+  }
+
+  return parts.length >= 3 ? parts : [CARRY, CARRY, MOVE];
 }
 
 // ============================================
@@ -994,9 +1049,12 @@ function findRemoteRoomNeedingReserver(state: ColonyState): string | null {
     if (!intel) continue;
 
     // Check if reservation is missing or expiring
+    // Account for staleness: ticksToEnd in memory was recorded at lastScan
     const reservation = intel.controller?.reservation;
+    const elapsed = Game.time - (intel.lastScan || 0);
+    const actualTicksToEnd = reservation ? reservation.ticksToEnd - elapsed : 0;
     const needsReservation =
-      !reservation || reservation.ticksToEnd < 1000 || reservation.username !== myUsername;
+      !reservation || actualTicksToEnd < 1000 || reservation.username !== myUsername;
 
     if (!needsReservation) continue;
 

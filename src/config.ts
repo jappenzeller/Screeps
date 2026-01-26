@@ -17,6 +17,7 @@ export const CONFIG = {
     REMOTE_HAULER: 9,
     SCOUT: 10,
     CLAIMER: 11,
+    LINK_FILLER: 12,
   } as const,
 
   // Minimum creep counts per room
