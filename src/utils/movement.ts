@@ -29,6 +29,7 @@ export function stepOffBorder(creep: Creep): boolean {
  * Move creep toward a target room, handling border edge cases and stuck detection.
  */
 export function moveToRoom(creep: Creep, targetRoom: string, visualStroke?: string): boolean {
+  if (creep.spawning) return false;
   if (creep.room.name === targetRoom) return false;
 
   const exitDir = creep.room.findExitTo(targetRoom);

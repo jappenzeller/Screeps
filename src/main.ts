@@ -142,6 +142,7 @@ function runRoom(room: Room): void {
 function runCreeps(): void {
   for (const name in Game.creeps) {
     const creep = Game.creeps[name];
+    if (creep.spawning) continue;
     try {
       runCreep(creep);
     } catch (error) {
