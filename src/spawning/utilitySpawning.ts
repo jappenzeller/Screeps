@@ -10,6 +10,10 @@ import { getHostileCount } from "../utils/remoteIntel";
 import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 import { LinkManager } from "../structures/LinkManager";
 
+// TTL thresholds for proactive replacement spawning
+const DYING_SOON_LOCAL = 100; // Local roles: spawn nearby, 100 ticks is enough
+const DYING_SOON_REMOTE = 200; // Remote roles: need travel time + spawn time buffer
+
 // All roles that can be spawned
 type SpawnRole =
   | "HARVESTER"
@@ -166,7 +170,16 @@ function getColonyState(room: Room): ColonyState {
     const role = c.memory.role;
     counts[role] = (counts[role] || 0) + 1;
 
-    if (c.ticksToLive && c.ticksToLive < 100) {
+    // Use higher threshold for remote roles (need travel time buffer)
+    const isRemoteRole =
+      role === "REMOTE_MINER" ||
+      role === "REMOTE_HAULER" ||
+      role === "RESERVER" ||
+      role === "REMOTE_DEFENDER" ||
+      role === "SCOUT";
+    const dyingThreshold = isRemoteRole ? DYING_SOON_REMOTE : DYING_SOON_LOCAL;
+
+    if (c.ticksToLive && c.ticksToLive < dyingThreshold) {
       dyingSoon[role] = (dyingSoon[role] || 0) + 1;
     }
   }

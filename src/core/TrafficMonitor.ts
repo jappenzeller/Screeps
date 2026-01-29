@@ -57,6 +57,9 @@ export class TrafficMonitor {
       // ONLY track unroaded tiles - this IS the signal
       if (this.hasRoad(x, y)) continue;
 
+      // Skip boundary tiles - cannot build structures there
+      if (x === 0 || x === 49 || y === 0 || y === 49) continue;
+
       // Skip walls (shouldn't happen but defensive)
       if (this.room.getTerrain().get(x, y) === TERRAIN_MASK_WALL) continue;
 
@@ -157,6 +160,9 @@ export class TrafficMonitor {
 
     for (const key in this.mem.heatmap) {
       const [x, y] = key.split(":").map(Number);
+
+      // Skip boundary tiles - cannot build structures there
+      if (x === 0 || x === 49 || y === 0 || y === 49) continue;
 
       // Skip if road was built since we recorded this
       if (this.hasRoad(x, y)) continue;

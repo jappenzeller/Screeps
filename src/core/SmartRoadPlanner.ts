@@ -232,6 +232,9 @@ export class SmartRoadPlanner {
    * Check if a road can be placed at this position without destroying important structures.
    */
   private canPlaceRoad(room: Room, x: number, y: number): boolean {
+    // Boundary tiles cannot have structures
+    if (x === 0 || x === 49 || y === 0 || y === 49) return false;
+
     // Check for existing structures we don't want to replace
     const structures = room.lookForAt(LOOK_STRUCTURES, x, y);
     for (const struct of structures) {

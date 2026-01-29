@@ -289,7 +289,10 @@ async function getSummary(roomName) {
   }));
 
   const latest = snapshots.Items?.[0];
-  const pending = recommendations.Items?.filter(r => r.status === 'pending') || [];
+  const now = Date.now();
+  const pending = recommendations.Items?.filter(r =>
+    r.status === 'pending' && (!r.expiresAt || r.expiresAt > now)
+  ) || [];
 
   return {
     roomName,
@@ -309,7 +312,10 @@ async function getRecommendations(roomName) {
     Limit: 50,
   }));
 
-  return response.Items || [];
+  // Filter out expired recommendations
+  const now = Date.now();
+  const items = response.Items || [];
+  return items.filter(r => !r.expiresAt || r.expiresAt > now);
 }
 
 async function getMetricHistory(roomName, hours = 24) {
