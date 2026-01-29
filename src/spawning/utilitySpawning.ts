@@ -1103,25 +1103,31 @@ function findRemoteRoomNeedingReserver(state: ColonyState): string | null {
     const intel = Memory.rooms?.[roomName];
     if (!intel) continue;
 
-    // Check if reservation is missing or expiring
-    // Account for staleness: ticksToEnd in memory was recorded at lastScan
-    const reservation = intel.controller?.reservation;
-    const elapsed = Game.time - (intel.lastScan || 0);
-    const actualTicksToEnd = reservation ? reservation.ticksToEnd - elapsed : 0;
-    const needsReservation =
-      !reservation || actualTicksToEnd < 1000 || reservation.username !== myUsername;
-
-    if (!needsReservation) continue;
-
     // Check if we already have a reserver for this room
-    const hasReserver = Object.values(Game.creeps).some(
+    const existingReserver = Object.values(Game.creeps).find(
       (c) =>
         c.memory.role === "RESERVER" &&
         c.memory.room === state.room.name &&
         c.memory.targetRoom === roomName
     );
 
-    if (!hasReserver) {
+    // No reserver assigned -> need one
+    if (!existingReserver) {
+      return roomName;
+    }
+
+    // Has reserver - check if we need a replacement (TTL < 150 for travel time)
+    const reserverDying = existingReserver.ticksToLive && existingReserver.ticksToLive < 150;
+    if (!reserverDying) continue;
+
+    // Reserver dying soon - check if reservation needs maintenance
+    const reservation = intel.controller?.reservation;
+    const elapsed = Game.time - (intel.lastScan || 0);
+    const actualTicksToEnd = reservation ? reservation.ticksToEnd - elapsed : 0;
+    const needsReservation =
+      !reservation || actualTicksToEnd < 2000 || reservation.username !== myUsername;
+
+    if (needsReservation) {
       return roomName;
     }
   }
