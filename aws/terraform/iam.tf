@@ -33,11 +33,14 @@ resource "aws_iam_role_policy" "data_collector" {
         Effect = "Allow"
         Action = [
           "dynamodb:PutItem",
-          "dynamodb:BatchWriteItem"
+          "dynamodb:BatchWriteItem",
+          "dynamodb:Query"
         ]
         Resource = [
           aws_dynamodb_table.colony_snapshots.arn,
-          aws_dynamodb_table.colony_events.arn
+          "${aws_dynamodb_table.colony_snapshots.arn}/index/*",
+          aws_dynamodb_table.colony_events.arn,
+          aws_dynamodb_table.signals.arn
         ]
       },
       {
@@ -117,7 +120,11 @@ resource "aws_iam_role_policy" "analysis_engine" {
         Resource = [
           aws_dynamodb_table.recommendations.arn,
           "${aws_dynamodb_table.recommendations.arn}/index/*",
-          aws_dynamodb_table.pattern_state.arn
+          aws_dynamodb_table.pattern_state.arn,
+          aws_dynamodb_table.observations.arn,
+          "${aws_dynamodb_table.observations.arn}/index/*",
+          aws_dynamodb_table.signals.arn,
+          "${aws_dynamodb_table.signals.arn}/index/*"
         ]
       },
       {
@@ -187,7 +194,11 @@ resource "aws_iam_role_policy" "api" {
           aws_dynamodb_table.colony_events.arn,
           "${aws_dynamodb_table.colony_events.arn}/index/*",
           aws_dynamodb_table.recommendations.arn,
-          "${aws_dynamodb_table.recommendations.arn}/index/*"
+          "${aws_dynamodb_table.recommendations.arn}/index/*",
+          aws_dynamodb_table.signals.arn,
+          "${aws_dynamodb_table.signals.arn}/index/*",
+          aws_dynamodb_table.observations.arn,
+          "${aws_dynamodb_table.observations.arn}/index/*"
         ]
       },
       {
@@ -197,6 +208,59 @@ resource "aws_iam_role_policy" "api" {
         ]
         Resource = [
           aws_secretsmanager_secret.screeps_token.arn
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
+# IAM role for observation writer Lambda
+resource "aws_iam_role" "observation_writer" {
+  name = "${var.project_name}-observation-writer-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Project     = var.project_name
+    Environment = var.environment
+  }
+}
+
+# IAM policy for observation writer Lambda
+resource "aws_iam_role_policy" "observation_writer" {
+  name = "${var.project_name}-observation-writer-policy"
+  role = aws_iam_role.observation_writer.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem"
+        ]
+        Resource = [
+          aws_dynamodb_table.observations.arn
         ]
       },
       {

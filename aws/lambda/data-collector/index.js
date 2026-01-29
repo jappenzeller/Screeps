@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, BatchWriteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, BatchWriteCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
@@ -10,9 +10,18 @@ const s3Client = new S3Client({});
 
 const SNAPSHOTS_TABLE = process.env.SNAPSHOTS_TABLE;
 const EVENTS_TABLE = process.env.EVENTS_TABLE;
+const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
 const ANALYTICS_BUCKET = process.env.ANALYTICS_BUCKET;
 const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
 const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "7", 10);
+
+// Signal detection thresholds
+const SIGNAL_THRESHOLDS = {
+  energyStored: { low: 50000, critical: 10000 },
+  cpuBucket: { low: 2000, critical: 500 },
+  cpuUsed: { high: 40, critical: 80 },
+  hostileCount: { alert: 1 },
+};
 
 let cachedToken = null;
 
@@ -181,6 +190,190 @@ async function writeToS3(snapshot) {
   console.log(`Wrote ${snapshot.colonies?.length || 0} records to S3`);
 }
 
+/**
+ * Extract signal metrics from a colony snapshot
+ */
+function extractSignalMetrics(colony, globalData) {
+  return {
+    // Energy flow
+    energyStored: colony.energy?.stored || 0,
+    energyAvailable: colony.energy?.available || 0,
+    energyCapacity: colony.energy?.capacity || 0,
+
+    // Progress
+    rclProgress: colony.rclProgress || 0,
+    rclLevel: colony.rcl || 1,
+    gclProgress: globalData?.gcl?.progress || 0,
+
+    // Population
+    creepTotal: colony.creeps?.total || 0,
+    creepsByRole: colony.creeps?.byRole || {},
+
+    // Performance
+    cpuUsed: globalData?.cpu?.used || 0,
+    cpuBucket: globalData?.cpu?.bucket || 10000,
+
+    // Remote mining
+    remoteMinerCount: colony.creeps?.byRole?.REMOTE_MINER || 0,
+    remoteHaulerCount: colony.creeps?.byRole?.REMOTE_HAULER || 0,
+    reserverCount: colony.creeps?.byRole?.RESERVER || 0,
+
+    // Defense
+    hostileCount: colony.threats?.hostileCount || 0,
+    towerEnergy: colony.structures?.towerEnergy || 0,
+  };
+}
+
+/**
+ * Compute deltas between current and previous metrics
+ */
+function computeDeltas(current, previous) {
+  if (!previous) return {};
+
+  return {
+    energyDelta: current.energyStored - (previous.energyStored || 0),
+    rclProgressRate: current.rclProgress - (previous.rclProgress || 0),
+    creepDelta: current.creepTotal - (previous.creepTotal || 0),
+    cpuDelta: current.cpuUsed - (previous.cpuUsed || 0),
+  };
+}
+
+/**
+ * Detect signal events (anomalies, threshold crossings)
+ */
+function detectSignalEvents(metrics, deltas, baseline) {
+  const events = [];
+  const timestamp = Date.now();
+
+  // Energy threshold crossing
+  if (metrics.energyStored < SIGNAL_THRESHOLDS.energyStored.critical) {
+    events.push({
+      type: "THRESHOLD",
+      metric: "energyStored",
+      value: metrics.energyStored,
+      threshold: SIGNAL_THRESHOLDS.energyStored.critical,
+      severity: "critical",
+      timestamp,
+    });
+  } else if (metrics.energyStored < SIGNAL_THRESHOLDS.energyStored.low) {
+    events.push({
+      type: "THRESHOLD",
+      metric: "energyStored",
+      value: metrics.energyStored,
+      threshold: SIGNAL_THRESHOLDS.energyStored.low,
+      severity: "warning",
+      timestamp,
+    });
+  }
+
+  // CPU bucket threshold
+  if (metrics.cpuBucket < SIGNAL_THRESHOLDS.cpuBucket.critical) {
+    events.push({
+      type: "THRESHOLD",
+      metric: "cpuBucket",
+      value: metrics.cpuBucket,
+      threshold: SIGNAL_THRESHOLDS.cpuBucket.critical,
+      severity: "critical",
+      timestamp,
+    });
+  } else if (metrics.cpuBucket < SIGNAL_THRESHOLDS.cpuBucket.low) {
+    events.push({
+      type: "THRESHOLD",
+      metric: "cpuBucket",
+      value: metrics.cpuBucket,
+      threshold: SIGNAL_THRESHOLDS.cpuBucket.low,
+      severity: "warning",
+      timestamp,
+    });
+  }
+
+  // Hostile presence
+  if (metrics.hostileCount >= SIGNAL_THRESHOLDS.hostileCount.alert) {
+    events.push({
+      type: "THRESHOLD",
+      metric: "hostileCount",
+      value: metrics.hostileCount,
+      threshold: SIGNAL_THRESHOLDS.hostileCount.alert,
+      severity: "alert",
+      timestamp,
+    });
+  }
+
+  // Anomaly detection - significant energy drop
+  if (deltas.energyDelta && deltas.energyDelta < -10000) {
+    events.push({
+      type: "ANOMALY",
+      metric: "energyDelta",
+      value: deltas.energyDelta,
+      baseline: 0,
+      description: "Significant energy drop detected",
+      timestamp,
+    });
+  }
+
+  // Trend change - energy consistently declining
+  if (baseline?.energyTrend === "declining" && deltas.energyDelta < 0) {
+    events.push({
+      type: "TREND_CHANGE",
+      metric: "energyStored",
+      value: metrics.energyStored,
+      trend: "declining",
+      description: "Sustained energy decline",
+      timestamp,
+    });
+  }
+
+  return events;
+}
+
+/**
+ * Get previous snapshot for delta computation
+ */
+async function getPreviousSnapshot(roomName) {
+  try {
+    const response = await docClient.send(new QueryCommand({
+      TableName: SNAPSHOTS_TABLE,
+      KeyConditionExpression: "roomName = :room",
+      ExpressionAttributeValues: { ":room": roomName },
+      ScanIndexForward: false,
+      Limit: 1,
+    }));
+    return response.Items?.[0] || null;
+  } catch (error) {
+    console.log("Failed to get previous snapshot:", error.message);
+    return null;
+  }
+}
+
+/**
+ * Store signal metrics and events
+ */
+async function storeSignals(roomName, metrics, deltas, signalEvents, gameTick) {
+  if (!SIGNALS_TABLE) {
+    console.log("SIGNALS_TABLE not configured, skipping signal storage");
+    return;
+  }
+
+  const timestamp = Date.now();
+  const expiresAt = Math.floor(timestamp / 1000) + RETENTION_DAYS * 24 * 60 * 60;
+
+  await docClient.send(new PutCommand({
+    TableName: SIGNALS_TABLE,
+    Item: {
+      roomName,
+      timestamp,
+      expiresAt,
+      gameTick,
+      metrics,
+      deltas,
+      events: signalEvents,
+      eventCount: signalEvents.length,
+    },
+  }));
+
+  console.log(`Stored signals for ${roomName}: ${signalEvents.length} events`);
+}
+
 export async function handler(event) {
   console.log("Data collector starting...");
 
@@ -206,12 +399,35 @@ export async function handler(event) {
       await storeEvents(data.events, data.colonies?.[0]?.roomName);
     }
 
+    // Process signal layer for each colony
+    let totalSignalEvents = 0;
+    for (const colony of data.colonies || []) {
+      // Get previous snapshot for delta computation
+      const previousSnapshot = await getPreviousSnapshot(colony.roomName);
+      const previousMetrics = previousSnapshot ? extractSignalMetrics(previousSnapshot, previousSnapshot.global) : null;
+
+      // Extract current metrics
+      const currentMetrics = extractSignalMetrics(colony, data.global);
+
+      // Compute deltas
+      const deltas = computeDeltas(currentMetrics, previousMetrics);
+
+      // Detect signal events
+      const signalEvents = detectSignalEvents(currentMetrics, deltas, null);
+
+      // Store signals
+      await storeSignals(colony.roomName, currentMetrics, deltas, signalEvents, data.gameTick);
+
+      totalSignalEvents += signalEvents.length;
+    }
+
     return {
       statusCode: 200,
       body: JSON.stringify({
         message: "OK",
         tick: data.gameTick,
         colonies: data.colonies?.length || 0,
+        signalEvents: totalSignalEvents,
       }),
     };
   } catch (error) {

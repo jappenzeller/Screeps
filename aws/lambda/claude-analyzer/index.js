@@ -1,15 +1,22 @@
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 const secretsClient = new SecretsManagerClient({});
+const ddbClient = new DynamoDBClient({});
+const docClient = DynamoDBDocumentClient.from(ddbClient);
+
 const ANTHROPIC_KEY_SECRET = process.env.ANTHROPIC_KEY_SECRET;
+const OBSERVATIONS_TABLE = process.env.OBSERVATIONS_TABLE;
+const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
 
 // Cache for API key
 let cachedApiKey = null;
 
 /**
- * Analyze colony context using Claude API
+ * Analyze colony context using Claude API - generates OBSERVATIONS not recommendations
  * Input: Context object from ContextBuilder
- * Output: Analysis with recommendations
+ * Output: Observations with pattern recognition
  */
 export async function handler(event) {
   console.log("Analyzing context:", JSON.stringify({
@@ -20,7 +27,15 @@ export async function handler(event) {
   }));
 
   const apiKey = await getAnthropicKey();
-  const prompt = buildPrompt(event);
+
+  // Get previous observations for this room (historical context)
+  const previousObservations = await getPreviousObservations(event.roomName, 5);
+
+  // Get recent signal events
+  const recentSignals = await getRecentSignals(event.roomName, 1); // Last hour
+
+  // Build the observation-focused prompt
+  const prompt = buildObservationPrompt(event, previousObservations, recentSignals);
 
   // Call Claude API
   const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -50,15 +65,16 @@ export async function handler(event) {
   const result = await response.json();
   const analysisText = result.content[0]?.text || "";
 
-  // Parse the structured response
-  const analysis = parseAnalysis(analysisText, event);
+  // Parse the observation response
+  const observation = parseObservation(analysisText, event);
 
-  console.log("Analysis complete:", JSON.stringify({
-    recommendationCount: analysis.recommendations.length,
-    urgentCount: analysis.recommendations.filter(r => r.priority === "urgent").length,
+  console.log("Observation complete:", JSON.stringify({
+    observationCount: observation.observations.length,
+    patternCount: observation.patterns?.length || 0,
+    correlationCount: observation.signalCorrelations?.length || 0,
   }));
 
-  return analysis;
+  return observation;
 }
 
 /**
@@ -76,112 +92,189 @@ async function getAnthropicKey() {
 }
 
 /**
- * Build the analysis prompt for Claude
+ * Get previous observations for historical context
  */
-function buildPrompt(context) {
-  const { roomName, triggerType, currentState, history, knowledge, trigger } = context;
+async function getPreviousObservations(roomName, limit) {
+  if (!OBSERVATIONS_TABLE) return [];
 
-  return `You are an AI advisor for a Screeps colony (room ${roomName}). Analyze the current state and provide actionable recommendations.
+  try {
+    const response = await docClient.send(new QueryCommand({
+      TableName: OBSERVATIONS_TABLE,
+      KeyConditionExpression: "roomName = :room",
+      ExpressionAttributeValues: { ":room": roomName },
+      ScanIndexForward: false,
+      Limit: limit,
+    }));
+    return response.Items || [];
+  } catch (error) {
+    console.log("Failed to get previous observations:", error.message);
+    return [];
+  }
+}
 
-## Current State
-- Phase: ${currentState?.phase || "UNKNOWN"}
-- Health Score: ${currentState?.health?.score || 0}/100
-- Issues: ${currentState?.health?.issues?.join(", ") || "None"}
+/**
+ * Get recent signal events
+ */
+async function getRecentSignals(roomName, hours) {
+  if (!SIGNALS_TABLE) return [];
 
-## Snapshot Data
+  try {
+    const since = Date.now() - hours * 60 * 60 * 1000;
+    const response = await docClient.send(new QueryCommand({
+      TableName: SIGNALS_TABLE,
+      KeyConditionExpression: "roomName = :room AND #ts > :since",
+      ExpressionAttributeNames: { "#ts": "timestamp" },
+      ExpressionAttributeValues: {
+        ":room": roomName,
+        ":since": since,
+      },
+      ScanIndexForward: false,
+      Limit: 10,
+    }));
+
+    // Flatten to just the events
+    const events = [];
+    for (const item of response.Items || []) {
+      if (item.events) {
+        events.push(...item.events);
+      }
+    }
+    return events;
+  } catch (error) {
+    console.log("Failed to get recent signals:", error.message);
+    return [];
+  }
+}
+
+/**
+ * Build the observation-focused prompt for Claude
+ */
+function buildObservationPrompt(context, previousObservations, recentSignals) {
+  const { roomName, currentState, history, trigger } = context;
+
+  // Format previous observations
+  const prevObsText = previousObservations.length > 0
+    ? previousObservations.map(obs => `
+### ${new Date(obs.timestamp).toISOString()}
+${(obs.observations || []).map(o => `- [${o.category}] ${o.summary}`).join('\n')}
+${obs.patterns ? `Patterns noted: ${obs.patterns.map(p => p.description).join(', ')}` : ''}`).join('\n')
+    : "No previous observations.";
+
+  // Format signal events
+  const signalsText = recentSignals.length > 0
+    ? recentSignals.map(e => `- ${e.type}: ${e.metric} = ${e.value}${e.threshold ? ` (threshold: ${e.threshold})` : ''}${e.description ? ` - ${e.description}` : ''}`).join('\n')
+    : "No recent signal events.";
+
+  return `You are building a historical record of observations for a Screeps colony (room ${roomName}).
+
+## Current Colony Snapshot
+\`\`\`json
 ${JSON.stringify(currentState?.snapshot || {}, null, 2)}
+\`\`\`
+
+## Recent Signal Events
+${signalsText}
+
+## Your Previous Observations
+${prevObsText}
 
 ## Recent Trends
 ${JSON.stringify(history?.trends || {}, null, 2)}
 
-## Historical Summary
-${JSON.stringify(history?.recentSnapshots || {}, null, 2)}
+## Task
 
-## Trigger Event
-- Type: ${triggerType}
-- Details: ${JSON.stringify(trigger?.detail || {}, null, 2)}
+Analyze the current snapshot. You are building a historical record of observations - NOT generating recommendations.
 
-## Previous Recommendations Summary
-${JSON.stringify(knowledge?.previousRecommendations || {}, null, 2)}
+1. **What do you notice?** List observations by category. Be specific - reference creep names, positions, IDs, exact numbers.
 
-## Relevant Knowledge Patterns
-${JSON.stringify(knowledge?.relevantPatterns || [], null, 2)}
+2. **What's changed?** Compare to your previous observations. Note improvements, regressions, or new issues.
 
----
+3. **What patterns are emerging?** If you've noted something similar before, track it as a pattern with its trend (stable, improving, worsening, resolved).
 
-Based on this analysis, provide recommendations in the following JSON format:
+4. **Signal correlations?** Do any of your observations explain or relate to the signal events?
 
-\`\`\`json
+Respond ONLY with valid JSON (no markdown code blocks):
 {
-  "summary": "Brief overall assessment (1-2 sentences)",
-  "recommendations": [
+  "observations": [
     {
-      "type": "economy|defense|progression|optimization",
-      "priority": "urgent|high|medium|low",
-      "title": "Short title",
-      "description": "Detailed description of what to do",
-      "expectedOutcome": "What metrics should improve",
-      "checkAfterMinutes": 30
+      "category": "economy|population|behavior|infrastructure|defense|anomaly",
+      "summary": "Brief one-line summary",
+      "details": "Detailed explanation with specific references",
+      "confidence": 0.0-1.0,
+      "relatedEntities": ["CREEP_NAME", "structure_id", "25,30"]
     }
   ],
-  "metrics_to_watch": ["metric1", "metric2"]
-}
-\`\`\`
-
-Focus on:
-1. Immediate issues that need attention (if any)
-2. Optimization opportunities based on trends
-3. Phase-appropriate advice (${currentState?.phase})
-4. Learning from previous recommendation outcomes
-
-Provide 1-3 specific, actionable recommendations. Be concise.`;
+  "patterns": [
+    {
+      "description": "Pattern description",
+      "trend": "stable|improving|worsening|resolved",
+      "firstSeen": null,
+      "occurrences": 1,
+      "evidence": "What you're seeing that indicates this pattern"
+    }
+  ],
+  "signalCorrelations": [
+    {
+      "metric": "metric_name",
+      "observation": "Which observation this relates to",
+      "hypothesis": "Why you think they're correlated"
+    }
+  ],
+  "summary": "2-3 sentence overall assessment of colony state"
+}`;
 }
 
 /**
- * Parse Claude's response into structured format
+ * Parse Claude's response into structured observation format
  */
-function parseAnalysis(text, context) {
+function parseObservation(text, context) {
+  const snapshotHash = JSON.stringify(context.currentState?.snapshot || {}).length.toString();
+
   try {
-    // Extract JSON from the response
-    const jsonMatch = text.match(/```json\n?([\s\S]*?)\n?```/);
+    // Try to parse directly as JSON
+    let parsed;
+
+    // Check if wrapped in code blocks
+    const jsonMatch = text.match(/```(?:json)?\n?([\s\S]*?)\n?```/);
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[1]);
-      return {
-        roomName: context.roomName,
-        timestamp: Date.now(),
-        triggerType: context.triggerType,
-        ...parsed,
-      };
+      parsed = JSON.parse(jsonMatch[1]);
+    } else {
+      parsed = JSON.parse(text);
     }
 
-    // Try to parse the entire response as JSON
-    const parsed = JSON.parse(text);
     return {
+      id: `${context.roomName}_${Date.now()}`,
       roomName: context.roomName,
       timestamp: Date.now(),
-      triggerType: context.triggerType,
-      ...parsed,
+      snapshotTick: context.currentState?.snapshot?.gameTick || 0,
+      snapshotHash,
+      observations: parsed.observations || [],
+      patterns: parsed.patterns || [],
+      signalCorrelations: parsed.signalCorrelations || [],
+      summary: parsed.summary || "Analysis completed",
     };
   } catch (error) {
     console.error("Failed to parse Claude response:", error);
 
-    // Return a basic structure with the raw text
+    // Return a fallback observation
     return {
+      id: `${context.roomName}_${Date.now()}`,
       roomName: context.roomName,
       timestamp: Date.now(),
-      triggerType: context.triggerType,
-      summary: "Analysis completed but response parsing failed",
-      recommendations: [
+      snapshotTick: context.currentState?.snapshot?.gameTick || 0,
+      snapshotHash,
+      observations: [
         {
-          type: "optimization",
-          priority: "low",
-          title: "Manual Review Needed",
-          description: text.substring(0, 500),
-          expectedOutcome: "Unknown",
-          checkAfterMinutes: 60,
+          category: "anomaly",
+          summary: "Response parsing failed",
+          details: text.substring(0, 500),
+          confidence: 0.5,
+          relatedEntities: [],
         },
       ],
-      metrics_to_watch: [],
+      patterns: [],
+      signalCorrelations: [],
+      summary: "Analysis completed but response parsing failed",
       rawResponse: text,
     };
   }

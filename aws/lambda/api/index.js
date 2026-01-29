@@ -9,6 +9,8 @@ const secretsClient = new SecretsManagerClient({});
 const SNAPSHOTS_TABLE = process.env.SNAPSHOTS_TABLE;
 const EVENTS_TABLE = process.env.EVENTS_TABLE;
 const RECOMMENDATIONS_TABLE = process.env.RECOMMENDATIONS_TABLE;
+const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
+const OBSERVATIONS_TABLE = process.env.OBSERVATIONS_TABLE;
 const SCREEPS_TOKEN_SECRET = process.env.SCREEPS_TOKEN_SECRET;
 const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
 
@@ -348,6 +350,227 @@ async function submitFeedback(recommendationId, feedback) {
   return { success: true };
 }
 
+// ==================== Signal Layer Endpoints ====================
+
+async function getSignals(roomName, hours = 24) {
+  if (!SIGNALS_TABLE) {
+    return { error: "Signals table not configured" };
+  }
+
+  const since = Date.now() - (hours * 60 * 60 * 1000);
+
+  const response = await docClient.send(new QueryCommand({
+    TableName: SIGNALS_TABLE,
+    KeyConditionExpression: 'roomName = :room AND #ts > :since',
+    ExpressionAttributeNames: { '#ts': 'timestamp' },
+    ExpressionAttributeValues: { ':room': roomName, ':since': since },
+    ScanIndexForward: true,
+  }));
+
+  const items = response.Items || [];
+
+  // Extract all events
+  const events = [];
+  for (const item of items) {
+    if (item.events) {
+      events.push(...item.events.map(e => ({
+        ...e,
+        gameTick: item.gameTick,
+        snapshotTimestamp: item.timestamp,
+      })));
+    }
+  }
+
+  // Compute trends from metrics
+  const trends = computeTrends(items);
+
+  return {
+    roomName,
+    hours,
+    dataPoints: items.length,
+    events,
+    eventCount: events.length,
+    trends,
+    latestMetrics: items.length > 0 ? items[items.length - 1].metrics : null,
+  };
+}
+
+function computeTrends(items) {
+  if (items.length < 2) return {};
+
+  const first = items[0].metrics || {};
+  const last = items[items.length - 1].metrics || {};
+
+  const trends = {};
+  const keys = new Set([...Object.keys(first), ...Object.keys(last)]);
+
+  for (const key of keys) {
+    const firstVal = first[key];
+    const lastVal = last[key];
+
+    if (typeof firstVal === 'number' && typeof lastVal === 'number') {
+      const delta = lastVal - firstVal;
+      const percentChange = firstVal !== 0 ? (delta / firstVal) * 100 : 0;
+
+      trends[key] = {
+        start: firstVal,
+        end: lastVal,
+        delta,
+        percentChange: Math.round(percentChange * 10) / 10,
+        trend: delta > 0 ? 'increasing' : delta < 0 ? 'decreasing' : 'stable',
+      };
+    }
+  }
+
+  return trends;
+}
+
+async function getSignalEvents(roomName, hours = 24) {
+  if (!SIGNALS_TABLE) {
+    return { error: "Signals table not configured" };
+  }
+
+  const since = Date.now() - (hours * 60 * 60 * 1000);
+
+  const response = await docClient.send(new QueryCommand({
+    TableName: SIGNALS_TABLE,
+    KeyConditionExpression: 'roomName = :room AND #ts > :since',
+    ExpressionAttributeNames: { '#ts': 'timestamp' },
+    ExpressionAttributeValues: { ':room': roomName, ':since': since },
+    ScanIndexForward: false,
+  }));
+
+  // Flatten and return only events
+  const events = [];
+  for (const item of response.Items || []) {
+    if (item.events && item.events.length > 0) {
+      events.push(...item.events.map(e => ({
+        ...e,
+        gameTick: item.gameTick,
+        snapshotTimestamp: item.timestamp,
+      })));
+    }
+  }
+
+  return {
+    roomName,
+    hours,
+    events,
+    eventCount: events.length,
+  };
+}
+
+// ==================== Observation Layer Endpoints ====================
+
+async function getObservations(roomName, limit = 10) {
+  if (!OBSERVATIONS_TABLE) {
+    return { error: "Observations table not configured" };
+  }
+
+  const response = await docClient.send(new QueryCommand({
+    TableName: OBSERVATIONS_TABLE,
+    KeyConditionExpression: 'roomName = :room',
+    ExpressionAttributeValues: { ':room': roomName },
+    ScanIndexForward: false,
+    Limit: limit,
+  }));
+
+  return {
+    roomName,
+    observations: response.Items || [],
+    count: response.Items?.length || 0,
+  };
+}
+
+async function getPatterns(roomName) {
+  if (!OBSERVATIONS_TABLE) {
+    return { error: "Observations table not configured" };
+  }
+
+  // Get recent observations to aggregate patterns
+  const response = await docClient.send(new QueryCommand({
+    TableName: OBSERVATIONS_TABLE,
+    KeyConditionExpression: 'roomName = :room',
+    ExpressionAttributeValues: { ':room': roomName },
+    ScanIndexForward: false,
+    Limit: 20,
+  }));
+
+  // Aggregate patterns across observations
+  const patternMap = new Map();
+
+  for (const obs of response.Items || []) {
+    for (const pattern of obs.patterns || []) {
+      const key = pattern.description;
+      if (!patternMap.has(key)) {
+        patternMap.set(key, {
+          description: pattern.description,
+          trend: pattern.trend,
+          firstSeen: obs.timestamp,
+          lastSeen: obs.timestamp,
+          occurrences: 1,
+          evidence: [pattern.evidence],
+        });
+      } else {
+        const existing = patternMap.get(key);
+        existing.lastSeen = Math.max(existing.lastSeen, obs.timestamp);
+        existing.firstSeen = Math.min(existing.firstSeen, obs.timestamp);
+        existing.occurrences++;
+        existing.trend = pattern.trend; // Use most recent trend
+        if (pattern.evidence && !existing.evidence.includes(pattern.evidence)) {
+          existing.evidence.push(pattern.evidence);
+        }
+      }
+    }
+  }
+
+  return {
+    roomName,
+    patterns: Array.from(patternMap.values()).sort((a, b) => b.occurrences - a.occurrences),
+    patternCount: patternMap.size,
+  };
+}
+
+async function searchObservations(roomName, query) {
+  if (!OBSERVATIONS_TABLE) {
+    return { error: "Observations table not configured" };
+  }
+
+  const response = await docClient.send(new QueryCommand({
+    TableName: OBSERVATIONS_TABLE,
+    KeyConditionExpression: 'roomName = :room',
+    ExpressionAttributeValues: { ':room': roomName },
+    ScanIndexForward: false,
+    Limit: 50,
+  }));
+
+  const queryLower = query.toLowerCase();
+  const matches = [];
+
+  for (const obs of response.Items || []) {
+    for (const observation of obs.observations || []) {
+      if (
+        observation.summary?.toLowerCase().includes(queryLower) ||
+        observation.details?.toLowerCase().includes(queryLower) ||
+        observation.relatedEntities?.some(e => e.toLowerCase().includes(queryLower))
+      ) {
+        matches.push({
+          timestamp: obs.timestamp,
+          gameTick: obs.snapshotTick,
+          ...observation,
+        });
+      }
+    }
+  }
+
+  return {
+    roomName,
+    query,
+    matches,
+    matchCount: matches.length,
+  };
+}
+
 export async function handler(event) {
   console.log('API request:', event.routeKey, event.pathParameters);
 
@@ -392,6 +615,27 @@ export async function handler(event) {
     // Diagnostics endpoint (creep and structure state for debugging)
     else if (path === 'GET /diagnostics/{roomName}') {
       result = await getDiagnostics(params.roomName);
+    }
+    // Signal layer endpoints
+    else if (path === 'GET /signals/{roomName}') {
+      const hours = parseInt(query.hours) || 24;
+      result = await getSignals(params.roomName, hours);
+    }
+    else if (path === 'GET /signals/{roomName}/events') {
+      const hours = parseInt(query.hours) || 24;
+      result = await getSignalEvents(params.roomName, hours);
+    }
+    // Observation layer endpoints
+    else if (path === 'GET /observations/{roomName}') {
+      const limit = parseInt(query.limit) || 10;
+      result = await getObservations(params.roomName, limit);
+    }
+    else if (path === 'GET /observations/{roomName}/patterns') {
+      result = await getPatterns(params.roomName);
+    }
+    else if (path === 'GET /observations/{roomName}/search') {
+      const q = query.q || '';
+      result = await searchObservations(params.roomName, q);
     }
     else {
       return {

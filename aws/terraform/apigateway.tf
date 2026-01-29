@@ -71,6 +71,38 @@ resource "aws_apigatewayv2_route" "get_room_data" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+# Signal layer routes
+resource "aws_apigatewayv2_route" "get_signals" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /signals/{roomName}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_signal_events" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /signals/{roomName}/events"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+# Observation layer routes
+resource "aws_apigatewayv2_route" "get_observations" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /observations/{roomName}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_patterns" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /observations/{roomName}/patterns"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "search_observations" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /observations/{roomName}/search"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"

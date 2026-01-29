@@ -17,10 +17,11 @@ resource "aws_lambda_function" "data_collector" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_SNAPSHOTS  = aws_dynamodb_table.colony_snapshots.name
-      DYNAMODB_TABLE_EVENTS     = aws_dynamodb_table.colony_events.name
-      SCREEPS_TOKEN_SECRET_ARN  = aws_secretsmanager_secret.screeps_token.arn
-      SCREEPS_SHARD             = var.screeps_shard
+      SNAPSHOTS_TABLE       = aws_dynamodb_table.colony_snapshots.name
+      EVENTS_TABLE          = aws_dynamodb_table.colony_events.name
+      SIGNALS_TABLE         = aws_dynamodb_table.signals.name
+      SCREEPS_TOKEN_SECRET  = aws_secretsmanager_secret.screeps_token.arn
+      SCREEPS_SHARD         = var.screeps_shard
     }
   }
 }
@@ -44,9 +45,10 @@ resource "aws_lambda_function" "analysis_engine" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_SNAPSHOTS      = aws_dynamodb_table.colony_snapshots.name
-      DYNAMODB_TABLE_RECOMMENDATIONS = aws_dynamodb_table.recommendations.name
-      ANTHROPIC_KEY_SECRET_ARN      = aws_secretsmanager_secret.anthropic_key.arn
+      SNAPSHOTS_TABLE       = aws_dynamodb_table.colony_snapshots.name
+      OBSERVATIONS_TABLE    = aws_dynamodb_table.observations.name
+      SIGNALS_TABLE         = aws_dynamodb_table.signals.name
+      ANTHROPIC_KEY_SECRET  = aws_secretsmanager_secret.anthropic_key.arn
     }
   }
 }
@@ -70,11 +72,38 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_SNAPSHOTS       = aws_dynamodb_table.colony_snapshots.name
-      DYNAMODB_TABLE_EVENTS          = aws_dynamodb_table.colony_events.name
-      DYNAMODB_TABLE_RECOMMENDATIONS = aws_dynamodb_table.recommendations.name
-      SCREEPS_TOKEN_SECRET           = aws_secretsmanager_secret.screeps_token.arn
-      SCREEPS_SHARD                  = var.screeps_shard
+      SNAPSHOTS_TABLE       = aws_dynamodb_table.colony_snapshots.name
+      EVENTS_TABLE          = aws_dynamodb_table.colony_events.name
+      RECOMMENDATIONS_TABLE = aws_dynamodb_table.recommendations.name
+      SIGNALS_TABLE         = aws_dynamodb_table.signals.name
+      OBSERVATIONS_TABLE    = aws_dynamodb_table.observations.name
+      SCREEPS_TOKEN_SECRET  = aws_secretsmanager_secret.screeps_token.arn
+      SCREEPS_SHARD         = var.screeps_shard
+    }
+  }
+}
+
+# Observation Writer Lambda
+data "archive_file" "observation_writer" {
+  type        = "zip"
+  source_dir  = "${path.module}/../lambda/observation-writer"
+  output_path = "${path.module}/builds/observation-writer.zip"
+}
+
+resource "aws_lambda_function" "observation_writer" {
+  function_name    = "screeps-observation-writer-${var.environment}"
+  filename         = data.archive_file.observation_writer.output_path
+  source_code_hash = data.archive_file.observation_writer.output_base64sha256
+  role             = aws_iam_role.observation_writer.arn
+  handler          = "index.handler"
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+
+  environment {
+    variables = {
+      OBSERVATIONS_TABLE = aws_dynamodb_table.observations.name
+      RETENTION_DAYS     = "30"
     }
   }
 }
