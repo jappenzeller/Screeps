@@ -32,7 +32,10 @@ const ROAD_OPTS_DELIVER: MoveToOpts = {
 
 /**
  * Attempt opportunistic renewal when adjacent to spawn.
- * Returns true if renewal happened (creep spent tick renewing).
+ * Returns true if renewal happened or waiting (creep should stay).
+ *
+ * Cooldown only applies when NOT adjacent to spawn - this prevents
+ * oscillation during travel, but allows consecutive renews at spawn.
  */
 function tryRenew(creep: Creep): boolean {
   // Skip if TTL is healthy
@@ -40,11 +43,28 @@ function tryRenew(creep: Creep): boolean {
     return false;
   }
 
-  // Skip if on cooldown (prevents oscillation)
-  const lastRenew = creep.memory._lastRenewTick || 0;
-  if (Game.time - lastRenew < RENEW_COOLDOWN) {
+  // Find spawn first - need to know range before cooldown check
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return false;
+
+  const range = creep.pos.getRangeTo(spawn);
+
+  // Cooldown only applies when NOT adjacent
+  // This prevents oscillation during travel, but allows consecutive renews at spawn
+  if (range > 1) {
+    const lastRenew = creep.memory._lastRenewTick || 0;
+    if (Game.time - lastRenew < RENEW_COOLDOWN) {
+      return false;
+    }
+    // Reset renew ticks when we leave spawn
+    if (creep.memory._renewTicks && creep.memory._renewTicks > 0) {
+      creep.memory._renewTicks = 0;
+    }
+    // Not adjacent and not on cooldown - don't divert, just skip
     return false;
   }
+
+  // --- Adjacent to spawn (range <= 1) ---
 
   // Track consecutive renew ticks to prevent blocking spawn too long
   const renewTicks = creep.memory._renewTicks || 0;
@@ -55,20 +75,12 @@ function tryRenew(creep: Creep): boolean {
     return false;
   }
 
-  // Must be adjacent to spawn (don't path to it specifically for renewal)
-  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
-  if (!spawn || creep.pos.getRangeTo(spawn) > 1) {
-    // Reset renew ticks when we leave spawn
-    if (renewTicks > 0) {
-      creep.memory._renewTicks = 0;
-    }
-    return false;
-  }
-
   // Check spawn availability - don't block spawn unless critical
   const isCritical = creep.ticksToLive < RENEW_CRITICAL_TTL;
   if (spawn.spawning && !isCritical) {
-    return false;
+    // Wait for spawn to be free - stay here, don't continue delivering
+    creep.say("⏳");
+    return true;
   }
 
   // Check if we have enough energy to renew
@@ -80,7 +92,6 @@ function tryRenew(creep: Creep): boolean {
   // Attempt renewal
   const result = spawn.renewCreep(creep);
   if (result === OK) {
-    creep.memory._lastRenewTick = Game.time;
     creep.memory._renewTicks = renewTicks + 1;
     creep.say("♻️ " + creep.ticksToLive);
     return true;
