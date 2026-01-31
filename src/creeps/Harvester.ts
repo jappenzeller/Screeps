@@ -1,5 +1,6 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { smartMoveTo } from "../utils/movement";
+import { shouldEmergencyRenew } from "../managers/RenewalManager";
 
 /**
  * Harvester: Worker that harvests energy and delivers to spawn/extensions.
@@ -7,6 +8,17 @@ import { smartMoveTo } from "../utils/movement";
  * Late game: If container at source, becomes static miner (sits on container)
  */
 export function runHarvester(creep: Creep): void {
+  // Emergency renewal check - only for critical, dying harvesters that are the last one
+  if (shouldEmergencyRenew(creep)) {
+    const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
+    if (spawn && !creep.pos.isNearTo(spawn)) {
+      creep.say("♻️ EMG");
+      smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 3 });
+      return;
+    }
+    // If near spawn, continue normal work - RenewalManager will handle it
+  }
+
   const manager = ColonyManager.getInstance(creep.memory.room);
 
   // Task tracking

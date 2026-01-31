@@ -30,6 +30,10 @@ interface CreepMemory {
   _lastPos?: string;
   _stuckCount?: number;
 
+  // Hauler container coordination
+  primaryContainer?: Id<StructureContainer>;
+  _lastContainerSwitch?: number;
+
   // Legacy support
   working?: boolean;
 }

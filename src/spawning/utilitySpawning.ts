@@ -553,6 +553,9 @@ function remoteHaulerUtility(deficit: number, state: ColonyState): number {
 /**
  * Remote defender utility - based on squad needs from RemoteSquadManager
  * Uses squad-based spawning to coordinate attacks against healer-supported invaders
+ *
+ * CRITICAL: When threats exist, defenders MUST spawn before other remote roles.
+ * Defense is not optional - losing miners/haulers to invaders is expensive.
  */
 function remoteDefenderUtility(state: ColonyState): number {
   if (state.rcl < 4) return 0;
@@ -572,12 +575,19 @@ function remoteDefenderUtility(state: ColonyState): number {
 
   if (totalNeeded === 0) return 0;
 
-  // Base utility scales with number of defenders needed
-  let utility = totalNeeded * 45;
+  // CRITICAL: Defense utility must be VERY HIGH to override other roles
+  // When threats exist, spawning defenders is more important than:
+  // - Additional remote haulers (35 base)
+  // - Remote miners (40 base)
+  // - Reservers (25 base)
+  // Only harvesters (100) and haulers (90) in emergency should beat this
+  const DEFENSE_PRIORITY = 150;
 
-  // Reduce if economy is struggling
-  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
-  utility *= incomeRatio;
+  // Scale with number of defenders needed, but minimum is still very high
+  const utility = DEFENSE_PRIORITY + (totalNeeded - 1) * 50;
+
+  // DO NOT reduce based on economy - defense is critical regardless of income
+  // Losing miners to invaders costs more than the defender spawn cost
 
   return utility;
 }

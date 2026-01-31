@@ -21,6 +21,7 @@ import { RemoteContainerPlanner } from "./core/RemoteContainerPlanner";
 import { RemoteSquadManager } from "./defense/RemoteSquadManager";
 import { gatherRoomIntel } from "./creeps/Scout";
 import { trackEnergyFlow } from "./utils/metrics";
+import { RenewalManager } from "./managers/RenewalManager";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -89,20 +90,26 @@ function runRoom(room: Room): void {
   // 2. Place construction sites (simple, direct)
   placeStructures(room);
 
-  // 3. Spawn creeps
-  spawnCreeps(room);
+  // 3. Opportunistic creep renewal (before spawn decisions)
+  const renewalManager = new RenewalManager(room);
+  const isRenewing = renewalManager.run();
 
-  // 4. Run towers
+  // 4. Spawn creeps (skip if actively renewing)
+  if (!isRenewing) {
+    spawnCreeps(room);
+  }
+
+  // 5. Run towers
   const towerManager = new TowerManager(room);
   towerManager.run();
 
-  // 5. Run links (RCL 5+)
+  // 6. Run links (RCL 5+)
   if (room.controller && room.controller.level >= 5) {
     const linkManager = new LinkManager(room);
     linkManager.run();
   }
 
-  // 6. Traffic monitoring - record every tick
+  // 7. Traffic monitoring - record every tick
   const trafficMonitor = new TrafficMonitor(room);
   trafficMonitor.recordTick();
 
@@ -111,19 +118,19 @@ function runRoom(room: Room): void {
     trafficMonitor.visualize();
   }
 
-  // 7. Smart road planning - every 100 ticks
+  // 8. Smart road planning - every 100 ticks
   if (Game.time % 100 === 0) {
     const roadPlanner = new SmartRoadPlanner(room);
     roadPlanner.run();
   }
 
-  // 8. Remote container planning - every 100 ticks
+  // 9. Remote container planning - every 100 ticks
   if (Game.time % 100 === 0) {
     const containerPlanner = new RemoteContainerPlanner(room);
     containerPlanner.run();
   }
 
-  // 9. Remote squad management (RCL 4+)
+  // 10. Remote squad management (RCL 4+)
   if (room.controller && room.controller.level >= 4) {
     const squadManager = new RemoteSquadManager(room);
 

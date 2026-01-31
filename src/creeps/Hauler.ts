@@ -1,13 +1,21 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { smartMoveTo } from "../utils/movement";
+import { shouldEmergencyRenew } from "../managers/RenewalManager";
 
 /**
  * Hauler: Picks up energy from containers/ground and delivers to structures.
- * Simple implementation - no task manager dependency.
+ *
+ * Container Coordination:
+ * - Each hauler has a primary container assignment to prevent oscillation
+ * - Haulers wait at their container if a miner is present (energy coming)
+ * - Container switching has a cooldown to prevent rapid oscillation
  */
 
+// Anti-oscillation cooldown (ticks)
+const CONTAINER_SWITCH_COOLDOWN = 50;
+
 function moveOffRoad(creep: Creep): void {
-  const onRoad = creep.pos.lookFor(LOOK_STRUCTURES).some(s => s.structureType === STRUCTURE_ROAD);
+  const onRoad = creep.pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_ROAD);
   if (!onRoad) return;
 
   const terrain = creep.room.getTerrain();
@@ -21,10 +29,15 @@ function moveOffRoad(creep: Creep): void {
         const y = creep.pos.y + dy;
         if (x < 1 || x > 48 || y < 1 || y > 48) continue;
         if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
-        const hasRoad = creep.room.lookForAt(LOOK_STRUCTURES, x, y).some(s => s.structureType === STRUCTURE_ROAD);
+        const hasRoad = creep.room
+          .lookForAt(LOOK_STRUCTURES, x, y)
+          .some((s) => s.structureType === STRUCTURE_ROAD);
         const hasCreep = creep.room.lookForAt(LOOK_CREEPS, x, y).length > 0;
         if (!hasRoad && !hasCreep) {
-          smartMoveTo(creep, new RoomPosition(x, y, creep.room.name), { visualizePathStyle: { stroke: "#888888" }, reusePath: 3 });
+          smartMoveTo(creep, new RoomPosition(x, y, creep.room.name), {
+            visualizePathStyle: { stroke: "#888888" },
+            reusePath: 3,
+          });
           return;
         }
       }
@@ -32,7 +45,223 @@ function moveOffRoad(creep: Creep): void {
   }
 }
 
+/**
+ * Assign a primary container to this hauler
+ * Picks the least-covered source container
+ */
+function assignPrimaryContainer(creep: Creep): Id<StructureContainer> | null {
+  const room = creep.room;
+
+  // Find source containers
+  const sourceContainers = room.find(FIND_STRUCTURES, {
+    filter: (s) =>
+      s.structureType === STRUCTURE_CONTAINER &&
+      s.pos.findInRange(FIND_SOURCES, 2).length > 0,
+  }) as StructureContainer[];
+
+  if (sourceContainers.length === 0) return null;
+
+  // Count haulers assigned to each container
+  const assignments: Record<string, number> = {};
+  for (const container of sourceContainers) {
+    assignments[container.id] = 0;
+  }
+
+  for (const hauler of Object.values(Game.creeps)) {
+    if (hauler.memory.role !== "HAULER") continue;
+    if (hauler.memory.room !== room.name) continue;
+    if (hauler.name === creep.name) continue;
+
+    const primary = hauler.memory.primaryContainer as string | undefined;
+    if (primary && assignments[primary] !== undefined) {
+      assignments[primary]++;
+    }
+  }
+
+  // Assign to least-covered container
+  let bestContainer: StructureContainer | null = null;
+  let minAssignments = Infinity;
+
+  for (const container of sourceContainers) {
+    const count = assignments[container.id] || 0;
+    if (count < minAssignments) {
+      minAssignments = count;
+      bestContainer = container;
+    }
+  }
+
+  return bestContainer?.id || null;
+}
+
+/**
+ * Find a container that has energy or an active miner
+ * Excludes specified container ID
+ */
+function findActiveContainer(
+  creep: Creep,
+  excludeId: Id<StructureContainer> | null
+): StructureContainer | null {
+  const containers = creep.room.find(FIND_STRUCTURES, {
+    filter: (s) =>
+      s.structureType === STRUCTURE_CONTAINER &&
+      s.id !== excludeId &&
+      s.pos.findInRange(FIND_SOURCES, 2).length > 0,
+  }) as StructureContainer[];
+
+  // Prioritize: has energy > has miner > closest
+  return (
+    containers
+      .map((c) => ({
+        container: c,
+        energy: c.store[RESOURCE_ENERGY],
+        hasMiner:
+          c.pos.findInRange(FIND_MY_CREEPS, 1, {
+            filter: (cr) => cr.memory.role === "HARVESTER",
+          }).length > 0,
+        distance: creep.pos.getRangeTo(c),
+      }))
+      .sort((a, b) => {
+        // Has significant energy wins
+        if (a.energy > 100 && b.energy <= 100) return -1;
+        if (b.energy > 100 && a.energy <= 100) return 1;
+
+        // Has miner is next priority
+        if (a.hasMiner && !b.hasMiner) return -1;
+        if (b.hasMiner && !a.hasMiner) return 1;
+
+        // Otherwise closest
+        return a.distance - b.distance;
+      })[0]?.container || null
+  );
+}
+
+/**
+ * Smart collection from containers with affinity and patience
+ * Returns true if handled (collecting or waiting), false if should fallback
+ */
+function collectFromContainers(creep: Creep): boolean {
+  // Ensure we have a primary container assigned
+  if (!creep.memory.primaryContainer) {
+    const assigned = assignPrimaryContainer(creep);
+    if (assigned) {
+      creep.memory.primaryContainer = assigned;
+    }
+  }
+
+  const primaryContainer = creep.memory.primaryContainer
+    ? Game.getObjectById(creep.memory.primaryContainer as Id<StructureContainer>)
+    : null;
+
+  // Check if primary container is valid
+  if (primaryContainer) {
+    const minerNearby =
+      primaryContainer.pos.findInRange(FIND_MY_CREEPS, 1, {
+        filter: (c) => c.memory.role === "HARVESTER",
+      }).length > 0;
+
+    const hasEnergy = primaryContainer.store[RESOURCE_ENERGY] > 0;
+    const isNearby = creep.pos.getRangeTo(primaryContainer) <= 1;
+
+    // If at primary container with miner present, WAIT even if empty
+    if (isNearby && minerNearby && !hasEnergy) {
+      // Stay put - energy coming soon
+      creep.say("⏳");
+      return true; // "Handled" - don't switch
+    }
+
+    // If primary has energy, collect from it
+    if (hasEnergy) {
+      if (isNearby) {
+        creep.withdraw(primaryContainer, RESOURCE_ENERGY);
+      } else {
+        smartMoveTo(creep, primaryContainer, {
+          visualizePathStyle: { stroke: "#ffff00" },
+          reusePath: 5,
+        });
+      }
+      return true;
+    }
+
+    // Primary empty - check if we should switch or go there and wait
+    if (minerNearby) {
+      // Miner present but container empty - go there and wait
+      if (!isNearby) {
+        smartMoveTo(creep, primaryContainer, {
+          visualizePathStyle: { stroke: "#ffff00" },
+          reusePath: 5,
+        });
+      }
+      return true;
+    }
+
+    // No miner at primary - consider switching
+    const lastSwitch = (creep.memory._lastContainerSwitch as number) || 0;
+    if (Game.time - lastSwitch < CONTAINER_SWITCH_COOLDOWN) {
+      // Recently switched, stay patient - go to primary anyway
+      if (!isNearby) {
+        smartMoveTo(creep, primaryContainer, {
+          visualizePathStyle: { stroke: "#888888" },
+          reusePath: 5,
+        });
+      }
+      return true;
+    }
+
+    // Look for better option (container with miner or energy)
+    const betterContainer = findActiveContainer(
+      creep,
+      creep.memory.primaryContainer as Id<StructureContainer>
+    );
+    if (betterContainer) {
+      creep.memory.primaryContainer = betterContainer.id;
+      creep.memory._lastContainerSwitch = Game.time;
+      creep.say("🔄");
+
+      if (creep.pos.isNearTo(betterContainer)) {
+        creep.withdraw(betterContainer, RESOURCE_ENERGY);
+      } else {
+        smartMoveTo(creep, betterContainer, {
+          visualizePathStyle: { stroke: "#ffff00" },
+          reusePath: 5,
+        });
+      }
+      return true;
+    }
+  }
+
+  // No primary or primary invalid - find any active container
+  const anyContainer = findActiveContainer(creep, null);
+  if (anyContainer) {
+    if (!creep.memory.primaryContainer) {
+      creep.memory.primaryContainer = anyContainer.id;
+    }
+
+    if (creep.pos.isNearTo(anyContainer)) {
+      creep.withdraw(anyContainer, RESOURCE_ENERGY);
+    } else {
+      smartMoveTo(creep, anyContainer, {
+        visualizePathStyle: { stroke: "#ffff00" },
+        reusePath: 5,
+      });
+    }
+    return true;
+  }
+
+  return false; // No containers to collect from
+}
+
 export function runHauler(creep: Creep): void {
+  // Emergency renewal check - only for critical, dying haulers that are the last one
+  if (shouldEmergencyRenew(creep)) {
+    const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
+    if (spawn && !creep.pos.isNearTo(spawn)) {
+      creep.say("♻️ EMG");
+      smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 3 });
+      return;
+    }
+    // If near spawn, continue normal work - RenewalManager will handle it
+  }
+
   const manager = ColonyManager.getInstance(creep.memory.room);
 
   // Task tracking
@@ -93,7 +322,7 @@ export function runHauler(creep: Creep): void {
 }
 
 function collect(creep: Creep): void {
-  // Priority 1: Dropped energy (high priority)
+  // Priority 1: Dropped energy (high priority - prevents waste)
   const droppedEnergy = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
     filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
   });
@@ -117,30 +346,9 @@ function collect(creep: Creep): void {
     return;
   }
 
-  // Priority 3: Containers near sources (not near controller)
-  const sourceContainers = creep.room.find(FIND_STRUCTURES, {
-    filter: (s) => {
-      if (s.structureType !== STRUCTURE_CONTAINER) return false;
-      const container = s as StructureContainer;
-      if (container.store[RESOURCE_ENERGY] < 100) return false;
-
-      // Check if near a source (not controller)
-      const nearSource = container.pos.findInRange(FIND_SOURCES, 2).length > 0;
-      return nearSource;
-    },
-  }) as StructureContainer[];
-
-  if (sourceContainers.length > 0) {
-    // Pick the closest one with most energy
-    sourceContainers.sort((a, b) => b.store[RESOURCE_ENERGY] - a.store[RESOURCE_ENERGY]);
-    const target = creep.pos.findClosestByPath(sourceContainers);
-
-    if (target) {
-      if (creep.withdraw(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, target, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
-      }
-      return;
-    }
+  // Priority 3: Smart container collection with affinity
+  if (collectFromContainers(creep)) {
+    return;
   }
 
   // Priority 4: Storage (if has excess)
@@ -152,7 +360,20 @@ function collect(creep: Creep): void {
     return;
   }
 
-  // Nothing to collect - wait near source but off road
+  // Nothing to collect - wait near primary container or source
+  const primaryContainer = creep.memory.primaryContainer
+    ? Game.getObjectById(creep.memory.primaryContainer as Id<StructureContainer>)
+    : null;
+
+  if (primaryContainer) {
+    if (creep.pos.getRangeTo(primaryContainer) > 1) {
+      smartMoveTo(creep, primaryContainer, { visualizePathStyle: { stroke: "#888888" } });
+    } else {
+      moveOffRoad(creep);
+    }
+    return;
+  }
+
   const source = creep.pos.findClosestByPath(FIND_SOURCES);
   if (source && creep.pos.getRangeTo(source) > 3) {
     smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#888888" } });
@@ -171,7 +392,10 @@ function deliver(creep: Creep): void {
 
   if (spawnOrExtension) {
     if (creep.transfer(spawnOrExtension, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, spawnOrExtension, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
+      smartMoveTo(creep, spawnOrExtension, {
+        visualizePathStyle: { stroke: "#ffffff" },
+        reusePath: 5,
+      });
     }
     return;
   }
@@ -200,7 +424,10 @@ function deliver(creep: Creep): void {
 
     if (storageLink) {
       if (creep.transfer(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, storageLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
+        smartMoveTo(creep, storageLink, {
+          visualizePathStyle: { stroke: "#00ffff" },
+          reusePath: 5,
+        });
       }
       return;
     }
@@ -238,7 +465,10 @@ function deliver(creep: Creep): void {
 
     if (controllerContainer) {
       if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, controllerContainer, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
+        smartMoveTo(creep, controllerContainer, {
+          visualizePathStyle: { stroke: "#00ffff" },
+          reusePath: 5,
+        });
       }
       return;
     }
