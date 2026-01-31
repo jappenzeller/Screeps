@@ -424,7 +424,7 @@ terraform init && terraform apply
 
 Always test in simulation first for major changes.
 
-**IMPORTANT**: Always commit changes before deploying to Screeps. Never deploy uncommitted code.
+**IMPORTANT**: After every deployment to Screeps (`npm run push`), immediately commit all changes and push to GitHub. GitHub must always be in sync with what's running on the server. Use a descriptive commit message summarizing the changes.
 
 ---
 
