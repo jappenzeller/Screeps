@@ -30,9 +30,8 @@ interface CreepMemory {
   _lastPos?: string;
   _stuckCount?: number;
 
-  // Hauler container coordination
-  primaryContainer?: Id<StructureContainer>;
-  _lastContainerSwitch?: number;
+  // Hauler container targeting (dynamic per-trip selection)
+  targetContainer?: Id<StructureContainer> | null;
 
   // Remote hauler renewal tracking
   _lastRenewTick?: number;

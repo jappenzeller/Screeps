@@ -39,7 +39,6 @@ type SpawnRole =
   | "RESERVER"
   | "SCOUT"
   | "LINK_FILLER"
-  | "UPGRADE_HAULER"
   | "MINERAL_HARVESTER";
 
 const ALL_ROLES: SpawnRole[] = [
@@ -54,7 +53,6 @@ const ALL_ROLES: SpawnRole[] = [
   "RESERVER",
   "SCOUT",
   "LINK_FILLER",
-  "UPGRADE_HAULER",
   "MINERAL_HARVESTER",
 ];
 
@@ -265,27 +263,14 @@ function getCreepTargets(room: Room): Record<string, number> {
     RESERVER: 0,
     SCOUT: 0,
     LINK_FILLER: 0,
-    UPGRADE_HAULER: 0,
     MINERAL_HARVESTER: 0,
   };
 
-  // Link filler and upgrade hauler at RCL 5+ with storage and links
+  // Link filler at RCL 5+ with storage and links
   if (rcl >= 5 && room.storage && room.storage.store[RESOURCE_ENERGY] > 10000) {
     const linkManager = new LinkManager(room);
     if (linkManager.getStorageLink()) {
       targets.LINK_FILLER = 1;
-    }
-
-    // Upgrade hauler: supplement link transfers when upgraders exceed link throughput
-    const controllerLink = linkManager.getControllerLink();
-    if (controllerLink) {
-      const upgraderWorkParts = Object.values(Game.creeps)
-        .filter((c) => c.memory.role === "UPGRADER" && c.memory.room === room.name)
-        .reduce((sum, c) => sum + c.getActiveBodyparts(WORK), 0);
-      // Link delivers ~35 energy/tick; each WORK part consumes 1/tick
-      if (upgraderWorkParts > 35) {
-        targets.UPGRADE_HAULER = 1;
-      }
     }
   }
 
@@ -355,8 +340,6 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return scoutUtility(effectiveDeficit, state);
     case "LINK_FILLER":
       return linkFillerUtility(effectiveDeficit, state);
-    case "UPGRADE_HAULER":
-      return upgradeHaulerUtility(effectiveDeficit, state);
     case "MINERAL_HARVESTER":
       return mineralHarvesterUtility(effectiveDeficit, state);
     default:
@@ -495,14 +478,19 @@ function builderUtility(deficit: number, state: ColonyState): number {
   const optimal = state.targets.BUILDER || 1;
   const countFactor = roleCountUtility(currentCount, optimal);
 
-  // Factor 4: Site urgency (more sites = higher utility)
+  // Factor 4: First-creep bonus - first builder spawns before second upgrader
+  // count=0: 2.0x, count=1: 0.67x, count=2: 0.4x
+  const firstCreepBonus = 1 / (currentCount + 0.5);
+
+  // Factor 5: Site urgency (more sites = higher utility)
   const siteFactor = Math.min(totalSites / 5, 2);
 
-  // Factor 5: Remote container boost (critical infrastructure)
+  // Factor 6: Remote container boost (critical infrastructure)
   const containerBoost = hasRemoteContainer ? 1.5 : 1;
 
   // Combine factors
-  const multiplier = combineUtilities(storageFactor, sustainFactor, countFactor) * siteFactor * containerBoost;
+  const multiplier =
+    combineUtilities(storageFactor, sustainFactor, countFactor) * siteFactor * containerBoost * firstCreepBonus;
 
   return base * multiplier * deficit;
 }
@@ -651,24 +639,6 @@ function linkFillerUtility(deficit: number, state: ColonyState): number {
 }
 
 /**
- * Upgrade hauler utility - supplements link transfers to controller link
- * Spawns after link filler, before additional upgraders
- */
-function upgradeHaulerUtility(deficit: number, state: ColonyState): number {
-  if (state.rcl < 5) return 0;
-  if (deficit <= 0) return 0;
-
-  // Infrastructure that enables upgrader throughput - between link filler and upgrader
-  let utility = deficit * 55;
-
-  // Scale by economy health
-  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
-  utility *= incomeRatio;
-
-  return utility;
-}
-
-/**
  * Scout utility - luxury role, very low priority
  */
 function scoutUtility(deficit: number, state: ColonyState): number {
@@ -678,11 +648,12 @@ function scoutUtility(deficit: number, state: ColonyState): number {
   // Count rooms needing scan for priority
   const roomsNeedingScan = countRoomsNeedingScan(state.room.name);
 
-  // High utility if many rooms need scanning (initial scouting push)
-  if (roomsNeedingScan > 40) return 12; // Over half of 81 rooms
-  if (roomsNeedingScan > 20) return 8;
-  if (roomsNeedingScan > 10) return 5;
-  if (roomsNeedingScan > 0) return 2;
+  // High utility - scout before second upgrader for intel gathering
+  // Second upgrader typically has utility 15-30, so scout needs to beat that
+  if (roomsNeedingScan > 40) return 35; // Over half of 81 rooms - critical
+  if (roomsNeedingScan > 20) return 28;
+  if (roomsNeedingScan > 10) return 24;
+  if (roomsNeedingScan > 0) return 18; // Even a few rooms warrant scouting
 
   return 0; // All rooms scanned
 }

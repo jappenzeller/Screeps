@@ -180,18 +180,6 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
   },
 
   /**
-   * UPGRADE_HAULER - Supplements link transfers to controller
-   * Balanced for road travel between storage and controller
-   */
-  UPGRADE_HAULER: {
-    pattern: [CARRY, MOVE],
-    maxRepeats: 10,
-    minEnergy: 200,
-    fallback: [CARRY, CARRY, MOVE, MOVE],
-    moveMode: "pattern",
-  },
-
-  /**
    * MINERAL_HARVESTER - Extracts minerals from extractor
    * WORK-heavy with CARRY to deliver to terminal/storage
    * 5 tick cooldown between harvests, so high WORK benefits burst extraction

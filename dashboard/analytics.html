@@ -278,6 +278,12 @@
             });
 
             if (!response.ok) {
+                // 401 means token expired or invalid - redirect to login
+                if (response.status === 401) {
+                    sessionStorage.clear();
+                    showScreen();
+                    throw new Error('Session expired');
+                }
                 const error = await response.text();
                 throw new Error(`API Error: ${response.status} - ${error}`);
             }

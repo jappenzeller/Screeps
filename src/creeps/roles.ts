@@ -10,7 +10,6 @@ import { runReserver } from "./Reserver";
 import { runClaimer } from "./Claimer";
 import { runRemoteDefender } from "./RemoteDefender";
 import { runLinkFiller } from "./LinkFiller";
-import { runUpgradeHauler } from "./UpgradeHauler";
 import { runMineralHarvester } from "./MineralHarvester";
 
 // Body configurations moved to src/spawning/bodyConfig.ts
@@ -31,7 +30,6 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   RESERVER: runReserver,
   CLAIMER: runClaimer,
   LINK_FILLER: runLinkFiller,
-  UPGRADE_HAULER: runUpgradeHauler,
   MINERAL_HARVESTER: runMineralHarvester,
 };
 

@@ -8,17 +8,16 @@ export const CONFIG = {
   SPAWN_PRIORITY: {
     HARVESTER: 1,
     HAULER: 2,
-    UPGRADER: 3,
-    BUILDER: 4,
-    DEFENDER: 5,
-    REMOTE_DEFENDER: 6,
-    RESERVER: 7,
-    REMOTE_MINER: 8,
-    REMOTE_HAULER: 9,
-    SCOUT: 10,
+    SCOUT: 3, // Intel gathering before extra upgraders
+    UPGRADER: 4,
+    BUILDER: 5,
+    DEFENDER: 6,
+    REMOTE_DEFENDER: 7,
+    RESERVER: 8,
+    REMOTE_MINER: 9,
+    REMOTE_HAULER: 10,
     CLAIMER: 11,
     LINK_FILLER: 12,
-    UPGRADE_HAULER: 13,
   } as const,
 
   // Minimum creep counts per room
@@ -81,8 +80,7 @@ export const CONFIG = {
       REMOTE_DEFENDER: 45, // Protect remotes
       RESERVER: 25, // Maintain reservations
       LINK_FILLER: 70, // Infrastructure
-      UPGRADE_HAULER: 55, // Support upgraders
-      SCOUT: 10, // Exploration (luxury)
+      SCOUT: 25, // Intel gathering - spawn before second upgrader
       MINERAL_HARVESTER: 15, // Luxury - future value for labs
     },
 
