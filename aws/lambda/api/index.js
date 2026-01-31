@@ -217,6 +217,7 @@ async function getLiveData(roomName) {
 
     return {
       live: true,
+      requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
       fetchedAt: Date.now(),
       gameTick: data.gameTick,
       timestamp: data.timestamp,
@@ -229,6 +230,7 @@ async function getLiveData(roomName) {
   // Return everything
   return {
     live: true,
+    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
     fetchedAt: Date.now(),
     ...data,
   };
@@ -245,7 +247,12 @@ async function getDiagnostics(roomName) {
   }
 
   if (!data.diagnostics) {
-    return { error: "No diagnostics data available. Ensure bot is exporting diagnostics.", roomName };
+    return {
+      error: "No diagnostics data available",
+      hint: "Ensure bot is exporting diagnostics to segment 90 via AWSExporter",
+      availableKeys: Object.keys(data),
+      roomName,
+    };
   }
 
   const diagnostics = data.diagnostics[roomName];
@@ -258,6 +265,7 @@ async function getDiagnostics(roomName) {
 
   return {
     live: true,
+    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
     fetchedAt: Date.now(),
     gameTick: data.gameTick,
     timestamp: data.timestamp,
@@ -288,6 +296,7 @@ async function getIntel(roomName) {
 
   return {
     live: true,
+    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
     fetchedAt: Date.now(),
     gameTick: data.gameTick,
     ...intel,
@@ -322,6 +331,7 @@ async function getAllIntel(range, homeRoom) {
 
   return {
     live: true,
+    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
     fetchedAt: Date.now(),
     gameTick: data.gameTick,
     homeRoom: homeRoom || data.homeRoom || "E46N37",
@@ -366,6 +376,7 @@ async function getExpansionCandidates(homeRoom) {
 
   return {
     live: true,
+    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
     fetchedAt: Date.now(),
     gameTick: data.gameTick,
     homeRoom: home,
@@ -779,7 +790,9 @@ export async function handler(event) {
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Cache-Control': 'no-store',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0',
   };
 
   try {
