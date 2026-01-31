@@ -4,16 +4,27 @@
  * Replaces static priorities with dynamic utility scoring.
  * Each role's spawn utility is a continuous function of colony state.
  * The spawner always picks the highest utility role.
+ *
+ * Uses modular utility modules from ./utilities/ for calculations.
  */
 
 import { getHostileCount } from "../utils/remoteIntel";
 import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 import { LinkManager } from "../structures/LinkManager";
 import { buildBody as buildBodyFromConfig, ROLE_MIN_COST } from "./bodyBuilder";
+import { CONFIG } from "../config";
+import { combineUtilities } from "../utils/smoothing";
+import {
+  getEnergyState,
+  storageUtility,
+  sustainabilityUtility,
+  rateUtility,
+} from "./utilities/energyUtility";
+import { roleCountUtility, getEffectiveCount } from "./utilities/populationUtility";
 
 // TTL thresholds for proactive replacement spawning
-const DYING_SOON_LOCAL = 100; // Local roles: spawn nearby, 100 ticks is enough
-const DYING_SOON_REMOTE = 200; // Remote roles: need travel time + spawn time buffer
+const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
+const DYING_SOON_REMOTE = CONFIG.SPAWNING.REMOTE_REPLACEMENT_TTL;
 
 // All roles that can be spawned
 type SpawnRole =
@@ -385,29 +396,44 @@ function haulerUtility(deficit: number, state: ColonyState): number {
 }
 
 /**
- * Upgrader utility - scales down when economy is struggling
+ * Upgrader utility - uses modular utility system
+ * Considers storage level, sustainability, energy rate, and population
  */
 function upgraderUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
 
-  // Base utility
-  let utility = deficit * 20;
+  const base = CONFIG.SPAWNING.BASE_UTILITY.UPGRADER;
+  const energy = getEnergyState(state.room);
 
-  // Scale DOWN when economy is struggling
-  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
-  utility *= incomeRatio;
+  // Factor 1: Storage level (smooth scaling)
+  const storageFactor = storageUtility(energy.stored, CONFIG.ENERGY.STORAGE_THRESHOLDS);
 
-  // Boost if we have lots of stored energy
-  if (state.energyStored > 100000) {
-    utility *= 1.5;
-  }
+  // Factor 2: Can we sustain another upgrader?
+  const avgWorkParts = 15; // Estimate for new upgrader
+  const sustainFactor = sustainabilityUtility(
+    energy.upgradeConsumption,
+    avgWorkParts,
+    energy.harvestIncome
+  );
 
-  return utility;
+  // Factor 3: Energy trend (are we gaining or losing?)
+  const rateFactor = rateUtility(energy.rate);
+
+  // Factor 4: Diminishing returns on upgrader count
+  const creeps = Object.values(Game.creeps).filter((c) => c.memory.room === state.room.name);
+  const currentCount = getEffectiveCount(creeps, "UPGRADER", DYING_SOON_LOCAL);
+  const optimal = state.targets.UPGRADER || 2;
+  const countFactor = roleCountUtility(currentCount, optimal);
+
+  // Combine all factors using geometric mean
+  const multiplier = combineUtilities(storageFactor, sustainFactor, rateFactor, countFactor);
+
+  return base * multiplier * deficit;
 }
 
 /**
- * Builder utility - 0 if no construction sites, scales with economy
- * Accounts for remote room construction sites
+ * Builder utility - uses modular utility system
+ * Accounts for remote room construction sites and storage levels
  */
 function builderUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
@@ -431,22 +457,36 @@ function builderUtility(deficit: number, state: ColonyState): number {
 
   if (totalSites === 0) return 0;
 
-  // Base utility
-  let utility = deficit * 25;
+  const base = CONFIG.SPAWNING.BASE_UTILITY.BUILDER;
+  const energy = getEnergyState(state.room);
 
-  // Scale by economy health
-  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
-  utility *= incomeRatio;
+  // Factor 1: Storage level (smooth scaling)
+  const storageFactor = storageUtility(energy.stored, CONFIG.ENERGY.STORAGE_THRESHOLDS);
 
-  // More sites = more urgency
-  utility *= Math.min(totalSites / 5, 2);
+  // Factor 2: Can we sustain another builder?
+  const avgWorkParts = 5; // Builders use ~2.5 energy/tick when active
+  const sustainFactor = sustainabilityUtility(
+    energy.builderConsumption,
+    avgWorkParts * 0.5, // 50% uptime estimate
+    energy.harvestIncome
+  );
 
-  // Extra boost for remote containers (critical for remote mining)
-  if (hasRemoteContainer) {
-    utility *= 1.5;
-  }
+  // Factor 3: Population diminishing returns
+  const creeps = Object.values(Game.creeps).filter((c) => c.memory.room === state.room.name);
+  const currentCount = getEffectiveCount(creeps, "BUILDER", DYING_SOON_LOCAL);
+  const optimal = state.targets.BUILDER || 1;
+  const countFactor = roleCountUtility(currentCount, optimal);
 
-  return utility;
+  // Factor 4: Site urgency (more sites = higher utility)
+  const siteFactor = Math.min(totalSites / 5, 2);
+
+  // Factor 5: Remote container boost (critical infrastructure)
+  const containerBoost = hasRemoteContainer ? 1.5 : 1;
+
+  // Combine factors
+  const multiplier = combineUtilities(storageFactor, sustainFactor, countFactor) * siteFactor * containerBoost;
+
+  return base * multiplier * deficit;
 }
 
 /**

@@ -20,6 +20,7 @@ import { SmartRoadPlanner } from "./core/SmartRoadPlanner";
 import { RemoteContainerPlanner } from "./core/RemoteContainerPlanner";
 import { RemoteSquadManager } from "./defense/RemoteSquadManager";
 import { gatherRoomIntel } from "./creeps/Scout";
+import { trackEnergyFlow } from "./utils/metrics";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -75,7 +76,10 @@ export function loop(): void {
 }
 
 function runRoom(room: Room): void {
-  // 0. Check auto safe mode (defense emergency)
+  // 0. Track energy flow metrics (for utility spawning)
+  trackEnergyFlow(room);
+
+  // 1. Check auto safe mode (defense emergency)
   checkAutoSafeMode(room);
 
   // 1. Run ColonyManager to generate/refresh tasks

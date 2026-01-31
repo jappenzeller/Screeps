@@ -1,0 +1,1 @@
+{"statusCode":200,"body":"{\"message\":\"Analysis complete\",\"roomsAnalyzed\":1,\"results\":[{\"roomName\":\"E46N37\",\"status\":\"warning\",\"healthScore\":72,\"patternsDetected\":0,\"recommendationsGenerated\":5}]}"}

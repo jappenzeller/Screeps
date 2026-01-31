@@ -1,4 +1,9 @@
 {
+  "env": {
+    "AWS_PROFILE": "screeps-monitor",
+    "AWS_CONFIG_FILE": "h:\\Screeps\\.aws\\config",
+    "AWS_SHARED_CREDENTIALS_FILE": "h:\\Screeps\\.aws\\credentials"
+  },
   "permissions": {
     "allow": [
       "Bash(npm install:*)",
@@ -56,7 +61,22 @@
       "Bash(AWS_PROFILE=screeps-monitor aws apigatewayv2:*)",
       "Bash(git add:*)",
       "Bash(git commit -m \"$(cat <<''EOF''\nAdd centralized state management, task system, and AWS advisor\n\nCore Systems:\n- ColonyState: Centralized cached state with tiered refresh rates\n- TaskManager: Task-based creep coordination to prevent duplicate targeting\n- CPUBudget: CPU tracking and bucket-aware throttling\n- FailureRecovery: Emergency bootstrap spawning and safe mode triggers\n\nCreep Improvements:\n- Harvesters drop energy at sources for early-game pickup\n- Builders/Upgraders collect from sources instead of draining spawn\n- Haulers use task system to prevent multiple haulers targeting same container\n- Source-aware harvester spawning (1 per source with containers)\n- Distinct visual labels (Hv, Hl, Up, Bd) to differentiate roles\n\nAWS AI Advisor:\n- Lambda functions for data collection, analysis, and API\n- DynamoDB tables for snapshots, events, and recommendations\n- Terraform infrastructure definitions\n- StatsCollector for in-game metrics collection\n\nDocumentation:\n- Architecture overview and design docs\n- CLAUDE.md development guide\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(npm run push:sim:*)"
+      "Bash(npm run push:sim:*)",
+      "Bash(git push:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws cognito-idp:*)",
+      "Bash(AWS_PROFILE=screeps-monitor aws quicksight:*)",
+      "Bash(aws sso login:*)",
+      "Bash(aws cognito-idp list-user-pool-clients:*)",
+      "Bash(export AWS_CONFIG_FILE=\"h:\\\\Screeps\\\\.aws\\\\config\")",
+      "Bash(export AWS_SHARED_CREDENTIALS_FILE=\"h:\\\\Screeps\\\\.aws\\\\credentials\")",
+      "Bash(export AWS_PROFILE=screeps-monitor)",
+      "Bash(aws cognito-idp list-user-pools:*)",
+      "Bash(aws cognito-idp describe-user-pool-client:*)",
+      "Bash(git commit:*)",
+      "Bash(aws lambda update-function-code:*)",
+      "Bash(aws dynamodb update-time-to-live:*)",
+      "Bash(MSYS_NO_PATHCONV=1 AWS_PROFILE=screeps-monitor aws logs:*)",
+      "Bash(npm run:*)"
     ]
   }
 }
