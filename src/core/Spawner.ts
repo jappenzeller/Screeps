@@ -1,7 +1,7 @@
 import { logger } from "../utils/Logger";
 import { CONFIG, Role } from "../config";
 import { Colony, ColonyState } from "./Colony";
-import { ROLE_BODIES } from "../creeps/roles";
+import { buildBody } from "../spawning/bodyBuilder";
 import { ColonyManager } from "./ColonyManager";
 
 interface SpawnRequest {
@@ -167,38 +167,12 @@ export class Spawner {
   }
 
   private getBody(role: Role, energyCapacity: number): BodyPartConstant[] {
-    const bodyConfig = ROLE_BODIES[role];
-    if (!bodyConfig) {
-      logger.warn("Spawner", `No body config for role: ${role}`);
-      return [];
+    // Use the generic body builder from bodyBuilder.ts
+    const body = buildBody(role, energyCapacity);
+    if (body.length === 0) {
+      logger.warn("Spawner", `Could not build body for role: ${role} with ${energyCapacity} energy`);
     }
-
-    // Start with base body
-    let body = [...bodyConfig.base];
-    let cost = this.calculateBodyCost(body);
-
-    // Scale up if we have more energy
-    if (bodyConfig.scale && energyCapacity > cost) {
-      const maxIterations = 10; // Safety limit
-      let iterations = 0;
-
-      while (iterations < maxIterations) {
-        const scaledBody = [...body, ...bodyConfig.scale];
-        const scaledCost = this.calculateBodyCost(scaledBody);
-
-        if (scaledCost > energyCapacity || scaledBody.length > 50) break;
-
-        body = scaledBody;
-        cost = scaledCost;
-        iterations++;
-      }
-    }
-
     return body;
-  }
-
-  private calculateBodyCost(body: BodyPartConstant[]): number {
-    return body.reduce((sum, part) => sum + BODYPART_COST[part], 0);
   }
 
   private getMemory(role: Role, state: ColonyState): CreepMemory {

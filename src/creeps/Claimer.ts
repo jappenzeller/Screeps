@@ -56,7 +56,7 @@ export function runClaimer(creep: Creep): void {
   if (result === ERR_NOT_IN_RANGE) {
     smartMoveTo(creep, controller, { visualizePathStyle: { stroke: "#ff00ff" } });
   } else if (result === OK) {
-    creep.say("🏴");
+    creep.say("CLM");
     logger.info("Claimer", `Claimed room ${targetRoom}!`);
   } else if (result === ERR_GCL_NOT_ENOUGH) {
     logger.warn("Claimer", "Not enough GCL to claim another room");

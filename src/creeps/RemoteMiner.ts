@@ -70,7 +70,7 @@ export function runRemoteMiner(creep: Creep): void {
     if (result === ERR_NOT_IN_RANGE) {
       smartMoveTo(creep, containerStatus.site, { visualizePathStyle: { stroke: "#00ff00" } });
     } else if (result === OK) {
-      creep.say("🔨");
+      creep.say("BLD");
     }
     return;
   }
@@ -79,7 +79,7 @@ export function runRemoteMiner(creep: Creep): void {
   if (!containerStatus.container && !containerStatus.site) {
     const placed = placeContainerSite(creep.room, source);
     if (placed) {
-      creep.say("📍");
+      creep.say("POS");
       logger.info("RemoteMiner", `${creep.name} placed container site at source ${source.id}`);
     }
     // Continue to harvest while site is being placed

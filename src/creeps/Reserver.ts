@@ -46,7 +46,7 @@ export function runReserver(creep: Creep): void {
   if (result === ERR_NOT_IN_RANGE) {
     smartMoveTo(creep, controller, { visualizePathStyle: { stroke: "#00ffff" } });
   } else if (result === OK) {
-    creep.say("📋");
+    creep.say("RSV");
   }
 }
 

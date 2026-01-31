@@ -19,6 +19,7 @@ import { TrafficMonitor } from "./core/TrafficMonitor";
 import { SmartRoadPlanner } from "./core/SmartRoadPlanner";
 import { RemoteContainerPlanner } from "./core/RemoteContainerPlanner";
 import { RemoteSquadManager } from "./defense/RemoteSquadManager";
+import { gatherRoomIntel } from "./creeps/Scout";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -39,6 +40,14 @@ export function loop(): void {
 
   // Clean up dead creep memory
   cleanupMemory();
+
+  // Gather intel for all visible rooms (populates Memory.intel)
+  const homeRoom = Object.keys(Game.rooms).find(
+    (name) => Game.rooms[name].controller?.my
+  ) || "";
+  for (const roomName in Game.rooms) {
+    gatherRoomIntel(Game.rooms[roomName], homeRoom);
+  }
 
   // Process each owned room
   for (const roomName in Game.rooms) {

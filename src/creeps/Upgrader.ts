@@ -40,11 +40,11 @@ export function runUpgrader(creep: Creep): void {
   // State transitions
   if (creep.memory.state === "UPGRADING" && creep.store[RESOURCE_ENERGY] === 0) {
     creep.memory.state = "COLLECTING";
-    creep.say("🔄");
+    creep.say("GET");
   }
   if (creep.memory.state === "COLLECTING" && creep.store.getFreeCapacity() === 0) {
     creep.memory.state = "UPGRADING";
-    creep.say("⚡");
+    creep.say("UPG");
   }
 
   if (creep.memory.state === "UPGRADING") {
@@ -57,7 +57,7 @@ export function runUpgrader(creep: Creep): void {
 function upgrade(creep: Creep): void {
   const controller = creep.room.controller;
   if (!controller) {
-    creep.say("❌");
+    creep.say("ERR");
     return;
   }
 
@@ -160,6 +160,6 @@ function getEnergy(creep: Creep): void {
     smartMoveTo(creep, controller, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
   } else {
     moveOffRoad(creep);
-    creep.say("💤");
+    creep.say("ZZZ");
   }
 }

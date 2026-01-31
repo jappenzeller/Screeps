@@ -95,7 +95,7 @@ export function fleeToSafety(creep: Creep): void {
   // If not in home room, go there
   if (creep.room.name !== homeRoom) {
     moveToRoom(creep, homeRoom, "#ff0000");
-    creep.say("🏃");
+    creep.say("RUN");
     return;
   }
 
@@ -110,7 +110,7 @@ export function fleeToSafety(creep: Creep): void {
       visualizePathStyle: { stroke: "#ff0000" },
       reusePath: 5,
     });
-    creep.say("🏃");
+    creep.say("RUN");
     return;
   }
 
@@ -118,11 +118,11 @@ export function fleeToSafety(creep: Creep): void {
   // Check if remote room is safe yet
   const remoteHostiles = getHostileCount(targetRoom || "");
   if (remoteHostiles > 0) {
-    creep.say(`⏳${remoteHostiles}`);
+    creep.say(`W${remoteHostiles}`);
     // Stay put, don't clear flee state (shouldFlee handles that)
   } else {
     // Room is safe, shouldFlee will clear the flag next tick
-    creep.say("✓");
+    creep.say("OK");
   }
 }
 

@@ -98,15 +98,83 @@ interface TrafficMemory {
   roadsBuilt: string[]; // Positions where we built roads
 }
 
+// Room intel for scouting and expansion planning
+interface RoomIntel {
+  roomName: string;
+  lastScanned: number; // game tick
+
+  // Room type
+  roomType: "normal" | "sourceKeeper" | "center" | "highway";
+
+  // Ownership
+  owner: string | null;
+  ownerRcl: number | null;
+  reservation: {
+    username: string;
+    ticksToEnd: number;
+  } | null;
+
+  // Resources
+  sources: {
+    id: string;
+    pos: { x: number; y: number };
+  }[];
+  mineral: {
+    type: MineralConstant;
+    amount: number;
+    id: string;
+    pos: { x: number; y: number };
+  } | null;
+
+  // Terrain analysis
+  terrain: {
+    swampPercent: number;
+    wallPercent: number;
+    plainPercent: number;
+  };
+
+  // Exits
+  exits: {
+    top: string | null;
+    right: string | null;
+    bottom: string | null;
+    left: string | null;
+  };
+
+  // Threats
+  hostileStructures: {
+    towers: number;
+    spawns: number;
+    hasTerminal: boolean;
+  };
+  invaderCore: boolean;
+
+  // Distance from home
+  distanceFromHome: number;
+
+  // Calculated scores (for expansion planning)
+  expansionScore?: number;
+  remoteMiningScore?: number;
+}
+
+// Scout creep memory
+interface ScoutMemory extends CreepMemory {
+  targetRoom: string;
+  scoutQueue: string[];
+  homeRoom: string;
+}
+
 // Debug flags
 interface DebugFlags {
   showTraffic?: boolean;
 }
 
-// Extend Memory for advisor data and traffic
+// Extend Memory for advisor data, traffic, and intel
 interface Memory {
   advisor?: AdvisorData;
   traffic?: { [roomName: string]: TrafficMemory };
+  intel?: { [roomName: string]: RoomIntel };
+  homeRoom?: string;
   debug?: DebugFlags;
 }
 

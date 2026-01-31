@@ -266,6 +266,208 @@ async function getDiagnostics(roomName) {
   };
 }
 
+// ==================== Intel Endpoints ====================
+
+/**
+ * Get intel for a specific room from segment 90
+ */
+async function getIntel(roomName) {
+  const data = await fetchSegment90();
+
+  if (!data || !data.intel) {
+    return { error: "No intel data available", roomName };
+  }
+
+  const intel = data.intel[roomName];
+  if (!intel) {
+    return {
+      error: `Intel for room ${roomName} not found`,
+      availableRooms: Object.keys(data.intel),
+    };
+  }
+
+  return {
+    live: true,
+    fetchedAt: Date.now(),
+    gameTick: data.gameTick,
+    ...intel,
+  };
+}
+
+/**
+ * Get all intel within range of home room
+ */
+async function getAllIntel(range, homeRoom) {
+  const data = await fetchSegment90();
+
+  if (!data || !data.intel) {
+    return { error: "No intel data available" };
+  }
+
+  const intel = data.intel;
+  let filtered = Object.values(intel);
+
+  // Filter by range if specified
+  if (range && homeRoom) {
+    const home = parseRoomName(homeRoom);
+    if (home) {
+      filtered = filtered.filter(room => {
+        const target = parseRoomName(room.roomName);
+        if (!target) return false;
+        const distance = Math.max(Math.abs(target.x - home.x), Math.abs(target.y - home.y));
+        return distance <= range;
+      });
+    }
+  }
+
+  return {
+    live: true,
+    fetchedAt: Date.now(),
+    gameTick: data.gameTick,
+    homeRoom: homeRoom || data.homeRoom || "E46N37",
+    range: range || "all",
+    rooms: filtered,
+    roomCount: filtered.length,
+  };
+}
+
+/**
+ * Get expansion candidates with scoring
+ */
+async function getExpansionCandidates(homeRoom) {
+  const data = await fetchSegment90();
+
+  if (!data || !data.intel) {
+    return { error: "No intel data available" };
+  }
+
+  const intel = data.intel;
+  const home = homeRoom || data.homeRoom || "E46N37";
+  const myUsername = data.username || "Superstringman";
+
+  // Get existing colonies
+  const existingColonies = Object.values(intel).filter(r =>
+    r.owner === myUsername && r.ownerRcl && r.ownerRcl > 0
+  );
+
+  // Score all candidate rooms
+  const candidates = Object.values(intel)
+    .filter(room => room.roomType === "normal")
+    .filter(room => !room.owner) // Not owned
+    .filter(room => room.sources && room.sources.length >= 1)
+    .filter(room => room.distanceFromHome >= 3) // Don't overlap current remotes
+    .map(room => ({
+      ...room,
+      expansionScore: calculateExpansionScore(room, intel, existingColonies, myUsername),
+    }))
+    .filter(room => room.expansionScore > 0)
+    .sort((a, b) => b.expansionScore - a.expansionScore)
+    .slice(0, 10);
+
+  return {
+    live: true,
+    fetchedAt: Date.now(),
+    gameTick: data.gameTick,
+    homeRoom: home,
+    candidates,
+    candidateCount: candidates.length,
+  };
+}
+
+/**
+ * Parse room name to coordinates
+ */
+function parseRoomName(roomName) {
+  const match = /^([WE])(\d+)([NS])(\d+)$/.exec(roomName);
+  if (!match) return null;
+
+  const x = parseInt(match[2]) * (match[1] === "E" ? 1 : -1);
+  const y = parseInt(match[4]) * (match[3] === "N" ? 1 : -1);
+  return { x, y };
+}
+
+/**
+ * Get delta between two rooms
+ */
+function getRoomDelta(from, to) {
+  const f = parseRoomName(from);
+  const t = parseRoomName(to);
+  if (!f || !t) return [0, 0];
+  return [t.x - f.x, t.y - f.y];
+}
+
+/**
+ * Calculate expansion score for a room
+ */
+function calculateExpansionScore(room, allIntel, existingColonies, myUsername) {
+  let score = 0;
+
+  // Base score: 2 sources = 20, 1 source = 10
+  score += (room.sources?.length || 0) * 10;
+
+  // Mineral diversity bonus
+  const homeMineral = allIntel["E46N37"]?.mineral?.type;
+  if (room.mineral && room.mineral.type !== homeMineral) {
+    score += 15;
+  }
+
+  // Adjacent remote quality (the 4 cardinal rooms this colony would mine)
+  const exits = [room.exits?.top, room.exits?.right, room.exits?.bottom, room.exits?.left];
+  for (const exit of exits) {
+    if (!exit) continue;
+    const adjacent = allIntel[exit];
+    if (adjacent && adjacent.roomType === "normal" && !adjacent.owner) {
+      score += (adjacent.sources?.length || 0) * 5; // Good remotes = big bonus
+    } else if (adjacent?.owner && adjacent.owner !== myUsername) {
+      score -= 15; // Can't use this remote direction
+    } else if (adjacent?.roomType === "sourceKeeper") {
+      score += 3; // SK rooms are bonus income later
+    }
+  }
+
+  // Terrain penalty
+  if (room.terrain) {
+    score -= (room.terrain.swampPercent || 0) * 0.2;
+    score -= (room.terrain.wallPercent || 0) * 0.1;
+  }
+
+  // Distance from home - must be 3+ rooms in cardinal direction
+  const distance = room.distanceFromHome || 0;
+  if (distance < 3) {
+    score -= 100; // Too close, would overlap remotes
+  } else if (distance >= 3 && distance <= 6) {
+    score += 10; // Optimal distance
+  } else if (distance > 6) {
+    score -= (distance - 6) * 5; // Too far penalty
+  }
+
+  // Check for proper 3-room cardinal spacing from existing colonies
+  for (const colony of existingColonies) {
+    const [dx, dy] = getRoomDelta(colony.roomName, room.roomName);
+
+    // Cardinal alignment check (same row or column)
+    if (dx === 0 || dy === 0) {
+      const cardinalDistance = Math.abs(dx) + Math.abs(dy);
+      if (cardinalDistance < 3) {
+        score -= 100; // Would overlap remotes
+      } else if (cardinalDistance === 3) {
+        score += 5; // Perfect spacing
+      }
+    }
+  }
+
+  // Hostile neighbor penalty
+  for (const exit of exits) {
+    if (!exit) continue;
+    const adjacent = allIntel[exit];
+    if (adjacent?.owner && adjacent.owner !== myUsername) {
+      score -= 20; // Hostile neighbor
+    }
+  }
+
+  return Math.max(0, Math.round(score));
+}
+
 // ==================== DynamoDB Route Handlers ====================
 
 // Route handlers
@@ -636,6 +838,19 @@ export async function handler(event) {
     else if (path === 'GET /observations/{roomName}/search') {
       const q = query.q || '';
       result = await searchObservations(params.roomName, q);
+    }
+    // Intel endpoints (room scouting data)
+    else if (path === 'GET /intel/{roomName}') {
+      result = await getIntel(params.roomName);
+    }
+    else if (path === 'GET /intel') {
+      const range = query.range ? parseInt(query.range) : null;
+      const homeRoom = query.home || null;
+      result = await getAllIntel(range, homeRoom);
+    }
+    else if (path === 'GET /intel/expansion-candidates') {
+      const homeRoom = query.home || null;
+      result = await getExpansionCandidates(homeRoom);
     }
     else {
       return {

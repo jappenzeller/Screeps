@@ -12,9 +12,12 @@ interface AWSExportData {
   timestamp: number;
   gameTick: number;
   shard: string;
+  username: string;
+  homeRoom: string;
   colonies: ColonyExport[];
   global: GlobalExport;
   diagnostics: Record<string, DiagnosticsExport>;
+  intel: Record<string, RoomIntel>;
 }
 
 interface CreepDetail {
@@ -320,13 +323,24 @@ export class AWSExporter {
       }
     }
 
+    // Get username from first spawn
+    const username = Object.values(Game.spawns)[0]?.owner?.username || "unknown";
+
+    // Get home room (first owned room)
+    const homeRoom = Object.keys(Game.rooms).find(
+      (name) => Game.rooms[name].controller?.my
+    ) || "E46N37";
+
     const data: AWSExportData = {
       timestamp: Date.now(),
       gameTick: Game.time,
       shard: Game.shard?.name || "unknown",
+      username,
+      homeRoom,
       colonies: this.getColonies(),
       global: this.getGlobalStats(),
       diagnostics,
+      intel: Memory.intel || {},
     };
 
     // Write to segment

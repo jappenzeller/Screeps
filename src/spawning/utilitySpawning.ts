@@ -9,6 +9,7 @@
 import { getHostileCount } from "../utils/remoteIntel";
 import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 import { LinkManager } from "../structures/LinkManager";
+import { buildBody as buildBodyFromConfig, ROLE_MIN_COST } from "./bodyBuilder";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = 100; // Local roles: spawn nearby, 100 ticks is enough
@@ -606,37 +607,23 @@ function scoutUtility(deficit: number, state: ColonyState): number {
   if (state.rcl < 3) return 0;
   if (deficit <= 0) return 0;
 
-  // Very low base utility
-  let utility = deficit * 5;
+  // Count rooms needing scan for priority
+  const roomsNeedingScan = countRoomsNeedingScan(state.room.name);
 
-  // Only when economy is healthy
-  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
-  utility *= incomeRatio;
+  // High utility if many rooms need scanning (initial scouting push)
+  if (roomsNeedingScan > 40) return 12; // Over half of 81 rooms
+  if (roomsNeedingScan > 20) return 8;
+  if (roomsNeedingScan > 10) return 5;
+  if (roomsNeedingScan > 0) return 2;
 
-  return utility;
+  return 0; // All rooms scanned
 }
 
 // ============================================
 // Body Building Functions
 // ============================================
 
-/**
- * Minimum energy cost for each role's smallest viable body
- */
-const ROLE_MIN_COST: Record<SpawnRole, number> = {
-  HARVESTER: 200, // WORK + CARRY + MOVE
-  HAULER: 100, // CARRY + MOVE
-  UPGRADER: 200, // WORK + CARRY + MOVE
-  BUILDER: 200, // WORK + CARRY + MOVE
-  DEFENDER: 130, // ATTACK + MOVE + MOVE
-  REMOTE_MINER: 300, // WORK + WORK + CARRY + MOVE
-  REMOTE_HAULER: 200, // CARRY + CARRY + MOVE + MOVE
-  REMOTE_DEFENDER: 230, // TOUGH + ATTACK + ATTACK + MOVE + MOVE + MOVE
-  RESERVER: 650, // CLAIM + MOVE
-  SCOUT: 50, // MOVE
-  LINK_FILLER: 150, // CARRY + CARRY + MOVE
-  UPGRADE_HAULER: 200, // CARRY + CARRY + MOVE + MOVE
-};
+// ROLE_MIN_COST is now imported from bodyBuilder.ts
 
 /**
  * Build appropriate body for a role given available energy
@@ -655,231 +642,8 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   const minCost = ROLE_MIN_COST[role] || 200;
   if (energy < minCost) return [];
 
-  switch (role) {
-    case "HARVESTER":
-      return buildHarvesterBody(energy);
-    case "HAULER":
-      return buildHaulerBody(energy);
-    case "UPGRADER":
-      return buildUpgraderBody(energy);
-    case "BUILDER":
-      return buildBuilderBody(energy);
-    case "DEFENDER":
-      return buildDefenderBody(energy);
-    case "REMOTE_MINER":
-      return buildRemoteMinerBody(energy);
-    case "REMOTE_HAULER":
-      return buildRemoteHaulerBody(energy);
-    case "REMOTE_DEFENDER":
-      return buildRemoteDefenderBody(energy);
-    case "RESERVER":
-      return buildReserverBody(energy);
-    case "SCOUT":
-      return [MOVE];
-    case "LINK_FILLER":
-      return buildLinkFillerBody(energy);
-    case "UPGRADE_HAULER":
-      return buildUpgradeHaulerBody(energy);
-    default:
-      return [];
-  }
-}
-
-function buildHarvesterBody(energy: number): BodyPartConstant[] {
-  // Minimum viable harvester for low energy situations
-  if (energy < 300) {
-    return [WORK, CARRY, MOVE]; // 200 energy cost
-  }
-
-  // Static harvester (sits on container)
-  // Optimal: 5 WORK, 1 CARRY, 3 MOVE = 700 energy
-  const parts: BodyPartConstant[] = [];
-  let remaining = energy;
-
-  // Add WORK parts (max 5 for single source)
-  while (remaining >= 100 && parts.filter((p) => p === WORK).length < 5) {
-    parts.push(WORK);
-    remaining -= 100;
-  }
-
-  // Add 1 CARRY for container transfer
-  if (remaining >= 50) {
-    parts.push(CARRY);
-    remaining -= 50;
-  }
-
-  // Add MOVE parts (1 per 2 other parts for road efficiency)
-  const otherParts = parts.length;
-  const movesNeeded = Math.ceil(otherParts / 2);
-  while (remaining >= 50 && parts.filter((p) => p === MOVE).length < movesNeeded) {
-    parts.push(MOVE);
-    remaining -= 50;
-  }
-
-  return parts.length >= 3 ? parts : [WORK, CARRY, MOVE];
-}
-
-function buildHaulerBody(energy: number): BodyPartConstant[] {
-  // All CARRY and MOVE, balanced
-  const parts: BodyPartConstant[] = [];
-  let remaining = energy;
-
-  while (remaining >= 100 && parts.length < 32) {
-    parts.push(CARRY);
-    parts.push(MOVE);
-    remaining -= 100;
-  }
-
-  return parts.length >= 2 ? parts : [CARRY, MOVE];
-}
-
-function buildUpgraderBody(energy: number): BodyPartConstant[] {
-  // WORK heavy with some CARRY and MOVE
-  const parts: BodyPartConstant[] = [];
-  let remaining = energy;
-
-  // Start with minimum
-  if (remaining < 200) return [WORK, CARRY, MOVE];
-
-  // Add WORK parts
-  while (remaining >= 150 && parts.filter((p) => p === WORK).length < 15) {
-    parts.push(WORK);
-    remaining -= 100;
-
-    // Add CARRY every 3 WORK
-    if (parts.filter((p) => p === WORK).length % 3 === 0 && remaining >= 50) {
-      parts.push(CARRY);
-      remaining -= 50;
-    }
-  }
-
-  // Add MOVE (1 per 2 other parts)
-  const otherParts = parts.length;
-  const movesNeeded = Math.ceil(otherParts / 2);
-  while (remaining >= 50 && parts.filter((p) => p === MOVE).length < movesNeeded) {
-    parts.push(MOVE);
-    remaining -= 50;
-  }
-
-  return parts.length >= 3 ? parts : [WORK, CARRY, MOVE];
-}
-
-function buildBuilderBody(energy: number): BodyPartConstant[] {
-  // Similar to upgrader but more balanced
-  const parts: BodyPartConstant[] = [];
-  let remaining = energy;
-
-  if (remaining < 200) return [WORK, CARRY, MOVE];
-
-  // Balanced WORK/CARRY/MOVE
-  while (remaining >= 200 && parts.length < 30) {
-    parts.push(WORK);
-    parts.push(CARRY);
-    parts.push(MOVE);
-    remaining -= 200;
-  }
-
-  return parts.length >= 3 ? parts : [WORK, CARRY, MOVE];
-}
-
-function buildDefenderBody(energy: number): BodyPartConstant[] {
-  // ATTACK and MOVE
-  const parts: BodyPartConstant[] = [];
-  let remaining = energy;
-
-  // Add TOUGH for buffer
-  while (remaining >= 60 && parts.filter((p) => p === TOUGH).length < 3) {
-    parts.push(TOUGH);
-    remaining -= 10;
-  }
-
-  // Add ATTACK and MOVE balanced
-  while (remaining >= 130 && parts.length < 25) {
-    parts.push(ATTACK);
-    parts.push(MOVE);
-    remaining -= 130;
-  }
-
-  return parts.length >= 3 ? parts : [ATTACK, MOVE, MOVE];
-}
-
-function buildRemoteMinerBody(energy: number): BodyPartConstant[] {
-  // 5 WORK, 1 CARRY, 3 MOVE = 700 energy
-  if (energy >= 700) {
-    return [WORK, WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE, MOVE];
-  } else if (energy >= 550) {
-    return [WORK, WORK, WORK, WORK, CARRY, MOVE, MOVE];
-  } else if (energy >= 400) {
-    return [WORK, WORK, WORK, CARRY, MOVE, MOVE];
-  }
-  return [WORK, WORK, CARRY, MOVE];
-}
-
-function buildRemoteHaulerBody(energy: number): BodyPartConstant[] {
-  // All CARRY and MOVE, balanced for road travel
-  const parts: BodyPartConstant[] = [];
-  let remaining = energy;
-
-  while (remaining >= 100 && parts.length < 32) {
-    parts.push(CARRY);
-    parts.push(MOVE);
-    remaining -= 100;
-  }
-
-  return parts.length >= 4 ? parts : [CARRY, CARRY, MOVE, MOVE];
-}
-
-function buildRemoteDefenderBody(energy: number): BodyPartConstant[] {
-  // 650 energy standard body
-  if (energy >= 650) {
-    return [TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE, MOVE];
-  }
-  return [TOUGH, ATTACK, ATTACK, MOVE, MOVE, MOVE];
-}
-
-function buildReserverBody(energy: number): BodyPartConstant[] {
-  // 2 CLAIM, 2 MOVE = 1300 energy
-  if (energy >= 1300) {
-    return [CLAIM, CLAIM, MOVE, MOVE];
-  }
-  // 1 CLAIM, 1 MOVE = 650 energy
-  return [CLAIM, MOVE];
-}
-
-function buildLinkFillerBody(energy: number): BodyPartConstant[] {
-  // Stationary creep: mostly CARRY with minimal MOVE
-  // Bigger carry = fewer ticks to fill link (800 capacity)
-  const parts: BodyPartConstant[] = [];
-  let remaining = energy;
-
-  // Add CARRY parts (max 6 = 300 capacity)
-  while (remaining >= 100 && parts.filter((p) => p === CARRY).length < 6) {
-    parts.push(CARRY);
-    remaining -= 50;
-
-    // Add 1 MOVE per 2 CARRY (just enough to reach parking spot)
-    if (parts.filter((p) => p === CARRY).length % 2 === 0 && remaining >= 50) {
-      parts.push(MOVE);
-      remaining -= 50;
-    }
-  }
-
-  return parts.length >= 3 ? parts : [CARRY, CARRY, MOVE];
-}
-
-function buildUpgradeHaulerBody(energy: number): BodyPartConstant[] {
-  // Balanced CARRY + MOVE for road travel (1:1 ratio)
-  // Target: 10 CARRY + 10 MOVE = 1000 energy, 500 carry capacity
-  const parts: BodyPartConstant[] = [];
-  let remaining = energy;
-
-  while (remaining >= 100 && parts.length < 20) {
-    parts.push(CARRY);
-    parts.push(MOVE);
-    remaining -= 100;
-  }
-
-  return parts.length >= 4 ? parts : [CARRY, CARRY, MOVE, MOVE];
+  // Use the generic body builder
+  return buildBodyFromConfig(role, energy);
 }
 
 // ============================================
@@ -994,22 +758,73 @@ function getRemoteThreats(homeRoom: string): Record<string, number> {
 }
 
 function needsScout(homeRoom: string): boolean {
-  const exits = Game.map.describeExits(homeRoom);
-  if (!exits) return false;
+  // Scout 4-room radius around home (81 rooms total)
+  // Uses Memory.intel for comprehensive room data
+  const SCOUT_RANGE = 4;
+  const STALE_THRESHOLD = 10000;
 
-  for (const dir in exits) {
-    const roomName = exits[dir as ExitKey];
-    if (!roomName) continue;
+  const intel = Memory.intel || {};
 
-    const intel = Memory.rooms?.[roomName];
+  // Parse home room coordinates
+  const parsed = /^([WE])(\d+)([NS])(\d+)$/.exec(homeRoom);
+  if (!parsed) return false;
 
-    // Need scout if no intel or intel is stale (> 5000 ticks)
-    if (!intel || !intel.lastScan || Game.time - intel.lastScan > 5000) {
-      return true;
+  const [, ew, xStr, ns, yStr] = parsed;
+  const homeX = parseInt(xStr) * (ew === "E" ? 1 : -1);
+  const homeY = parseInt(yStr) * (ns === "N" ? 1 : -1);
+
+  // Check if any room in range needs scouting
+  for (let dx = -SCOUT_RANGE; dx <= SCOUT_RANGE; dx++) {
+    for (let dy = -SCOUT_RANGE; dy <= SCOUT_RANGE; dy++) {
+      if (dx === 0 && dy === 0) continue; // Skip home room
+
+      const x = homeX + dx;
+      const y = homeY + dy;
+      const ewDir = x >= 0 ? "E" : "W";
+      const nsDir = y >= 0 ? "N" : "S";
+      const roomName = `${ewDir}${Math.abs(x)}${nsDir}${Math.abs(y)}`;
+
+      const roomIntel = intel[roomName];
+      if (!roomIntel || Game.time - roomIntel.lastScanned > STALE_THRESHOLD) {
+        return true;
+      }
     }
   }
 
   return false;
+}
+
+function countRoomsNeedingScan(homeRoom: string): number {
+  const SCOUT_RANGE = 4;
+  const STALE_THRESHOLD = 10000;
+  const intel = Memory.intel || {};
+
+  const parsed = /^([WE])(\d+)([NS])(\d+)$/.exec(homeRoom);
+  if (!parsed) return 0;
+
+  const [, ew, xStr, ns, yStr] = parsed;
+  const homeX = parseInt(xStr) * (ew === "E" ? 1 : -1);
+  const homeY = parseInt(yStr) * (ns === "N" ? 1 : -1);
+
+  let count = 0;
+  for (let dx = -SCOUT_RANGE; dx <= SCOUT_RANGE; dx++) {
+    for (let dy = -SCOUT_RANGE; dy <= SCOUT_RANGE; dy++) {
+      if (dx === 0 && dy === 0) continue;
+
+      const x = homeX + dx;
+      const y = homeY + dy;
+      const ewDir = x >= 0 ? "E" : "W";
+      const nsDir = y >= 0 ? "N" : "S";
+      const roomName = `${ewDir}${Math.abs(x)}${nsDir}${Math.abs(y)}`;
+
+      const roomIntel = intel[roomName];
+      if (!roomIntel || Game.time - roomIntel.lastScanned > STALE_THRESHOLD) {
+        count++;
+      }
+    }
+  }
+
+  return count;
 }
 
 function findRemoteRoomNeedingMiner(

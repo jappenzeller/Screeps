@@ -67,12 +67,12 @@ export function runHauler(creep: Creep): void {
       manager.completeTask(creep.memory.taskId);
     }
     creep.memory.state = "COLLECTING";
-    creep.say("🔄");
+    creep.say("GET");
   }
 
   if (creep.memory.state === "COLLECTING" && creep.store.getFreeCapacity() === 0) {
     creep.memory.state = "DELIVERING";
-    creep.say("📦");
+    creep.say("DLV");
   }
 
   // Also switch to deliver earlier if spawn critically needs energy
@@ -80,7 +80,7 @@ export function runHauler(creep: Creep): void {
     const spawnCritical = creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.3;
     if (spawnCritical) {
       creep.memory.state = "DELIVERING";
-      creep.say("⚡");
+      creep.say("URG");
     }
   }
 

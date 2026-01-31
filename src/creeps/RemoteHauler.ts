@@ -24,7 +24,7 @@ export function runRemoteHauler(creep: Creep): void {
   const homeRoom = creep.memory.room;
 
   if (!targetRoom || !homeRoom) {
-    creep.say("❓");
+    creep.say("???");
     return;
   }
 

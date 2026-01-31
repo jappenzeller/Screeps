@@ -52,11 +52,11 @@ export function runHarvester(creep: Creep): void {
   // State transitions
   if (creep.memory.state === "DELIVERING" && creep.store[RESOURCE_ENERGY] === 0) {
     creep.memory.state = "HARVESTING";
-    creep.say("⛏️");
+    creep.say("DIG");
   }
   if (creep.memory.state === "HARVESTING" && creep.store.getFreeCapacity() === 0) {
     creep.memory.state = "DELIVERING";
-    creep.say("🚚");
+    creep.say("DLV");
   }
 
   if (creep.memory.state === "DELIVERING") {
@@ -86,7 +86,7 @@ function runStaticMiner(creep: Creep, source: Source, container: StructureContai
       visualizePathStyle: { stroke: "#ffaa00" },
       reusePath: 10,
     });
-    creep.say("📍");
+    creep.say("POS");
     return;
   }
 
@@ -100,7 +100,7 @@ function runStaticMiner(creep: Creep, source: Source, container: StructureContai
     } else if (creep.store.getFreeCapacity() === 0) {
       // Both full - drop for hauler
       creep.drop(RESOURCE_ENERGY);
-      creep.say("💧");
+      creep.say("DRP");
     }
   }
 }
@@ -122,7 +122,7 @@ function harvest(creep: Creep): void {
   }
 
   if (!source) {
-    creep.say("❌");
+    creep.say("ERR");
     return;
   }
 
@@ -181,7 +181,7 @@ function deliver(creep: Creep): void {
     }
     if (creep.store[RESOURCE_ENERGY] > 0) {
       creep.drop(RESOURCE_ENERGY);
-      creep.say("📦");
+      creep.say("BOX");
     }
   }
 }

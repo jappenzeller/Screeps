@@ -160,11 +160,11 @@ export function runBuilder(creep: Creep): void {
   // State transitions
   if (creep.memory.state === "BUILDING" && creep.store[RESOURCE_ENERGY] === 0) {
     creep.memory.state = "COLLECTING";
-    creep.say("🔄");
+    creep.say("GET");
   }
   if (creep.memory.state === "COLLECTING" && creep.store.getFreeCapacity() === 0) {
     creep.memory.state = "BUILDING";
-    creep.say("🔨");
+    creep.say("BLD");
   }
 
   if (creep.memory.state === "BUILDING") {
@@ -310,6 +310,6 @@ function getEnergy(creep: Creep): void {
     smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#888888" } });
   } else {
     moveOffRoad(creep);
-    creep.say("💤");
+    creep.say("ZZZ");
   }
 }

@@ -15,6 +15,8 @@ const secretsClient = new SecretsManagerClient({});
 const SNAPSHOTS_TABLE = process.env.SNAPSHOTS_TABLE;
 const EVENTS_TABLE = process.env.EVENTS_TABLE;
 const RECOMMENDATIONS_TABLE = process.env.RECOMMENDATIONS_TABLE;
+const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
+const OBSERVATIONS_TABLE = process.env.OBSERVATIONS_TABLE;
 const API_ENDPOINT = process.env.API_ENDPOINT || "https://dossn1w7n5.execute-api.us-east-1.amazonaws.com";
 const RETENTION_DAYS = 30;
 
@@ -125,6 +127,54 @@ async function getActiveRooms() {
   }
 
   return Array.from(rooms);
+}
+
+async function getRecentSignals(roomName, hours = 6) {
+  if (!SIGNALS_TABLE) return [];
+
+  const since = Date.now() - hours * 60 * 60 * 1000;
+
+  try {
+    const response = await docClient.send(
+      new QueryCommand({
+        TableName: SIGNALS_TABLE,
+        KeyConditionExpression: "roomName = :room AND #ts > :since",
+        ExpressionAttributeNames: { "#ts": "timestamp" },
+        ExpressionAttributeValues: {
+          ":room": roomName,
+          ":since": since,
+        },
+        ScanIndexForward: false,
+        Limit: 50,
+      })
+    );
+    return response.Items || [];
+  } catch (error) {
+    console.error("Failed to fetch signals:", error.message);
+    return [];
+  }
+}
+
+async function getPreviousObservations(roomName, limit = 5) {
+  if (!OBSERVATIONS_TABLE) return [];
+
+  try {
+    const response = await docClient.send(
+      new QueryCommand({
+        TableName: OBSERVATIONS_TABLE,
+        KeyConditionExpression: "roomName = :room",
+        ExpressionAttributeValues: {
+          ":room": roomName,
+        },
+        ScanIndexForward: false,
+        Limit: limit,
+      })
+    );
+    return response.Items || [];
+  } catch (error) {
+    console.error("Failed to fetch previous observations:", error.message);
+    return [];
+  }
 }
 
 // ==================== Pattern Detection ====================
@@ -340,7 +390,7 @@ async function buildCodeContext(patterns) {
 
 // ==================== AI Analysis ====================
 
-async function analyzeWithClaude(roomName, snapshots, events, patterns, liveColony) {
+async function analyzeWithClaude(roomName, snapshots, events, patterns, liveColony, signals, previousObservations) {
   const client = await getAnthropicClient();
   const current = liveColony || snapshots[0];
 
@@ -377,21 +427,43 @@ async function analyzeWithClaude(roomName, snapshots, events, patterns, liveColo
     detectedPatterns: patterns.map(p => `[${p.severity}] ${p.id}: ${p.message}`),
   };
 
-  const systemPrompt = `You are an expert AI advisor for Screeps, an MMO programming game where players write JavaScript/TypeScript code to control their colony. Your role is to analyze colony data and provide actionable recommendations.
+  // Build signal summary
+  const signalSummary = signals.length > 0 ? {
+    count: signals.length,
+    recentEvents: signals.flatMap(s => s.events || []).slice(0, 10),
+    latestMetrics: signals[0]?.metrics || null,
+    latestDeltas: signals[0]?.deltas || null,
+  } : null;
 
-Key areas to evaluate:
-1. ECONOMY: Energy flow (income vs spending), storage levels, worker balance
-2. SPAWNING: Creep population balance, role distribution, replacement timing
-3. EXPANSION: RCL progress rate, readiness for next level features
-4. DEFENSE: Threat response, tower effectiveness, safe mode availability
-5. OPTIMIZATION: CPU efficiency, pathfinding issues, traffic bottlenecks
+  // Build previous observations context
+  const observationHistory = previousObservations.length > 0 ? previousObservations.map(obs => ({
+    timestamp: obs.timestamp,
+    summary: obs.summary,
+    patterns: obs.patterns?.slice(0, 3),
+    keyObservations: obs.observations?.slice(0, 3),
+  })) : null;
 
-${hasCodeContext ? "You have access to the actual game code below. Provide SPECIFIC, code-level recommendations that reference exact functions, variables, and line numbers. Suggest actual code changes when appropriate." : "Focus on providing specific, actionable advice."}`;
+  const systemPrompt = `You are an expert observer for Screeps, an MMO programming game. Your role is to OBSERVE and NOTICE what's happening in the colony - not to prescribe solutions.
 
-  let userPrompt = `Analyze this Screeps colony and provide recommendations:
+You are building a continuous understanding of this colony over time. Focus on:
+1. What patterns are emerging?
+2. What has changed since the last observation?
+3. What correlations do you notice between metrics?
+4. What trends are developing?
 
-## Colony Data
+${observationHistory ? `You have access to your previous observations below. Track patterns over time and note when things change.` : ""}
+${hasCodeContext ? "You have access to the actual game code below. Reference specific code when relevant to your observations." : ""}`;
+
+  let userPrompt = `Observe this Screeps colony and record what you notice:
+
+## Current Colony State
 ${JSON.stringify(dataSummary, null, 2)}
+
+${signalSummary ? `## Signal Data (metrics & events)
+${JSON.stringify(signalSummary, null, 2)}` : ""}
+
+${observationHistory ? `## Your Previous Observations
+${JSON.stringify(observationHistory, null, 2)}` : ""}
 `;
 
   // Add code context if available
@@ -399,36 +471,38 @@ ${JSON.stringify(dataSummary, null, 2)}
     userPrompt += `
 ## Relevant Code
 ${codeContext}
-
-Based on the detected patterns, colony state, AND the actual code above, provide your analysis.
-For each recommendation, reference specific functions/variables from the code and suggest concrete code changes.
-`;
-  } else {
-    userPrompt += `
-Based on the detected patterns and colony state, provide your analysis.
 `;
   }
 
   userPrompt += `
+Record your observations. Focus on WHAT you notice, not WHAT TO DO about it.
+
 Respond ONLY with valid JSON in this exact format:
 {
-  "healthScore": <number 0-100>,
-  "status": "<healthy|warning|critical>",
-  "summary": "<one sentence overview>",
-  "problems": [
-    {"description": "<specific problem>", "severity": "<low|medium|high|critical>"}
-  ],
-  "recommendations": [
+  "summary": "<one sentence overview of current state>",
+  "observations": [
     {
-      "title": "<short title>",
-      "description": "<detailed actionable advice${hasCodeContext ? " referencing specific code" : ""}>",
-      "priority": <number 1-5, 1 being highest>,
-      "category": "<economy|defense|expansion|optimization|spawning>",
-      "codeFile": "<src/path/to/file.ts if applicable, otherwise null>"${hasCodeContext ? `,
-      "currentCode": "<problematic code snippet if applicable>",
-      "suggestedFix": "<fixed code snippet if applicable>"` : ""}
+      "category": "<economy|defense|expansion|optimization|spawning|behavior>",
+      "observation": "<what you noticed>",
+      "significance": "<low|medium|high>",
+      "dataPoints": ["<specific metrics that support this observation>"]
     }
-  ]
+  ],
+  "patterns": [
+    {
+      "id": "<pattern identifier like ENERGY_ACCUMULATING or CREEP_POPULATION_STABLE>",
+      "description": "<what the pattern is>",
+      "confidence": "<low|medium|high>",
+      "trend": "<improving|stable|declining|new>"
+    }
+  ],
+  "signalCorrelations": [
+    {
+      "signals": ["<signal1>", "<signal2>"],
+      "correlation": "<what relationship you notice between them>"
+    }
+  ],
+  "changesFromPrevious": "<what's different from your last observation, or null if first observation>"
 }`;
 
   const response = await client.messages.create({
@@ -463,56 +537,56 @@ Respond ONLY with valid JSON in this exact format:
 
 // ==================== Storage ====================
 
-async function storeRecommendations(roomName, analysis, patterns) {
+async function storeObservations(roomName, analysis, patterns, snapshotInfo) {
   const timestamp = Date.now();
   const expiresAt = Math.floor(timestamp / 1000) + RETENTION_DAYS * 24 * 60 * 60;
 
-  // Store overall analysis
-  await docClient.send(
-    new PutCommand({
-      TableName: RECOMMENDATIONS_TABLE,
-      Item: {
-        id: `analysis_${roomName}_${timestamp}`,
-        roomName: roomName,
-        createdAt: timestamp,
-        expiresAt: expiresAt,
-        type: "analysis",
-        healthScore: analysis.healthScore,
-        status: analysis.status,
-        summary: analysis.summary,
-        problems: analysis.problems,
-        patternsDetected: patterns.map(p => p.id),
-      },
-    })
-  );
+  // Store to observations table
+  if (OBSERVATIONS_TABLE) {
+    const observationRecord = {
+      roomName: roomName,
+      timestamp: timestamp,
+      id: `${roomName}_${timestamp}`,
+      snapshotTick: snapshotInfo.tick || 0,
+      snapshotHash: snapshotInfo.hash || "",
+      summary: analysis.summary,
+      observations: analysis.observations || [],
+      patterns: analysis.patterns || [],
+      signalCorrelations: analysis.signalCorrelations || [],
+      changesFromPrevious: analysis.changesFromPrevious || null,
+      detectedPatterns: patterns.map(p => p.id),
+      expiresAt: expiresAt,
+    };
 
-  // Store individual recommendations
-  for (const rec of analysis.recommendations || []) {
+    await docClient.send(
+      new PutCommand({
+        TableName: OBSERVATIONS_TABLE,
+        Item: observationRecord,
+      })
+    );
+
+    console.log(`Stored observation for ${roomName}: ${analysis.observations?.length || 0} observations, ${analysis.patterns?.length || 0} patterns`);
+  }
+
+  // Also store summary to recommendations table for backwards compatibility
+  if (RECOMMENDATIONS_TABLE) {
     await docClient.send(
       new PutCommand({
         TableName: RECOMMENDATIONS_TABLE,
         Item: {
-          id: uuidv4(),
+          id: `observation_${roomName}_${timestamp}`,
           roomName: roomName,
           createdAt: timestamp,
           expiresAt: expiresAt,
-          type: "recommendation",
-          title: rec.title,
-          description: rec.description,
-          priority: rec.priority,
-          category: rec.category,
-          codeFile: rec.codeFile || null,
-          currentCode: rec.currentCode || null,
-          suggestedFix: rec.suggestedFix || null,
-          status: "pending",
-          healthScore: analysis.healthScore,
-          colonyStatus: analysis.status,
+          type: "observation",
+          summary: analysis.summary,
+          observationCount: analysis.observations?.length || 0,
+          patternCount: analysis.patterns?.length || 0,
+          detectedPatterns: patterns.map(p => p.id),
         },
       })
     );
   }
-
-  console.log(`Stored analysis and ${analysis.recommendations?.length || 0} recommendations for ${roomName}`);
 }
 
 // ==================== Main Handler ====================
@@ -560,24 +634,36 @@ export async function handler(event) {
       const events = await getRecentEvents(roomName, 6);
       console.log(`Found ${events.length} events`);
 
+      // Get signals and previous observations
+      const signals = await getRecentSignals(roomName, 6);
+      console.log(`Found ${signals.length} signal records`);
+
+      const previousObservations = await getPreviousObservations(roomName, 5);
+      console.log(`Found ${previousObservations.length} previous observations`);
+
       // Detect patterns
       const patterns = detectPatterns(snapshots, liveColony);
       console.log(`Detected ${patterns.length} patterns:`, patterns.map(p => p.id));
 
-      // Generate AI recommendations if patterns found OR enough data
+      // Generate AI observations if patterns found OR enough data
       if (patterns.length > 0 || snapshots.length >= 3) {
         try {
-          const analysis = await analyzeWithClaude(roomName, snapshots, events, patterns, liveColony);
-          console.log(`Analysis for ${roomName}: ${analysis.status}, score: ${analysis.healthScore}`);
+          const analysis = await analyzeWithClaude(roomName, snapshots, events, patterns, liveColony, signals, previousObservations);
+          console.log(`Analysis for ${roomName}: ${analysis.observations?.length || 0} observations, ${analysis.patterns?.length || 0} patterns`);
 
-          await storeRecommendations(roomName, analysis, patterns);
+          const snapshotInfo = {
+            tick: liveColony?.tick || snapshots[0]?.tick || 0,
+            hash: `${roomName}_${Date.now()}`,
+          };
+
+          await storeObservations(roomName, analysis, patterns, snapshotInfo);
 
           results.push({
             roomName,
-            status: analysis.status,
-            healthScore: analysis.healthScore,
+            summary: analysis.summary,
+            observationsGenerated: analysis.observations?.length || 0,
             patternsDetected: patterns.length,
-            recommendationsGenerated: analysis.recommendations?.length || 0,
+            patternsIdentified: analysis.patterns?.length || 0,
           });
         } catch (aiError) {
           console.error(`AI analysis failed for ${roomName}:`, aiError);
