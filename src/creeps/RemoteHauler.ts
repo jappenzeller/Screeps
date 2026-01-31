@@ -13,7 +13,6 @@ import { updateRoomIntel, shouldFlee, fleeToSafety } from "../utils/remoteIntel"
 
 // Renewal configuration
 const RENEW_TTL_THRESHOLD = 1200; // Start considering renewal below this TTL
-const RENEW_CRITICAL_TTL = 300; // Force renewal even if spawn busy
 const RENEW_COOLDOWN = 20; // Ticks between renewal attempts
 const RENEW_MAX_TICKS = 15; // Max consecutive ticks to spend renewing
 
@@ -75,12 +74,9 @@ function tryRenew(creep: Creep): boolean {
     return false;
   }
 
-  // Check spawn availability - don't block spawn unless critical
-  const isCritical = creep.ticksToLive < RENEW_CRITICAL_TTL;
-  if (spawn.spawning && !isCritical) {
-    // Wait for spawn to be free - stay here, don't continue delivering
-    creep.say("WAIT");
-    return true;
+  // Spawn busy - continue delivering, renew on next pass
+  if (spawn.spawning) {
+    return false;
   }
 
   // Check if we have enough energy to renew
