@@ -12,7 +12,7 @@ export function runHarvester(creep: Creep): void {
   if (shouldEmergencyRenew(creep)) {
     const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
     if (spawn && !creep.pos.isNearTo(spawn)) {
-      creep.say("♻️ EMG");
+      creep.say("RENEW");
       smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 3 });
       return;
     }

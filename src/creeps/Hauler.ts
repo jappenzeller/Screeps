@@ -201,7 +201,7 @@ function collectFromContainers(creep: Creep): boolean {
         // Unassigned container with lots of energy - switch to it
         creep.memory.primaryContainer = container.id;
         creep.memory._lastContainerSwitch = Game.time;
-        creep.say("⚖️");
+        creep.say("BAL");
         break;
       }
     }
@@ -224,7 +224,7 @@ function collectFromContainers(creep: Creep): boolean {
     // If at primary container with miner present, WAIT even if empty
     if (isNearby && minerNearby && !hasEnergy) {
       // Stay put - energy coming soon
-      creep.say("⏳");
+      creep.say("WAIT");
       return true; // "Handled" - don't switch
     }
 
@@ -279,7 +279,7 @@ function collectFromContainers(creep: Creep): boolean {
         }).length > 0)) {
       creep.memory.primaryContainer = betterContainer.id;
       creep.memory._lastContainerSwitch = Game.time;
-      creep.say("🔄");
+      creep.say("SWAP");
 
       if (creep.pos.isNearTo(betterContainer)) {
         creep.withdraw(betterContainer, RESOURCE_ENERGY);
@@ -319,7 +319,7 @@ export function runHauler(creep: Creep): void {
   if (shouldEmergencyRenew(creep)) {
     const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
     if (spawn && !creep.pos.isNearTo(spawn)) {
-      creep.say("♻️ EMG");
+      creep.say("RENEW");
       smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 3 });
       return;
     }

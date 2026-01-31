@@ -79,7 +79,7 @@ function tryRenew(creep: Creep): boolean {
   const isCritical = creep.ticksToLive < RENEW_CRITICAL_TTL;
   if (spawn.spawning && !isCritical) {
     // Wait for spawn to be free - stay here, don't continue delivering
-    creep.say("⏳");
+    creep.say("WAIT");
     return true;
   }
 
@@ -93,7 +93,7 @@ function tryRenew(creep: Creep): boolean {
   const result = spawn.renewCreep(creep);
   if (result === OK) {
     creep.memory._renewTicks = renewTicks + 1;
-    creep.say("♻️ " + creep.ticksToLive);
+    creep.say("RNW " + creep.ticksToLive);
     return true;
   }
 
