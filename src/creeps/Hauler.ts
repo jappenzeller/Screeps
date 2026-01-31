@@ -478,26 +478,9 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  // Priority 3: Storage link (feeds controller link for upgraders)
+  // Priority 3: Storage
+  // NOTE: Haulers never deliver to links - LINK_FILLER handles link logistics
   const storage = creep.room.storage;
-  if (storage) {
-    const storageLink = storage.pos.findInRange(FIND_MY_STRUCTURES, 2, {
-      filter: (s) =>
-        s.structureType === STRUCTURE_LINK && s.store.getFreeCapacity(RESOURCE_ENERGY) > 100,
-    })[0] as StructureLink | undefined;
-
-    if (storageLink) {
-      if (creep.transfer(storageLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, storageLink, {
-          visualizePathStyle: { stroke: "#00ffff" },
-          reusePath: 5,
-        });
-      }
-      return;
-    }
-  }
-
-  // Priority 4: Storage
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
