@@ -83,6 +83,7 @@ export const CONFIG = {
       LINK_FILLER: 70, // Infrastructure
       UPGRADE_HAULER: 55, // Support upgraders
       SCOUT: 10, // Exploration (luxury)
+      MINERAL_HARVESTER: 15, // Luxury - future value for labs
     },
 
     // Optimal counts by RCL (role -> [rcl1, rcl2, ..., rcl8])

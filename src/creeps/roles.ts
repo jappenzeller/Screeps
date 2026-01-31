@@ -11,6 +11,7 @@ import { runClaimer } from "./Claimer";
 import { runRemoteDefender } from "./RemoteDefender";
 import { runLinkFiller } from "./LinkFiller";
 import { runUpgradeHauler } from "./UpgradeHauler";
+import { runMineralHarvester } from "./MineralHarvester";
 
 // Body configurations moved to src/spawning/bodyConfig.ts
 // Use buildBody() from src/spawning/bodyBuilder.ts for body generation
@@ -31,6 +32,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   CLAIMER: runClaimer,
   LINK_FILLER: runLinkFiller,
   UPGRADE_HAULER: runUpgradeHauler,
+  MINERAL_HARVESTER: runMineralHarvester,
 };
 
 export function runCreep(creep: Creep): void {

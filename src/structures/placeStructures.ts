@@ -25,6 +25,7 @@ export function placeStructures(room: Room): void {
     STRUCTURE_TOWER,
     STRUCTURE_STORAGE,
     STRUCTURE_LINK,
+    STRUCTURE_EXTRACTOR,
     STRUCTURE_CONTAINER,
     STRUCTURE_ROAD,
   ];
@@ -53,6 +54,23 @@ function findBuildPosition(
   type: BuildableStructureConstant
 ): { x: number; y: number } | null {
   const terrain = room.getTerrain();
+
+  // Extractor: on mineral
+  if (type === STRUCTURE_EXTRACTOR) {
+    const mineral = room.find(FIND_MINERALS)[0];
+    if (mineral) {
+      // Check if mineral already has extractor or site
+      const hasExtractor =
+        mineral.pos.lookFor(LOOK_STRUCTURES).some((s) => s.structureType === STRUCTURE_EXTRACTOR);
+      const hasSite =
+        mineral.pos.lookFor(LOOK_CONSTRUCTION_SITES).some((s) => s.structureType === STRUCTURE_EXTRACTOR);
+
+      if (!hasExtractor && !hasSite) {
+        return { x: mineral.pos.x, y: mineral.pos.y };
+      }
+    }
+    return null;
+  }
 
   // Container: near sources
   if (type === STRUCTURE_CONTAINER) {

@@ -190,6 +190,19 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
     fallback: [CARRY, CARRY, MOVE, MOVE],
     moveMode: "pattern",
   },
+
+  /**
+   * MINERAL_HARVESTER - Extracts minerals from extractor
+   * WORK-heavy with CARRY to deliver to terminal/storage
+   * 5 tick cooldown between harvests, so high WORK benefits burst extraction
+   */
+  MINERAL_HARVESTER: {
+    pattern: [WORK, WORK, CARRY],
+    maxRepeats: 10,
+    minEnergy: 400,
+    fallback: [WORK, WORK, CARRY, CARRY, MOVE, MOVE],
+    moveMode: "road",
+  },
 };
 
 /**

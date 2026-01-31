@@ -39,7 +39,8 @@ type SpawnRole =
   | "RESERVER"
   | "SCOUT"
   | "LINK_FILLER"
-  | "UPGRADE_HAULER";
+  | "UPGRADE_HAULER"
+  | "MINERAL_HARVESTER";
 
 const ALL_ROLES: SpawnRole[] = [
   "HARVESTER",
@@ -54,6 +55,7 @@ const ALL_ROLES: SpawnRole[] = [
   "SCOUT",
   "LINK_FILLER",
   "UPGRADE_HAULER",
+  "MINERAL_HARVESTER",
 ];
 
 export interface SpawnCandidate {
@@ -264,6 +266,7 @@ function getCreepTargets(room: Room): Record<string, number> {
     SCOUT: 0,
     LINK_FILLER: 0,
     UPGRADE_HAULER: 0,
+    MINERAL_HARVESTER: 0,
   };
 
   // Link filler and upgrade hauler at RCL 5+ with storage and links
@@ -282,6 +285,19 @@ function getCreepTargets(room: Room): Record<string, number> {
       // Link delivers ~35 energy/tick; each WORK part consumes 1/tick
       if (upgraderWorkParts > 35) {
         targets.UPGRADE_HAULER = 1;
+      }
+    }
+  }
+
+  // Mineral harvester at RCL 6+ with extractor
+  if (rcl >= 6) {
+    const mineral = room.find(FIND_MINERALS)[0];
+    if (mineral && mineral.mineralAmount > 0) {
+      const extractor = mineral.pos
+        .lookFor(LOOK_STRUCTURES)
+        .find((s) => s.structureType === STRUCTURE_EXTRACTOR);
+      if (extractor) {
+        targets.MINERAL_HARVESTER = 1;
       }
     }
   }
@@ -341,6 +357,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return linkFillerUtility(effectiveDeficit, state);
     case "UPGRADE_HAULER":
       return upgradeHaulerUtility(effectiveDeficit, state);
+    case "MINERAL_HARVESTER":
+      return mineralHarvesterUtility(effectiveDeficit, state);
     default:
       return 0;
   }
@@ -667,6 +685,29 @@ function scoutUtility(deficit: number, state: ColonyState): number {
   if (roomsNeedingScan > 0) return 2;
 
   return 0; // All rooms scanned
+}
+
+/**
+ * Mineral harvester utility - low priority luxury role
+ * Only spawns when extractor exists and mineral has resources
+ */
+function mineralHarvesterUtility(deficit: number, state: ColonyState): number {
+  if (state.rcl < 6) return 0;
+  if (deficit <= 0) return 0;
+
+  // Low priority - economy roles come first
+  let utility = deficit * 15;
+
+  // Scale by economy health - only spawn when economy is healthy
+  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
+  utility *= incomeRatio;
+
+  // Require storage with decent reserves before mining minerals
+  if (state.energyStored < 50000) {
+    return 0;
+  }
+
+  return utility;
 }
 
 // ============================================
