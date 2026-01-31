@@ -171,6 +171,42 @@ function collectFromContainers(creep: Creep): boolean {
     }
   }
 
+  // Periodic rebalancing check - if another container is full and unassigned, switch to it
+  if (creep.memory.primaryContainer && Game.time % 20 === 0) {
+    const containers = creep.room.find(FIND_STRUCTURES, {
+      filter: (s) =>
+        s.structureType === STRUCTURE_CONTAINER &&
+        s.pos.findInRange(FIND_SOURCES, 2).length > 0,
+    }) as StructureContainer[];
+
+    // Count assignments
+    const assignmentCounts = new Map<string, number>();
+    for (const c of containers) {
+      assignmentCounts.set(c.id, 0);
+    }
+    for (const hauler of Object.values(Game.creeps)) {
+      if (hauler.memory.role !== "HAULER") continue;
+      if (hauler.memory.room !== creep.room.name) continue;
+      const assigned = hauler.memory.primaryContainer as string | undefined;
+      if (assigned && assignmentCounts.has(assigned)) {
+        assignmentCounts.set(assigned, (assignmentCounts.get(assigned) || 0) + 1);
+      }
+    }
+
+    // Find if any container is full and has no hauler assigned
+    for (const container of containers) {
+      if (container.id === creep.memory.primaryContainer) continue;
+      const count = assignmentCounts.get(container.id) || 0;
+      if (count === 0 && container.store[RESOURCE_ENERGY] > 1500) {
+        // Unassigned container with lots of energy - switch to it
+        creep.memory.primaryContainer = container.id;
+        creep.memory._lastContainerSwitch = Game.time;
+        creep.say("⚖️");
+        break;
+      }
+    }
+  }
+
   const primaryContainer = creep.memory.primaryContainer
     ? Game.getObjectById(creep.memory.primaryContainer as Id<StructureContainer>)
     : null;
