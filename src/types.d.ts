@@ -34,6 +34,10 @@ interface CreepMemory {
   primaryContainer?: Id<StructureContainer>;
   _lastContainerSwitch?: number;
 
+  // Remote hauler renewal tracking
+  _lastRenewTick?: number;
+  _renewTicks?: number;
+
   // Legacy support
   working?: boolean;
 }

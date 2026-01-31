@@ -5,7 +5,17 @@ import { updateRoomIntel, shouldFlee, fleeToSafety } from "../utils/remoteIntel"
  * RemoteHauler - Collects energy from remote mining rooms and delivers home
  * State machine: COLLECTING (in remote room) or DELIVERING (bringing home)
  * Uses road-optimized pathing for efficiency on long routes.
+ *
+ * Renewal System:
+ * Remote haulers renew opportunistically when passing spawn during delivery.
+ * This eliminates spawn time for replacements (~138 ticks per hauler).
  */
+
+// Renewal configuration
+const RENEW_TTL_THRESHOLD = 1200; // Start considering renewal below this TTL
+const RENEW_CRITICAL_TTL = 300; // Force renewal even if spawn busy
+const RENEW_COOLDOWN = 20; // Ticks between renewal attempts
+const RENEW_MAX_TICKS = 15; // Max consecutive ticks to spend renewing
 
 // Move options optimized for road usage
 const ROAD_OPTS: MoveToOpts = {
@@ -19,6 +29,66 @@ const ROAD_OPTS_DELIVER: MoveToOpts = {
   ...ROAD_OPTS,
   visualizePathStyle: { stroke: "#00ff00", opacity: 0.3 },
 };
+
+/**
+ * Attempt opportunistic renewal when adjacent to spawn.
+ * Returns true if renewal happened (creep spent tick renewing).
+ */
+function tryRenew(creep: Creep): boolean {
+  // Skip if TTL is healthy
+  if (!creep.ticksToLive || creep.ticksToLive > RENEW_TTL_THRESHOLD) {
+    return false;
+  }
+
+  // Skip if on cooldown (prevents oscillation)
+  const lastRenew = creep.memory._lastRenewTick || 0;
+  if (Game.time - lastRenew < RENEW_COOLDOWN) {
+    return false;
+  }
+
+  // Track consecutive renew ticks to prevent blocking spawn too long
+  const renewTicks = creep.memory._renewTicks || 0;
+  if (renewTicks >= RENEW_MAX_TICKS) {
+    // Reset and stop renewing for this pass
+    creep.memory._renewTicks = 0;
+    creep.memory._lastRenewTick = Game.time;
+    return false;
+  }
+
+  // Must be adjacent to spawn (don't path to it specifically for renewal)
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn || creep.pos.getRangeTo(spawn) > 1) {
+    // Reset renew ticks when we leave spawn
+    if (renewTicks > 0) {
+      creep.memory._renewTicks = 0;
+    }
+    return false;
+  }
+
+  // Check spawn availability - don't block spawn unless critical
+  const isCritical = creep.ticksToLive < RENEW_CRITICAL_TTL;
+  if (spawn.spawning && !isCritical) {
+    return false;
+  }
+
+  // Check if we have enough energy to renew
+  const room = spawn.room;
+  if (room.energyAvailable < 50) {
+    return false;
+  }
+
+  // Attempt renewal
+  const result = spawn.renewCreep(creep);
+  if (result === OK) {
+    creep.memory._lastRenewTick = Game.time;
+    creep.memory._renewTicks = renewTicks + 1;
+    creep.say("♻️ " + creep.ticksToLive);
+    return true;
+  }
+
+  return false;
+}
+
 export function runRemoteHauler(creep: Creep): void {
   const targetRoom = creep.memory.targetRoom;
   const homeRoom = creep.memory.room;
@@ -111,6 +181,12 @@ function deliver(creep: Creep, homeRoom: string): void {
   if (creep.room.name !== homeRoom) {
     moveToRoom(creep, homeRoom, "#00ff00");
     return;
+  }
+
+  // Opportunistic renewal - try when in home room and near spawn
+  // This runs every tick we're in home room, but only acts if adjacent to spawn
+  if (tryRenew(creep)) {
+    return; // Spent tick renewing
   }
 
   // Priority 1: Storage
