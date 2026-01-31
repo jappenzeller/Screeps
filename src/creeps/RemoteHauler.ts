@@ -65,6 +65,12 @@ function tryRenew(creep: Creep): boolean {
 
   // --- Adjacent to spawn (range <= 1) ---
 
+  // Stop renewing once TTL reaches target (even if we haven't used all allowed ticks)
+  if (creep.ticksToLive >= RENEW_TTL_THRESHOLD) {
+    creep.memory._renewTicks = 0;
+    return false;
+  }
+
   // Track consecutive renew ticks to prevent blocking spawn too long
   const renewTicks = creep.memory._renewTicks || 0;
   if (renewTicks >= RENEW_MAX_TICKS) {
