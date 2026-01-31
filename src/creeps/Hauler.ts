@@ -96,6 +96,7 @@ function assignPrimaryContainer(creep: Creep): Id<StructureContainer> | null {
 /**
  * Find a container that has energy or an active miner
  * Excludes specified container ID
+ * Respects existing hauler assignments to prevent convergence
  */
 function findActiveContainer(
   creep: Creep,
@@ -108,7 +109,24 @@ function findActiveContainer(
       s.pos.findInRange(FIND_SOURCES, 2).length > 0,
   }) as StructureContainer[];
 
-  // Prioritize: has energy > has miner > closest
+  // Count existing assignments (excluding self)
+  const assignmentCounts = new Map<string, number>();
+  for (const container of containers) {
+    assignmentCounts.set(container.id, 0);
+  }
+
+  for (const hauler of Object.values(Game.creeps)) {
+    if (hauler.memory.role !== "HAULER") continue;
+    if (hauler.memory.room !== creep.room.name) continue;
+    if (hauler.name === creep.name) continue;
+
+    const assigned = hauler.memory.primaryContainer as string | undefined;
+    if (assigned && assignmentCounts.has(assigned)) {
+      assignmentCounts.set(assigned, (assignmentCounts.get(assigned) || 0) + 1);
+    }
+  }
+
+  // Prioritize: unassigned > has energy > has miner > closest
   return (
     containers
       .map((c) => ({
@@ -119,8 +137,13 @@ function findActiveContainer(
             filter: (cr) => cr.memory.role === "HARVESTER",
           }).length > 0,
         distance: creep.pos.getRangeTo(c),
+        assignedHaulers: assignmentCounts.get(c.id) || 0,
       }))
       .sort((a, b) => {
+        // Prefer containers without assigned haulers first
+        if (a.assignedHaulers === 0 && b.assignedHaulers > 0) return -1;
+        if (b.assignedHaulers === 0 && a.assignedHaulers > 0) return 1;
+
         // Has significant energy wins
         if (a.energy > 100 && b.energy <= 100) return -1;
         if (b.energy > 100 && a.energy <= 100) return 1;
@@ -207,12 +230,17 @@ function collectFromContainers(creep: Creep): boolean {
       return true;
     }
 
-    // Look for better option (container with miner or energy)
+    // Look for better option (container with miner or energy AND fewer assigned haulers)
     const betterContainer = findActiveContainer(
       creep,
       creep.memory.primaryContainer as Id<StructureContainer>
     );
-    if (betterContainer) {
+    // Only switch if the better container actually has energy or a miner
+    // findActiveContainer now respects assignments, so it won't suggest over-serviced containers
+    if (betterContainer && (betterContainer.store[RESOURCE_ENERGY] > 100 ||
+        betterContainer.pos.findInRange(FIND_MY_CREEPS, 1, {
+          filter: (c) => c.memory.role === "HARVESTER",
+        }).length > 0)) {
       creep.memory.primaryContainer = betterContainer.id;
       creep.memory._lastContainerSwitch = Game.time;
       creep.say("🔄");
