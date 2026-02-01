@@ -632,8 +632,8 @@ function remoteHaulerUtility(deficit: number, state: ColonyState): number {
  * Remote defender utility - based on squad needs from RemoteSquadManager
  * Uses squad-based spawning to coordinate attacks against healer-supported invaders
  *
- * CRITICAL: When threats exist, defenders MUST spawn before other remote roles.
- * Defense is not optional - losing miners/haulers to invaders is expensive.
+ * Both melee and ranged defenders spawn independently when threats detected.
+ * Melee gets slightly higher utility (30) to spawn first.
  */
 function remoteDefenderUtility(state: ColonyState): number {
   if (state.rcl < 4) return 0;
@@ -653,65 +653,48 @@ function remoteDefenderUtility(state: ColonyState): number {
 
   if (totalNeeded === 0) return 0;
 
-  // CRITICAL: Defense utility must be VERY HIGH to override other roles
-  // When threats exist, spawning defenders is more important than:
-  // - Additional remote haulers (35 base)
-  // - Remote miners (40 base)
-  // - Reservers (25 base)
-  // Only harvesters (100) and haulers (90) in emergency should beat this
-  const DEFENSE_PRIORITY = 150;
+  // Base utility for melee defender
+  // Slightly higher than ranged (28) so melee spawns first
+  const BASE_UTILITY = 30;
 
-  // Scale with number of defenders needed, but minimum is still very high
-  const utility = DEFENSE_PRIORITY + (totalNeeded - 1) * 50;
-
-  // DO NOT reduce based on economy - defense is critical regardless of income
-  // Losing miners to invaders costs more than the defender spawn cost
+  // Scale with number of defenders needed
+  const utility = BASE_UTILITY + (totalNeeded - 1) * 10;
 
   return utility;
 }
 
 /**
- * Remote defender ranged utility - spawns only when melee defender exists
+ * Remote defender ranged utility - spawns independently when threats exist
  * Provides ranged support and healing for melee defenders
+ *
+ * Both defenders spawn when threat detected - ranged doesn't wait for melee.
+ * Slightly lower utility (28) than melee (30) so melee spawns first.
  */
 function remoteDefenderRangedUtility(state: ColonyState): number {
   if (state.rcl < 6) return 0; // Need RCL 6 for the energy cost
 
-  // Only spawn if a melee defender exists with sufficient TTL
-  const meleeDefender = Object.values(Game.creeps).find(
-    (c) =>
-      c.memory.role === "REMOTE_DEFENDER" &&
-      c.memory.room === state.room.name &&
-      c.ticksToLive &&
-      c.ticksToLive > 200
-  );
+  // Use squad manager to determine if threats exist (same as melee)
+  const squadManager = new RemoteSquadManager(state.room);
+  const needs = squadManager.getDefendersNeeded();
 
-  if (!meleeDefender) return 0;
+  // No squad needs = no utility
+  if (needs.length === 0) return 0;
 
   // Check if we already have ranged support
   const existingRanged = Object.values(Game.creeps).filter(
     (c) =>
       c.memory.role === "REMOTE_DEFENDER_RANGED" &&
-      c.memory.room === state.room.name
+      c.memory.room === state.room.name &&
+      c.ticksToLive &&
+      c.ticksToLive > 100
   ).length;
 
-  // Only need 1 ranged per melee defender
+  // Only need 1 ranged defender total
   if (existingRanged >= 1) return 0;
 
-  // Check for active threats in remote rooms
-  let hasThreats = false;
-  for (const roomName of state.remoteRooms) {
-    const roomMem = Memory.rooms?.[roomName];
-    if (roomMem?.hostiles && roomMem.hostiles > 0) {
-      hasThreats = true;
-      break;
-    }
-  }
-
-  if (!hasThreats) return 0;
-
-  // Lower priority than melee defender (150) but still high
-  return 80;
+  // Base utility for ranged defender
+  // Slightly lower than melee (30) so melee spawns first
+  return 28;
 }
 
 /**

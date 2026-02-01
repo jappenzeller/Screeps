@@ -171,7 +171,7 @@ export function runRemoteDefenderRanged(creep: Creep): void {
 
   const homeRoom = creep.memory.room;
 
-  // Find melee defender to follow
+  // Find melee defender to follow (if one exists)
   const meleeDefender = Object.values(Game.creeps).find(
     (c) =>
       c.memory.role === "REMOTE_DEFENDER" &&
@@ -180,8 +180,17 @@ export function runRemoteDefenderRanged(creep: Creep): void {
       c.ticksToLive > 50
   );
 
-  if (!meleeDefender) {
-    // No defender - go home and handle renewal/idle
+  // Get target room (assigned from spawn or follow melee defender)
+  let targetRoom = creep.memory.targetRoom;
+
+  // If melee defender exists and has a target, follow them
+  if (meleeDefender?.memory.targetRoom) {
+    targetRoom = meleeDefender.memory.targetRoom;
+    creep.memory.targetRoom = targetRoom;
+  }
+
+  if (!targetRoom) {
+    // No target room assigned - go home and handle renewal/idle
     if (creep.room.name !== homeRoom) {
       moveToRoom(creep, homeRoom, "#888888");
       creep.say("HOME");
@@ -204,17 +213,17 @@ export function runRemoteDefenderRanged(creep: Creep): void {
     return;
   }
 
-  // Cancel renewal when following defender into combat
+  // Cancel renewal when heading into combat
   creep.memory.renewing = false;
 
-  // Follow defender to their room
-  if (creep.room.name !== meleeDefender.room.name) {
-    moveToRoom(creep, meleeDefender.room.name, "#ff0000");
-    creep.say("FOLLOW");
+  // Move to target room
+  if (creep.room.name !== targetRoom) {
+    moveToRoom(creep, targetRoom, "#ff0000");
+    creep.say(meleeDefender ? "FOLLOW" : "HUNT");
     return;
   }
 
-  // In same room as defender - find and engage hostiles
+  // In target room - find and engage hostiles
   const hostile = findPriorityTarget(creep);
 
   if (hostile) {
@@ -242,21 +251,35 @@ export function runRemoteDefenderRanged(creep: Creep): void {
       smartMoveTo(creep, hostile, { range: 3, reusePath: 3 });
     }
   } else {
-    // No hostile - follow defender
-    const rangeToDefender = creep.pos.getRangeTo(meleeDefender);
-    if (rangeToDefender > 3) {
-      smartMoveTo(creep, meleeDefender, { reusePath: 5 });
+    // No hostile - follow defender if present, otherwise idle in room
+    if (meleeDefender && creep.room.name === meleeDefender.room.name) {
+      const rangeToDefender = creep.pos.getRangeTo(meleeDefender);
+      if (rangeToDefender > 3) {
+        smartMoveTo(creep, meleeDefender, { reusePath: 5 });
+      }
     }
     creep.say("OK");
+
+    // Room cleared - clear target so we can go home/renew
+    const remainingHostiles = creep.room.find(FIND_HOSTILE_CREEPS).length;
+    const remainingCores = creep.room.find(FIND_HOSTILE_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_INVADER_CORE,
+    }).length;
+
+    if (remainingHostiles === 0 && remainingCores === 0) {
+      delete creep.memory.targetRoom;
+    }
   }
 
   // Heal defender if hurt (after attack actions)
-  const rangeToDefender = creep.pos.getRangeTo(meleeDefender);
-  if (meleeDefender.hits < meleeDefender.hitsMax) {
-    if (rangeToDefender === 1) {
-      creep.heal(meleeDefender);
-    } else if (rangeToDefender <= 3) {
-      creep.rangedHeal(meleeDefender);
+  if (meleeDefender && creep.room.name === meleeDefender.room.name) {
+    const rangeToDefender = creep.pos.getRangeTo(meleeDefender);
+    if (meleeDefender.hits < meleeDefender.hitsMax) {
+      if (rangeToDefender === 1) {
+        creep.heal(meleeDefender);
+      } else if (rangeToDefender <= 3) {
+        creep.rangedHeal(meleeDefender);
+      }
     }
   }
 }
