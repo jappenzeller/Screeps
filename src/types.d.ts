@@ -175,6 +175,7 @@ interface ScoutMemory extends CreepMemory {
   targetRoom: string;
   scoutQueue: string[];
   homeRoom: string;
+  scannedRooms?: string[]; // Rooms this scout has already scanned
 }
 
 // Debug flags

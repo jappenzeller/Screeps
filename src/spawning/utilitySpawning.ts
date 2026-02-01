@@ -738,23 +738,31 @@ function linkFillerUtility(deficit: number, state: ColonyState): number {
 }
 
 /**
- * Scout utility - luxury role, very low priority
+ * Scout utility - spawns multiple scouts for faster exploration
+ * Up to 4 scouts can scan simultaneously in different directions
  */
-function scoutUtility(deficit: number, state: ColonyState): number {
+function scoutUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl < 3) return 0;
-  if (deficit <= 0) return 0;
 
-  // Count rooms needing scan for priority
+  // Count rooms needing scan
   const roomsNeedingScan = countRoomsNeedingScan(state.room.name);
+  if (roomsNeedingScan === 0) return 0;
 
-  // High utility - scout before second upgrader for intel gathering
-  // Second upgrader typically has utility 15-30, so scout needs to beat that
-  if (roomsNeedingScan > 40) return 35; // Over half of 81 rooms - critical
-  if (roomsNeedingScan > 20) return 28;
-  if (roomsNeedingScan > 10) return 24;
-  if (roomsNeedingScan > 0) return 18; // Even a few rooms warrant scouting
+  // Count existing scouts
+  const existingScouts = Object.values(Game.creeps).filter(
+    (c) => c.memory.role === "SCOUT" && c.memory.room === state.room.name
+  ).length;
 
-  return 0; // All rooms scanned
+  // Cap at 4 scouts or rooms needing scan, whichever is lower
+  const maxScouts = Math.min(4, roomsNeedingScan);
+  if (existingScouts >= maxScouts) return 0;
+
+  // Higher utility when more rooms need scanning
+  // Base utility scales with urgency, decreases with existing scouts
+  const baseUtility = 25;
+  const urgency = Math.min(roomsNeedingScan / 20, 2); // scales up to 2x
+
+  return (baseUtility * urgency) / (existingScouts + 1);
 }
 
 /**

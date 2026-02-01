@@ -5,6 +5,7 @@ const STALE_THRESHOLD = 10000; // Re-scan after 10000 ticks
 
 /**
  * Scout - Explores rooms within 4-tile radius and records comprehensive intel
+ * Multiple scouts can scan simultaneously, each avoiding already-targeted rooms
  * Stores room data in Memory.intel for expansion planning and territory mapping
  */
 export function runScout(creep: Creep): void {
@@ -17,26 +18,42 @@ export function runScout(creep: Creep): void {
   if (!memory.scoutQueue || memory.scoutQueue.length === 0) {
     memory.scoutQueue = generateScoutQueue(memory.homeRoom, SCOUT_RANGE);
   }
+  if (!memory.scannedRooms) {
+    memory.scannedRooms = [];
+  }
 
   // Record intel about current room
   gatherRoomIntel(creep.room, memory.homeRoom);
 
-  // Get target room or find next one
-  if (!memory.targetRoom || creep.room.name === memory.targetRoom) {
-    const nextTarget = getNextScoutTarget(memory);
+  // If we reached target room, mark as scanned and clear target
+  if (memory.targetRoom && creep.room.name === memory.targetRoom) {
+    if (!memory.scannedRooms.includes(memory.targetRoom)) {
+      memory.scannedRooms.push(memory.targetRoom);
+    }
+    memory.targetRoom = "";
+  }
+
+  // Get next target if needed
+  if (!memory.targetRoom) {
+    const nextTarget = getNextScoutTarget(memory, creep);
     memory.targetRoom = nextTarget || "";
   }
 
   if (!memory.targetRoom) {
-    // All rooms scouted - return home and idle
+    // All rooms scouted - recycle at spawn
     if (creep.room.name !== memory.homeRoom) {
       moveToRoom(creep, memory.homeRoom, "#00ffff");
-    } else {
-      // Stay away from borders
-      const pos = creep.pos;
-      if (pos.x <= 2 || pos.x >= 47 || pos.y <= 2 || pos.y >= 47) {
-        const center = new RoomPosition(25, 25, creep.room.name);
-        smartMoveTo(creep, center, { visualizePathStyle: { stroke: "#00ffff" } });
+      creep.say("DONE");
+      return;
+    }
+
+    const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+    if (spawn) {
+      if (creep.pos.getRangeTo(spawn) > 1) {
+        smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ffff" } });
+        creep.say("RECYCLE");
+      } else {
+        spawn.recycleCreep(creep);
       }
     }
     return;
@@ -45,6 +62,7 @@ export function runScout(creep: Creep): void {
   // Move to target room
   if (creep.room.name !== memory.targetRoom) {
     moveToRoom(creep, memory.targetRoom, "#00ffff");
+    creep.say("SCOUT");
   } else {
     // In target room - move toward center for full visibility
     const center = new RoomPosition(25, 25, creep.room.name);
@@ -236,19 +254,49 @@ function coordsToRoomName(x: number, y: number): string {
 
 /**
  * Get next room to scout from queue
+ * Avoids rooms already targeted by other scouts and sorts by proximity
  */
-function getNextScoutTarget(memory: ScoutMemory): string | undefined {
+function getNextScoutTarget(memory: ScoutMemory, creep: Creep): string | undefined {
   const intel = Memory.intel || {};
+  const scannedRooms = memory.scannedRooms || [];
 
-  // Find room in queue that needs scanning
-  // Prioritize: never scanned > stale > recently scanned
-  for (const room of memory.scoutQueue) {
+  // Get rooms already targeted by other scouts
+  const targetedByOthers = Object.values(Game.creeps)
+    .filter(
+      (c) =>
+        c.memory.role === "SCOUT" &&
+        c.name !== creep.name &&
+        c.memory.room === memory.homeRoom &&
+        (c.memory as ScoutMemory).targetRoom
+    )
+    .map((c) => (c.memory as ScoutMemory).targetRoom);
+
+  // Find rooms that need scanning and aren't already targeted
+  const candidates = memory.scoutQueue.filter((room) => {
+    // Skip if this scout already scanned it
+    if (scannedRooms.includes(room)) return false;
+
+    // Skip if another scout is targeting it
+    if (targetedByOthers.includes(room)) return false;
+
+    // Check if room needs scanning
     const existing = intel[room];
-    if (!existing) return room; // Never scanned
-    if (Game.time - existing.lastScanned > STALE_THRESHOLD) return room; // Stale
-  }
+    if (!existing) return true; // Never scanned
+    if (Game.time - existing.lastScanned > STALE_THRESHOLD) return true; // Stale
 
-  return undefined; // All rooms recently scanned
+    return false;
+  });
+
+  if (candidates.length === 0) return undefined;
+
+  // Sort by distance to current position (nearest first)
+  candidates.sort((a, b) => {
+    const distA = Game.map.getRoomLinearDistance(creep.room.name, a);
+    const distB = Game.map.getRoomLinearDistance(creep.room.name, b);
+    return distA - distB;
+  });
+
+  return candidates[0];
 }
 
 /**

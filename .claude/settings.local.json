@@ -77,7 +77,8 @@
       "Bash(aws dynamodb update-time-to-live:*)",
       "Bash(MSYS_NO_PATHCONV=1 AWS_PROFILE=screeps-monitor aws logs:*)",
       "Bash(npm run:*)",
-      "Bash(npx tsc --noEmit)"
+      "Bash(npx tsc --noEmit)",
+      "Bash(git status:*)"
     ]
   }
 }
