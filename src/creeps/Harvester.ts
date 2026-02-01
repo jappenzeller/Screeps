@@ -7,6 +7,70 @@ import { shouldEmergencyRenew } from "../managers/RenewalManager";
  * Early game: Does both harvesting AND delivering (bootstrap)
  * Late game: If container at source, becomes static miner (sits on container)
  */
+
+// ============================================
+// Renewal Logic for Static Miners
+// ============================================
+
+function getSpawnDistance(creep: Creep): number {
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  return spawn ? creep.pos.getRangeTo(spawn) : 999;
+}
+
+function shouldGoRenew(creep: Creep): boolean {
+  if (!creep.ticksToLive) return false;
+
+  const distance = getSpawnDistance(creep);
+  const roundTrip = distance * 2;
+  const buffer = 30;
+
+  // Leave when TTL barely covers round trip + buffer
+  return creep.ticksToLive < roundTrip + buffer;
+}
+
+function getRenewalTarget(creep: Creep): number {
+  const distance = getSpawnDistance(creep);
+  const roundTrip = distance * 2;
+  const workPeriod = 500; // ticks working at source between renewal trips
+  const buffer = 30;
+
+  return roundTrip + workPeriod + buffer;
+}
+
+function runRenewal(creep: Creep): boolean {
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return false;
+
+  const range = creep.pos.getRangeTo(spawn);
+
+  if (range > 1) {
+    smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+    creep.say("RENEW");
+    return true;
+  }
+
+  // At spawn
+  if (spawn.spawning) {
+    // Spawn busy - if TTL critical, wait. Otherwise abandon and die.
+    if (creep.ticksToLive && creep.ticksToLive < 20) {
+      return true; // wait
+    }
+    return false; // give up, respawn later
+  }
+
+  const target = getRenewalTarget(creep);
+  if (creep.ticksToLive && creep.ticksToLive >= target) {
+    // Done renewing, go back to source
+    return false;
+  }
+
+  spawn.renewCreep(creep);
+  return true;
+}
+
+// ============================================
+// Main Harvester Logic
+// ============================================
 export function runHarvester(creep: Creep): void {
   // Emergency renewal check - only for critical, dying harvesters that are the last one
   if (shouldEmergencyRenew(creep)) {
@@ -83,6 +147,13 @@ export function runHarvester(creep: Creep): void {
  * Never delivers - that's the hauler's job. Just harvest and transfer to link/container.
  */
 function runStaticMiner(creep: Creep, source: Source, container: StructureContainer): void {
+  // Check for renewal - static miners walk to spawn to renew
+  if (shouldGoRenew(creep) || creep.memory.renewing) {
+    creep.memory.renewing = true;
+    if (runRenewal(creep)) return;
+    creep.memory.renewing = false; // done or gave up
+  }
+
   // Check for source link (RCL 5+)
   const sourceLink = source.pos.findInRange(FIND_MY_STRUCTURES, 2, {
     filter: (s) => s.structureType === STRUCTURE_LINK,

@@ -5,8 +5,77 @@ import { LinkManager } from "../structures/LinkManager";
  * LinkFiller - Parks between storage and storage link, keeping the link filled.
  * Tiny creep that withdraws from storage and transfers to storage link.
  * The LinkManager then transfers energy from storage link to controller link.
+ * Persists via renewal (short round trip since spawn is nearby).
  */
+
+// ============================================
+// Renewal Logic for Link Filler
+// ============================================
+
+function getSpawnDistance(creep: Creep): number {
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  return spawn ? creep.pos.getRangeTo(spawn) : 999;
+}
+
+function shouldGoRenew(creep: Creep): boolean {
+  if (!creep.ticksToLive) return false;
+
+  const distance = getSpawnDistance(creep);
+  const roundTrip = distance * 2;
+  const buffer = 20;
+
+  return creep.ticksToLive < roundTrip + buffer;
+}
+
+function getRenewalTarget(creep: Creep): number {
+  const distance = getSpawnDistance(creep);
+  const roundTrip = distance * 2;
+  const workPeriod = 500;
+  const buffer = 20;
+
+  return roundTrip + workPeriod + buffer;
+}
+
+function runRenewal(creep: Creep): boolean {
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return false;
+
+  const range = creep.pos.getRangeTo(spawn);
+
+  if (range > 1) {
+    smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+    creep.say("RENEW");
+    return true;
+  }
+
+  // At spawn
+  if (spawn.spawning) {
+    if (creep.ticksToLive && creep.ticksToLive < 15) {
+      return true; // critical, wait
+    }
+    return false; // give up
+  }
+
+  const target = getRenewalTarget(creep);
+  if (creep.ticksToLive && creep.ticksToLive >= target) {
+    return false; // done
+  }
+
+  spawn.renewCreep(creep);
+  return true;
+}
+
+// ============================================
+// Main Link Filler Logic
+// ============================================
+
 export function runLinkFiller(creep: Creep): void {
+  // Check for renewal
+  if (shouldGoRenew(creep) || creep.memory.renewing) {
+    creep.memory.renewing = true;
+    if (runRenewal(creep)) return;
+    creep.memory.renewing = false;
+  }
   const storage = creep.room.storage;
   if (!storage) {
     creep.say("no stor");

@@ -13,11 +13,12 @@ export const CONFIG = {
     BUILDER: 5,
     DEFENDER: 6,
     REMOTE_DEFENDER: 7,
-    RESERVER: 8,
-    REMOTE_MINER: 9,
-    REMOTE_HAULER: 10,
-    CLAIMER: 11,
-    LINK_FILLER: 12,
+    REMOTE_DEFENDER_RANGED: 8,
+    RESERVER: 9,
+    REMOTE_MINER: 10,
+    REMOTE_HAULER: 11,
+    CLAIMER: 12,
+    LINK_FILLER: 13,
   } as const,
 
   // Minimum creep counts per room
@@ -78,6 +79,7 @@ export const CONFIG = {
       REMOTE_MINER: 40, // Expansion
       REMOTE_HAULER: 35, // Support remote mining
       REMOTE_DEFENDER: 45, // Protect remotes
+      REMOTE_DEFENDER_RANGED: 40, // Support melee defenders
       RESERVER: 25, // Maintain reservations
       LINK_FILLER: 70, // Infrastructure
       SCOUT: 25, // Intel gathering - spawn before second upgrader

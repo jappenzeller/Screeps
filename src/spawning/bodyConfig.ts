@@ -108,6 +108,20 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
   },
 
   /**
+   * REMOTE_DEFENDER_RANGED - Ranged support for melee defenders
+   * Ranged attack + heal for sustain, keeps distance
+   */
+  REMOTE_DEFENDER_RANGED: {
+    pattern: [RANGED_ATTACK, MOVE],
+    suffix: [HEAL, MOVE],
+    maxRepeats: 4,
+    minEnergy: 900,
+    fallback: [RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, HEAL, MOVE, MOVE, MOVE, MOVE],
+    moveMode: "pattern",
+    sortForCombat: true,
+  },
+
+  /**
    * SCOUT - Fast exploration unit
    * Just MOVE parts for speed
    */

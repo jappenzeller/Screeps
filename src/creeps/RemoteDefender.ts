@@ -4,8 +4,126 @@ import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 /**
  * RemoteDefender - Squad-based defense for remote mining rooms
  * Stages at home until squad is ready, then attacks together
+ * Persists via renewal when idle (no threats)
  */
+
+// ============================================
+// Renewal Logic for Remote Defenders
+// ============================================
+
+function getIdlePosition(creep: Creep): RoomPosition {
+  // Idle near center of home room, away from spawn
+  return new RoomPosition(25, 25, creep.memory.room);
+}
+
+function getIdleToSpawnDistance(creep: Creep): number {
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return 999;
+  const idlePos = getIdlePosition(creep);
+  return idlePos.getRangeTo(spawn);
+}
+
+function shouldGoRenew(creep: Creep): boolean {
+  if (!creep.ticksToLive) return false;
+
+  // Distance from idle position to spawn
+  const idleToSpawn = getIdleToSpawnDistance(creep);
+  const buffer = 30;
+
+  // Leave idle when TTL covers travel + buffer
+  return creep.ticksToLive < idleToSpawn + buffer;
+}
+
+function getRenewalTarget(creep: Creep): number {
+  const idleToSpawn = getIdleToSpawnDistance(creep);
+  const idlePeriod = 600; // ticks idling between renewal trips
+  const buffer = 30;
+
+  return idleToSpawn + idlePeriod + buffer;
+}
+
+function runRenewal(creep: Creep): boolean {
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return false;
+
+  const range = creep.pos.getRangeTo(spawn);
+
+  if (range > 1) {
+    smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+    creep.say("RENEW");
+    return true;
+  }
+
+  // At spawn
+  if (spawn.spawning) {
+    if (creep.ticksToLive && creep.ticksToLive < 20) {
+      return true; // critical, wait
+    }
+    return false; // give up, respawn later
+  }
+
+  const target = getRenewalTarget(creep);
+  if (creep.ticksToLive && creep.ticksToLive >= target) {
+    return false; // done renewing
+  }
+
+  spawn.renewCreep(creep);
+  return true;
+}
+
+// ============================================
+// Damage Detection and Retreat Logic
+// ============================================
+
+function isDamaged(creep: Creep): boolean {
+  return creep.hits < creep.hitsMax;
+}
+
+function getHealPosition(creep: Creep): RoomPosition {
+  // Go to tower range in home room (near storage or center)
+  const homeRoomObj = Game.rooms[creep.memory.room];
+  if (homeRoomObj?.storage) {
+    return homeRoomObj.storage.pos;
+  }
+  return new RoomPosition(25, 25, creep.memory.room);
+}
+
+function runRetreat(creep: Creep): boolean {
+  // Get to home room first
+  if (creep.room.name !== creep.memory.room) {
+    moveToRoom(creep, creep.memory.room, "#ff6600");
+    creep.say("FLEE");
+    return true;
+  }
+
+  // Move to heal position (tower range)
+  const healPos = getHealPosition(creep);
+  if (creep.pos.getRangeTo(healPos) > 3) {
+    smartMoveTo(creep, healPos, { visualizePathStyle: { stroke: "#ff6600" }, reusePath: 5 });
+    creep.say("HEAL");
+  }
+  // Stay until fully healed by towers
+  return true;
+}
+
+// ============================================
+// Main Remote Defender Logic
+// ============================================
 export function runRemoteDefender(creep: Creep): void {
+  // Priority 1: Retreat if damaged
+  if (isDamaged(creep)) {
+    creep.memory.retreating = true;
+  }
+
+  if (creep.memory.retreating) {
+    if (creep.hits === creep.hitsMax) {
+      creep.memory.retreating = false; // fully healed
+    } else {
+      runRetreat(creep);
+      return;
+    }
+  }
+
   const homeRoom = creep.memory.room;
   let targetRoom = creep.memory.targetRoom;
 
@@ -19,20 +137,29 @@ export function runRemoteDefender(creep: Creep): void {
     if (newTarget) {
       creep.memory.targetRoom = newTarget;
       targetRoom = newTarget;
+      creep.memory.renewing = false; // Cancel renewal for combat
       creep.say("NEW");
     } else {
-      // No threats anywhere - move home and wait
+      // No threats anywhere - move home and handle renewal/idle
       if (creep.room.name !== homeRoom) {
         moveToRoom(creep, homeRoom, "#888888");
         creep.say("HOME");
-      } else {
-        // Idle near spawn
-        const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
-        if (spawn && creep.pos.getRangeTo(spawn) > 3) {
-          smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#888888" } });
-        }
-        creep.say("IDLE");
+        return;
       }
+
+      // At home - check for renewal
+      if (shouldGoRenew(creep) || creep.memory.renewing) {
+        creep.memory.renewing = true;
+        if (runRenewal(creep)) return;
+        creep.memory.renewing = false;
+      }
+
+      // Idle at center position (away from spawn)
+      const idlePos = getIdlePosition(creep);
+      if (creep.pos.getRangeTo(idlePos) > 2) {
+        smartMoveTo(creep, idlePos, { visualizePathStyle: { stroke: "#888888" } });
+      }
+      creep.say("IDLE");
       return;
     }
   }

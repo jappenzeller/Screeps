@@ -37,6 +37,12 @@ interface CreepMemory {
   _lastRenewTick?: number;
   _renewTicks?: number;
 
+  // Harvester/defender renewal state
+  renewing?: boolean;
+
+  // Defender retreat state (damaged, needs tower healing)
+  retreating?: boolean;
+
   // Legacy support
   working?: boolean;
 }
