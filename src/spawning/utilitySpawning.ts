@@ -1085,6 +1085,14 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
       } as unknown as Partial<CreepMemory>;
     }
 
+    case "CLAIMER": {
+      const expansionTarget = Memory.expansion?.targetRoom;
+      return {
+        ...base,
+        targetRoom: expansionTarget || undefined,
+      };
+    }
+
     default:
       return base;
   }
