@@ -26,6 +26,7 @@ import { drawRoomVisuals } from "./visuals/creepVisuals";
 import { CommandExecutor } from "./core/CommandExecutor";
 import { EconomyTracker } from "./core/EconomyTracker";
 import { PositionLogger } from "./logging/PositionLogger";
+import { BootstrapManager } from "./expansion/BootstrapManager";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -68,6 +69,10 @@ export function loop(): void {
 
     runRoom(room);
   }
+
+  // Run bootstrap manager (empire-wide expansion coordination)
+  const bootstrapManager = new BootstrapManager();
+  bootstrapManager.run();
 
   // Run all creeps
   runCreeps();

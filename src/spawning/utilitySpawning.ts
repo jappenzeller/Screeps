@@ -21,6 +21,9 @@ import {
   rateUtility,
 } from "./utilities/energyUtility";
 import { roleCountUtility, getEffectiveCount } from "./utilities/populationUtility";
+import { BootstrapManager } from "../expansion/BootstrapManager";
+import { getBootstrapBuilderBody } from "../creeps/BootstrapBuilder";
+import { getBootstrapHaulerBody } from "../creeps/BootstrapHauler";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
@@ -41,7 +44,9 @@ type SpawnRole =
   | "SCOUT"
   | "LINK_FILLER"
   | "MINERAL_HARVESTER"
-  | "CLAIMER";
+  | "CLAIMER"
+  | "BOOTSTRAP_BUILDER"
+  | "BOOTSTRAP_HAULER";
 
 const ALL_ROLES: SpawnRole[] = [
   "HARVESTER",
@@ -58,6 +63,8 @@ const ALL_ROLES: SpawnRole[] = [
   "LINK_FILLER",
   "MINERAL_HARVESTER",
   "CLAIMER",
+  "BOOTSTRAP_BUILDER",
+  "BOOTSTRAP_HAULER",
 ];
 
 export interface SpawnCandidate {
@@ -364,6 +371,10 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return mineralHarvesterUtility(effectiveDeficit, state);
     case "CLAIMER":
       return claimerUtility(state);
+    case "BOOTSTRAP_BUILDER":
+      return bootstrapBuilderUtility(state);
+    case "BOOTSTRAP_HAULER":
+      return bootstrapHaulerUtility(state);
     default:
       return 0;
   }
@@ -920,6 +931,44 @@ function claimerUtility(_state: ColonyState): number {
   return 40;
 }
 
+/**
+ * Bootstrap builder utility - spawns when BootstrapManager needs builders
+ * Only spawns from the parent room of an active bootstrap operation
+ */
+function bootstrapBuilderUtility(state: ColonyState): number {
+  const bootstrapManager = new BootstrapManager();
+  const needs = bootstrapManager.getCreepNeeds();
+
+  // Check if this room is the parent and needs builders
+  const builderNeeds = needs.filter(
+    (n) => n.role === "BOOTSTRAP_BUILDER" && n.parentRoom === state.room.name
+  );
+
+  if (builderNeeds.length === 0) return 0;
+
+  // High priority - getting spawn built is critical
+  return 80;
+}
+
+/**
+ * Bootstrap hauler utility - spawns when BootstrapManager needs haulers
+ * Only spawns from the parent room of an active bootstrap operation
+ */
+function bootstrapHaulerUtility(state: ColonyState): number {
+  const bootstrapManager = new BootstrapManager();
+  const needs = bootstrapManager.getCreepNeeds();
+
+  // Check if this room is the parent and needs haulers
+  const haulerNeeds = needs.filter(
+    (n) => n.role === "BOOTSTRAP_HAULER" && n.parentRoom === state.room.name
+  );
+
+  if (haulerNeeds.length === 0) return 0;
+
+  // High priority - energy delivery is critical for spawn construction
+  return 75;
+}
+
 // ============================================
 // Body Building Functions
 // ============================================
@@ -938,6 +987,14 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   // In emergency, build what we can afford NOW
   // Otherwise, build for full capacity (wait for energy)
   const energy = isEmergency ? state.energyAvailable : state.energyCapacity;
+
+  // Bootstrap roles use their own body builders
+  if (role === "BOOTSTRAP_BUILDER") {
+    return getBootstrapBuilderBody(energy);
+  }
+  if (role === "BOOTSTRAP_HAULER") {
+    return getBootstrapHaulerBody(energy);
+  }
 
   // Can't afford this role's minimum body
   const minCost = ROLE_MIN_COST[role] || 200;
@@ -1000,6 +1057,32 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
         ...base,
         targetRoom: targetRoom || undefined,
       };
+    }
+
+    case "BOOTSTRAP_BUILDER": {
+      const bootstrapManager = new BootstrapManager();
+      const status = bootstrapManager.getStatus();
+      if (!status) return base;
+      return {
+        ...base,
+        role: "BOOTSTRAP_BUILDER",
+        parentRoom: status.parentRoom,
+        targetRoom: status.targetRoom,
+        bootstrapState: "TRAVELING_TO_TARGET",
+      } as unknown as Partial<CreepMemory>;
+    }
+
+    case "BOOTSTRAP_HAULER": {
+      const bootstrapManager = new BootstrapManager();
+      const status = bootstrapManager.getStatus();
+      if (!status) return base;
+      return {
+        ...base,
+        role: "BOOTSTRAP_HAULER",
+        parentRoom: status.parentRoom,
+        targetRoom: status.targetRoom,
+        bootstrapState: "LOADING",
+      } as unknown as Partial<CreepMemory>;
     }
 
     default:

@@ -7,6 +7,7 @@ import { ColonyManager } from "../core/ColonyManager";
 import { getSafeModeStatus } from "../defense/AutoSafeMode";
 import { TrafficMonitor } from "../core/TrafficMonitor";
 import { StatsCollector } from "./StatsCollector";
+import { BootstrapManager } from "../expansion/BootstrapManager";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -72,6 +73,10 @@ clearTraffic("W1N1") - Clear traffic data for a room
 trafficReport("W1N1") - Detailed traffic report with path coverage
 suggestRoads("W1N1") - Get road construction commands for hotspots
 moveStats()          - Show creeps with movement issues (stuck/oscillating)
+bootstrap.status()   - Show expansion bootstrap status
+bootstrap.start(target, parent) - Start expansion to target room
+bootstrap.queue(target, parent) - Queue expansion for later
+bootstrap.cancel(target) - Cancel expansion to target room
 `);
   };
 
@@ -1060,5 +1065,213 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     return "OK";
+  };
+
+  // Bootstrap expansion commands
+  global.bootstrap = {
+    status: () => {
+      const mem = Memory.bootstrap;
+
+      console.log("=== Bootstrap Expansion Status ===");
+
+      if (!mem) {
+        console.log("No bootstrap data. Use bootstrap.start(targetRoom, parentRoom) to begin.");
+        return "No data";
+      }
+
+      // Show active expansion
+      const active = mem.active;
+      if (!active) {
+        console.log("\nNo active expansion.");
+      } else {
+        console.log(`\nActive Expansion:`);
+        console.log(`  Target: ${active.targetRoom}`);
+        console.log(`  Parent: ${active.parentRoom}`);
+        console.log(`  State: ${active.state}`);
+        console.log(`  Started: tick ${active.startedAt} (${Game.time - active.startedAt} ticks ago)`);
+        console.log(`  State changed: tick ${active.stateChangedAt} (${Game.time - active.stateChangedAt} ticks ago)`);
+        console.log(`  Attempts: ${active.attempts}/${mem.config.maxAttempts}`);
+        if (active.spawnSitePos) {
+          console.log(`  Spawn Position: (${active.spawnSitePos.x}, ${active.spawnSitePos.y})`);
+        }
+        if (active.spawnProgress > 0) {
+          console.log(`  Spawn Progress: ${active.spawnProgress}/15000 (${Math.floor(active.spawnProgress / 150)}%)`);
+        }
+        console.log(`  Builders: ${active.assignedBuilders.filter(n => Game.creeps[n]).length}/${mem.config.builderCount}`);
+        console.log(`  Haulers: ${active.assignedHaulers.filter(n => Game.creeps[n]).length}/${mem.config.haulerCount}`);
+        if (active.lastFailure) {
+          console.log(`  Last Failure: ${active.lastFailure}`);
+        }
+      }
+
+      // Show queue
+      const queue = mem.queue || [];
+      if (queue.length > 0) {
+        console.log(`\nQueued Rooms (${queue.length}):`);
+        for (const roomName of queue) {
+          console.log(`  ${roomName}`);
+        }
+      }
+
+      // Show history
+      const history = mem.history || [];
+      if (history.length > 0) {
+        console.log(`\nExpansion History (${history.length}):`);
+        for (const h of history.slice(-5)) {  // Last 5
+          const status = h.finalState === "COMPLETE" ? "✓" : "✗";
+          console.log(`  ${status} ${h.targetRoom} (from ${h.parentRoom}) - ${h.totalTicks} ticks, ${h.energySpent} energy`);
+        }
+      }
+
+      // Show bootstrap creeps
+      const bootstrapCreeps = Object.values(Game.creeps).filter(
+        (c) => c.memory.role === "BOOTSTRAP_BUILDER" || c.memory.role === "BOOTSTRAP_HAULER"
+      );
+      if (bootstrapCreeps.length > 0) {
+        console.log(`\nBootstrap Creeps (${bootstrapCreeps.length}):`);
+        for (const c of bootstrapCreeps) {
+          const cmem = c.memory as BootstrapBuilderMemory | BootstrapHaulerMemory;
+          console.log(`  ${c.name} [${c.memory.role}] → ${cmem.targetRoom} (state: ${cmem.bootstrapState})`);
+        }
+      }
+
+      // Check if can expand from any owned room
+      const potentialParents = Object.values(Game.rooms).filter(r => r.controller?.my && r.controller.level >= 4);
+      if (potentialParents.length > 0) {
+        const manager = new BootstrapManager();
+        const canExpand = potentialParents.some(r => manager.canExpand(r.name));
+        console.log(`\nCan expand now: ${canExpand ? "YES" : "NO"}`);
+        if (!canExpand && !active) {
+          console.log("  (Need RCL 4+, 50k+ energy, and GCL headroom)");
+        }
+      } else {
+        console.log("\nNo potential parent rooms (need RCL 4+)");
+      }
+
+      return "OK";
+    },
+
+    start: (targetRoom: string, parentRoom?: string) => {
+      if (!targetRoom) {
+        console.log("Usage: bootstrap.start('W1N1', 'W2N1')");
+        console.log("  targetRoom: Room to expand to (required)");
+        console.log("  parentRoom: Room to support expansion (optional, uses first suitable room)");
+        return "Error: specify target room";
+      }
+
+      // Find parent room if not specified
+      if (!parentRoom) {
+        parentRoom = Object.keys(Game.rooms).find((r) => {
+          const room = Game.rooms[r];
+          return room.controller?.my && room.controller.level >= 4;
+        });
+      }
+
+      if (!parentRoom) {
+        console.log("Error: No suitable parent room found (need RCL 4+)");
+        return "Error: no parent room";
+      }
+
+      const manager = new BootstrapManager();
+      const result = manager.startExpansion(targetRoom, parentRoom);
+
+      if (result) {
+        console.log(`Started expansion to ${targetRoom} from ${parentRoom}`);
+        console.log("Use bootstrap.status() to monitor progress");
+      } else {
+        console.log("Failed to start expansion. Check:");
+        console.log("  - Parent room has RCL 4+");
+        console.log("  - Parent room has 50k+ stored energy");
+        console.log("  - No expansion already in progress");
+        console.log("  - GCL allows more rooms");
+      }
+
+      return result ? "OK" : "Failed";
+    },
+
+    queue: (targetRoom: string, parentRoom?: string) => {
+      if (!targetRoom) {
+        console.log("Usage: bootstrap.queue('W1N1', 'W2N1')");
+        return "Error: specify target room";
+      }
+
+      // Find parent room if not specified
+      if (!parentRoom) {
+        parentRoom = Object.keys(Game.rooms).find((r) => {
+          const room = Game.rooms[r];
+          return room.controller?.my && room.controller.level >= 4;
+        });
+      }
+
+      if (!parentRoom) {
+        console.log("Error: No suitable parent room found (need RCL 4+)");
+        return "Error: no parent room";
+      }
+
+      const manager = new BootstrapManager();
+      const result = manager.queueExpansion(targetRoom, parentRoom);
+
+      if (result) {
+        console.log(`Queued expansion to ${targetRoom}`);
+        console.log("Will start when current expansion completes and resources are available");
+      } else {
+        console.log("Failed to queue. Room may already be queued or active.");
+      }
+
+      return result ? "OK" : "Failed";
+    },
+
+    cancel: (targetRoom: string) => {
+      if (!targetRoom) {
+        console.log("Usage: bootstrap.cancel('W1N1')");
+        return "Error: specify target room";
+      }
+
+      const mem = Memory.bootstrap;
+      if (!mem) {
+        console.log("No bootstrap data");
+        return "Error: no data";
+      }
+
+      let found = false;
+
+      // Check if it's the active expansion
+      if (mem.active?.targetRoom === targetRoom) {
+        mem.active = null;
+        found = true;
+        console.log(`Cancelled active expansion to ${targetRoom}`);
+      }
+
+      // Remove from queue if present
+      const queueIndex = mem.queue.indexOf(targetRoom);
+      if (queueIndex !== -1) {
+        mem.queue.splice(queueIndex, 1);
+        found = true;
+        console.log(`Removed ${targetRoom} from queue`);
+      }
+
+      if (!found) {
+        console.log(`No expansion found for ${targetRoom}`);
+        return "Error: not found";
+      }
+
+      // Kill associated creeps
+      let killed = 0;
+      for (const name in Game.creeps) {
+        const creep = Game.creeps[name];
+        const cmem = creep.memory as BootstrapBuilderMemory | BootstrapHaulerMemory;
+        if (cmem.targetRoom === targetRoom &&
+            (creep.memory.role === "BOOTSTRAP_BUILDER" || creep.memory.role === "BOOTSTRAP_HAULER")) {
+          creep.suicide();
+          killed++;
+        }
+      }
+
+      if (killed > 0) {
+        console.log(`Killed ${killed} bootstrap creeps`);
+      }
+
+      return "OK";
+    },
   };
 }

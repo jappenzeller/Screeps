@@ -186,6 +186,88 @@ interface DebugFlags {
 // Visual settings
 interface SettingsFlags {
   showVisuals?: boolean;
+  logPositions?: boolean;
+}
+
+// Bootstrap state machine types
+type BootstrapStateType =
+  | "IDLE"
+  | "CLAIMING"
+  | "PLACING_SPAWN"
+  | "BUILDING_SPAWN"
+  | "RAMPING"
+  | "COMPLETE"
+  | "FAILED";
+
+// Bootstrap state for active expansion
+interface BootstrapState {
+  targetRoom: string;
+  parentRoom: string;
+  state: BootstrapStateType;
+  stateChangedAt: number;
+  startedAt: number;
+
+  // Tracking
+  attempts: number;
+  claimer: string | null;
+  spawnSitePos: { x: number; y: number } | null;
+  spawnSiteId: string | null;
+  assignedBuilders: string[];
+  assignedHaulers: string[];
+
+  // Progress
+  spawnProgress: number;
+  energyDelivered: number;
+
+  // Failure tracking
+  lastFailure: string | null;
+  failureCount: number;
+}
+
+// Bootstrap configuration
+interface BootstrapConfig {
+  maxAttempts: number;
+  claimerTimeout: number;
+  spawnBuildTimeout: number;
+  minParentEnergy: number;
+  minParentRCL: number;
+  builderCount: number;
+  haulerCount: number;
+}
+
+// Bootstrap history entry
+interface BootstrapHistory {
+  targetRoom: string;
+  parentRoom: string;
+  startedAt: number;
+  completedAt: number | null;
+  finalState: BootstrapStateType;
+  totalTicks: number;
+  energySpent: number;
+}
+
+// Bootstrap memory structure
+interface BootstrapMemory {
+  active: BootstrapState | null;
+  queue: string[];
+  history: BootstrapHistory[];
+  config: BootstrapConfig;
+}
+
+// Bootstrap builder creep memory
+interface BootstrapBuilderMemory extends CreepMemory {
+  role: "BOOTSTRAP_BUILDER";
+  parentRoom: string;
+  targetRoom: string;
+  bootstrapState: "TRAVELING_TO_TARGET" | "BUILDING" | "RETURNING_FOR_ENERGY";
+}
+
+// Bootstrap hauler creep memory
+interface BootstrapHaulerMemory extends CreepMemory {
+  role: "BOOTSTRAP_HAULER";
+  parentRoom: string;
+  targetRoom: string;
+  bootstrapState: "LOADING" | "DELIVERING";
 }
 
 // Expansion tracking for claiming new rooms
@@ -209,6 +291,7 @@ interface Memory {
   debug?: DebugFlags;
   settings?: SettingsFlags;
   expansion?: ExpansionData;
+  bootstrap?: BootstrapMemory;
 }
 
 // Global console declaration for Screeps
