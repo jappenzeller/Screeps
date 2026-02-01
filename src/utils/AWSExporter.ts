@@ -5,6 +5,7 @@
 
 import { ColonyManager } from "../core/ColonyManager";
 import { StatsCollector, TrafficExport } from "./StatsCollector";
+import { EconomyTracker, ColonyEconomyMetrics } from "../core/EconomyTracker";
 
 const AWS_SEGMENT = 90;
 
@@ -92,6 +93,7 @@ interface ColonyExport {
   traffic: TrafficExport;
   remoteDefense: RemoteDefenseStatus;
   mineral: MineralExport;
+  economy: ColonyEconomyMetrics;
 }
 
 interface DefenseExport {
@@ -500,6 +502,7 @@ export class AWSExporter {
         traffic: StatsCollector.exportTrafficMetrics(room),
         remoteDefense: this.getRemoteDefenseStatus(roomName),
         mineral: this.getMineralStatus(room, roomName),
+        economy: new EconomyTracker(room).getMetrics(),
       });
     }
 

@@ -24,6 +24,7 @@ import { trackEnergyFlow } from "./utils/metrics";
 import { RenewalManager } from "./managers/RenewalManager";
 import { drawRoomVisuals } from "./visuals/creepVisuals";
 import { CommandExecutor } from "./core/CommandExecutor";
+import { EconomyTracker } from "./core/EconomyTracker";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -87,6 +88,10 @@ export function loop(): void {
 function runRoom(room: Room): void {
   // 0. Track energy flow metrics (for utility spawning)
   trackEnergyFlow(room);
+
+  // 0b. Track economy metrics (for /live export)
+  const economyTracker = new EconomyTracker(room);
+  economyTracker.track();
 
   // 1. Check auto safe mode (defense emergency)
   checkAutoSafeMode(room);
