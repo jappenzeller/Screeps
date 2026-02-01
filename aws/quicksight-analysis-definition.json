@@ -3,6 +3,10 @@
     {
       "Identifier": "screeps-snapshots",
       "DataSetArn": "arn:aws:quicksight:us-east-1:488218643044:dataset/screeps-snapshots"
+    },
+    {
+      "Identifier": "screeps-signals",
+      "DataSetArn": "arn:aws:quicksight:us-east-1:488218643044:dataset/screeps-signals"
     }
   ],
   "Sheets": [
@@ -75,195 +79,6 @@
         },
         {
           "LineChartVisual": {
-            "VisualId": "creeps-over-time",
-            "Title": {
-              "Visibility": "VISIBLE",
-              "FormatText": {
-                "PlainText": "Total Creeps Over Time"
-              }
-            },
-            "ChartConfiguration": {
-              "FieldWells": {
-                "LineChartAggregatedFieldWells": {
-                  "Category": [
-                    {
-                      "DateDimensionField": {
-                        "FieldId": "timestamp-dimension-2",
-                        "Column": {
-                          "DataSetIdentifier": "screeps-snapshots",
-                          "ColumnName": "timestamp"
-                        },
-                        "DateGranularity": "HOUR",
-                        "HierarchyId": "timestamp-hierarchy-2"
-                      }
-                    }
-                  ],
-                  "Values": [
-                    {
-                      "NumericalMeasureField": {
-                        "FieldId": "creepstotal-measure",
-                        "Column": {
-                          "DataSetIdentifier": "screeps-snapshots",
-                          "ColumnName": "creepstotal"
-                        },
-                        "AggregationFunction": {
-                          "SimpleNumericalAggregation": "AVERAGE"
-                        }
-                      }
-                    }
-                  ]
-                }
-              },
-              "SortConfiguration": {
-                "CategorySort": [
-                  {
-                    "FieldSort": {
-                      "FieldId": "timestamp-dimension-2",
-                      "Direction": "ASC"
-                    }
-                  }
-                ]
-              },
-              "Type": "LINE"
-            },
-            "ColumnHierarchies": [
-              {
-                "DateTimeHierarchy": {
-                  "HierarchyId": "timestamp-hierarchy-2",
-                  "DrillDownFilters": []
-                }
-              }
-            ]
-          }
-        },
-        {
-          "LineChartVisual": {
-            "VisualId": "cpu-over-time",
-            "Title": {
-              "Visibility": "VISIBLE",
-              "FormatText": {
-                "PlainText": "CPU Usage Over Time"
-              }
-            },
-            "ChartConfiguration": {
-              "FieldWells": {
-                "LineChartAggregatedFieldWells": {
-                  "Category": [
-                    {
-                      "DateDimensionField": {
-                        "FieldId": "timestamp-dimension-3",
-                        "Column": {
-                          "DataSetIdentifier": "screeps-snapshots",
-                          "ColumnName": "timestamp"
-                        },
-                        "DateGranularity": "HOUR",
-                        "HierarchyId": "timestamp-hierarchy-3"
-                      }
-                    }
-                  ],
-                  "Values": [
-                    {
-                      "NumericalMeasureField": {
-                        "FieldId": "cpuused-measure",
-                        "Column": {
-                          "DataSetIdentifier": "screeps-snapshots",
-                          "ColumnName": "cpuused"
-                        },
-                        "AggregationFunction": {
-                          "SimpleNumericalAggregation": "AVERAGE"
-                        }
-                      }
-                    }
-                  ]
-                }
-              },
-              "SortConfiguration": {
-                "CategorySort": [
-                  {
-                    "FieldSort": {
-                      "FieldId": "timestamp-dimension-3",
-                      "Direction": "ASC"
-                    }
-                  }
-                ]
-              },
-              "Type": "LINE"
-            },
-            "ColumnHierarchies": [
-              {
-                "DateTimeHierarchy": {
-                  "HierarchyId": "timestamp-hierarchy-3",
-                  "DrillDownFilters": []
-                }
-              }
-            ]
-          }
-        },
-        {
-          "LineChartVisual": {
-            "VisualId": "bucket-over-time",
-            "Title": {
-              "Visibility": "VISIBLE",
-              "FormatText": {
-                "PlainText": "CPU Bucket Over Time"
-              }
-            },
-            "ChartConfiguration": {
-              "FieldWells": {
-                "LineChartAggregatedFieldWells": {
-                  "Category": [
-                    {
-                      "DateDimensionField": {
-                        "FieldId": "timestamp-dimension-4",
-                        "Column": {
-                          "DataSetIdentifier": "screeps-snapshots",
-                          "ColumnName": "timestamp"
-                        },
-                        "DateGranularity": "HOUR",
-                        "HierarchyId": "timestamp-hierarchy-4"
-                      }
-                    }
-                  ],
-                  "Values": [
-                    {
-                      "NumericalMeasureField": {
-                        "FieldId": "cpubucket-measure",
-                        "Column": {
-                          "DataSetIdentifier": "screeps-snapshots",
-                          "ColumnName": "cpubucket"
-                        },
-                        "AggregationFunction": {
-                          "SimpleNumericalAggregation": "AVERAGE"
-                        }
-                      }
-                    }
-                  ]
-                }
-              },
-              "SortConfiguration": {
-                "CategorySort": [
-                  {
-                    "FieldSort": {
-                      "FieldId": "timestamp-dimension-4",
-                      "Direction": "ASC"
-                    }
-                  }
-                ]
-              },
-              "Type": "LINE"
-            },
-            "ColumnHierarchies": [
-              {
-                "DateTimeHierarchy": {
-                  "HierarchyId": "timestamp-hierarchy-4",
-                  "DrillDownFilters": []
-                }
-              }
-            ]
-          }
-        },
-        {
-          "LineChartVisual": {
             "VisualId": "rcl-progress",
             "Title": {
               "Visibility": "VISIBLE",
@@ -277,13 +92,13 @@
                   "Category": [
                     {
                       "DateDimensionField": {
-                        "FieldId": "timestamp-dimension-5",
+                        "FieldId": "timestamp-dimension-rcl",
                         "Column": {
                           "DataSetIdentifier": "screeps-snapshots",
                           "ColumnName": "timestamp"
                         },
                         "DateGranularity": "HOUR",
-                        "HierarchyId": "timestamp-hierarchy-5"
+                        "HierarchyId": "timestamp-hierarchy-rcl"
                       }
                     }
                   ],
@@ -307,7 +122,7 @@
                 "CategorySort": [
                   {
                     "FieldSort": {
-                      "FieldId": "timestamp-dimension-5",
+                      "FieldId": "timestamp-dimension-rcl",
                       "Direction": "ASC"
                     }
                   }
@@ -318,7 +133,7 @@
             "ColumnHierarchies": [
               {
                 "DateTimeHierarchy": {
-                  "HierarchyId": "timestamp-hierarchy-5",
+                  "HierarchyId": "timestamp-hierarchy-rcl",
                   "DrillDownFilters": []
                 }
               }
@@ -327,11 +142,11 @@
         },
         {
           "LineChartVisual": {
-            "VisualId": "gametick-progress",
+            "VisualId": "creeps-by-role",
             "Title": {
               "Visibility": "VISIBLE",
               "FormatText": {
-                "PlainText": "Game Tick Over Time"
+                "PlainText": "Workforce Composition (Creeps by Role)"
               }
             },
             "ChartConfiguration": {
@@ -340,26 +155,62 @@
                   "Category": [
                     {
                       "DateDimensionField": {
-                        "FieldId": "timestamp-dimension-6",
+                        "FieldId": "timestamp-dimension-roles",
                         "Column": {
                           "DataSetIdentifier": "screeps-snapshots",
                           "ColumnName": "timestamp"
                         },
                         "DateGranularity": "HOUR",
-                        "HierarchyId": "timestamp-hierarchy-6"
+                        "HierarchyId": "timestamp-hierarchy-roles"
                       }
                     }
                   ],
                   "Values": [
                     {
                       "NumericalMeasureField": {
-                        "FieldId": "gametick-measure",
+                        "FieldId": "creeps-harvester",
                         "Column": {
                           "DataSetIdentifier": "screeps-snapshots",
-                          "ColumnName": "gametick"
+                          "ColumnName": "creepsharvester"
                         },
                         "AggregationFunction": {
-                          "SimpleNumericalAggregation": "MAX"
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "creeps-hauler",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "creepshauler"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "creeps-upgrader",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "creepsupgrader"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "creeps-builder",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "creepsbuilder"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
                         }
                       }
                     }
@@ -370,7 +221,94 @@
                 "CategorySort": [
                   {
                     "FieldSort": {
-                      "FieldId": "timestamp-dimension-6",
+                      "FieldId": "timestamp-dimension-roles",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "STACKED_AREA"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-roles",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "remote-mining",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Remote Mining Operations"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-remote",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-remote"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "remote-miners",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "creepsremoteminer"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "remote-haulers",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "creepsremotehauler"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "reservers",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "creepsreserver"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-remote",
                       "Direction": "ASC"
                     }
                   }
@@ -381,7 +319,169 @@
             "ColumnHierarchies": [
               {
                 "DateTimeHierarchy": {
-                  "HierarchyId": "timestamp-hierarchy-6",
+                  "HierarchyId": "timestamp-hierarchy-remote",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "hostile-activity",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Hostile Activity & Defense"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-hostile",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-hostile"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "hostile-count",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "hostilecount"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "MAX"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "hostile-dps",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "hostiledps"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "MAX"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "defenders",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "creepsdefender"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-hostile",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-hostile",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "construction-progress",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Construction & Maintenance"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-const",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-const"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "construction-sites",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "constructionsites"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "damaged-structures",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-snapshots",
+                          "ColumnName": "damagedstructures"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "AVERAGE"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-const",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-const",
                   "DrillDownFilters": []
                 }
               }
@@ -403,7 +503,7 @@
                   "RowSpan": 8
                 },
                 {
-                  "ElementId": "creeps-over-time",
+                  "ElementId": "rcl-progress",
                   "ElementType": "VISUAL",
                   "ColumnIndex": 18,
                   "ColumnSpan": 18,
@@ -411,36 +511,336 @@
                   "RowSpan": 8
                 },
                 {
-                  "ElementId": "cpu-over-time",
+                  "ElementId": "creeps-by-role",
                   "ElementType": "VISUAL",
                   "ColumnIndex": 0,
-                  "ColumnSpan": 12,
+                  "ColumnSpan": 18,
                   "RowIndex": 8,
                   "RowSpan": 8
                 },
                 {
-                  "ElementId": "bucket-over-time",
+                  "ElementId": "remote-mining",
                   "ElementType": "VISUAL",
-                  "ColumnIndex": 12,
-                  "ColumnSpan": 12,
+                  "ColumnIndex": 18,
+                  "ColumnSpan": 18,
                   "RowIndex": 8,
                   "RowSpan": 8
                 },
                 {
-                  "ElementId": "rcl-progress",
-                  "ElementType": "VISUAL",
-                  "ColumnIndex": 24,
-                  "ColumnSpan": 12,
-                  "RowIndex": 8,
-                  "RowSpan": 8
-                },
-                {
-                  "ElementId": "gametick-progress",
+                  "ElementId": "hostile-activity",
                   "ElementType": "VISUAL",
                   "ColumnIndex": 0,
-                  "ColumnSpan": 36,
+                  "ColumnSpan": 18,
                   "RowIndex": 16,
-                  "RowSpan": 6
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "construction-progress",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 18,
+                  "ColumnSpan": 18,
+                  "RowIndex": 16,
+                  "RowSpan": 8
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "SheetId": "signals-sheet",
+      "Name": "Signals & Events",
+      "Visuals": [
+        {
+          "LineChartVisual": {
+            "VisualId": "energy-delta",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Energy Flow (Delta per Collection)"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-delta",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-signals",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-delta"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "energy-delta-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-signals",
+                          "ColumnName": "energydelta"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "SUM"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-delta",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-delta",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "rcl-rate",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "RCL Progress Rate (per Collection)"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-rclrate",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-signals",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-rclrate"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "rcl-rate-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-signals",
+                          "ColumnName": "rclprogressrate"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "SUM"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-rclrate",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-rclrate",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "BarChartVisual": {
+            "VisualId": "signal-events",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Signal Events Count"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "BarChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-events",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-signals",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "DAY",
+                        "HierarchyId": "timestamp-hierarchy-events"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "event-count-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-signals",
+                          "ColumnName": "eventcount"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "SUM"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-events",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Orientation": "VERTICAL"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-events",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "creep-delta",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Creep Population Change"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "timestamp-dimension-creepdelta",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-signals",
+                          "ColumnName": "timestamp"
+                        },
+                        "DateGranularity": "HOUR",
+                        "HierarchyId": "timestamp-hierarchy-creepdelta"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "creep-delta-measure",
+                        "Column": {
+                          "DataSetIdentifier": "screeps-signals",
+                          "ColumnName": "creepdelta"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "SUM"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "timestamp-dimension-creepdelta",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE"
+            },
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "timestamp-hierarchy-creepdelta",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "Layouts": [
+        {
+          "Configuration": {
+            "GridLayout": {
+              "Elements": [
+                {
+                  "ElementId": "energy-delta",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 0,
+                  "ColumnSpan": 18,
+                  "RowIndex": 0,
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "rcl-rate",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 18,
+                  "ColumnSpan": 18,
+                  "RowIndex": 0,
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "signal-events",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 0,
+                  "ColumnSpan": 18,
+                  "RowIndex": 8,
+                  "RowSpan": 8
+                },
+                {
+                  "ElementId": "creep-delta",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 18,
+                  "ColumnSpan": 18,
+                  "RowIndex": 8,
+                  "RowSpan": 8
                 }
               ]
             }

@@ -371,7 +371,69 @@ async function storeSignals(roomName, metrics, deltas, signalEvents, gameTick) {
     },
   }));
 
+  // Also write to S3 for QuickSight analytics
+  if (ANALYTICS_BUCKET) {
+    await writeSignalsToS3(roomName, metrics, deltas, signalEvents, gameTick, timestamp);
+  }
+
   console.log(`Stored signals for ${roomName}: ${signalEvents.length} events`);
+}
+
+/**
+ * Write flattened signals data to S3 for QuickSight
+ */
+async function writeSignalsToS3(roomName, metrics, deltas, signalEvents, gameTick, timestamp) {
+  const now = new Date(timestamp);
+  const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+  const hourStr = now.toISOString().split("T")[1].split(":")[0]; // HH
+
+  // Flatten signals data for Athena/QuickSight
+  const flatRecord = {
+    timestamp: now.toISOString(),
+    timestampMs: timestamp,
+    gameTick: gameTick,
+    roomName: roomName,
+    // Metrics
+    energyStored: metrics.energyStored || 0,
+    energyAvailable: metrics.energyAvailable || 0,
+    energyCapacity: metrics.energyCapacity || 0,
+    rclProgress: metrics.rclProgress || 0,
+    rclLevel: metrics.rclLevel || 1,
+    gclProgress: metrics.gclProgress || 0,
+    creepTotal: metrics.creepTotal || 0,
+    cpuUsed: metrics.cpuUsed || 0,
+    cpuBucket: metrics.cpuBucket || 10000,
+    remoteMinerCount: metrics.remoteMinerCount || 0,
+    remoteHaulerCount: metrics.remoteHaulerCount || 0,
+    reserverCount: metrics.reserverCount || 0,
+    hostileCount: metrics.hostileCount || 0,
+    towerEnergy: metrics.towerEnergy || 0,
+    // Deltas
+    energyDelta: deltas.energyDelta || 0,
+    rclProgressRate: deltas.rclProgressRate || 0,
+    creepDelta: deltas.creepDelta || 0,
+    cpuDelta: deltas.cpuDelta || 0,
+    // Events
+    eventCount: signalEvents.length,
+    hasThresholdEvent: signalEvents.some(e => e.type === "THRESHOLD") ? 1 : 0,
+    hasAnomalyEvent: signalEvents.some(e => e.type === "ANOMALY") ? 1 : 0,
+    hasTrendEvent: signalEvents.some(e => e.type === "TREND_CHANGE") ? 1 : 0,
+    // Event severity counts
+    criticalEvents: signalEvents.filter(e => e.severity === "critical").length,
+    warningEvents: signalEvents.filter(e => e.severity === "warning").length,
+    alertEvents: signalEvents.filter(e => e.severity === "alert").length,
+  };
+
+  const key = `signals/dt=${dateStr}/hour=${hourStr}/${roomName}_${gameTick}.json`;
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: ANALYTICS_BUCKET,
+      Key: key,
+      Body: JSON.stringify(flatRecord),
+      ContentType: "application/json",
+    })
+  );
 }
 
 export async function handler(event) {
