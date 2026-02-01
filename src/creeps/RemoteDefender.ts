@@ -75,8 +75,46 @@ function runRenewal(creep: Creep): boolean {
 // Damage Detection and Retreat Logic
 // ============================================
 
-function isDamaged(creep: Creep): boolean {
-  return creep.hits < creep.hitsMax;
+/**
+ * Smart retreat decision based on DPS calculation
+ * Only retreat if we can't survive the fight
+ */
+function shouldRetreat(creep: Creep): boolean {
+  // Lost attack capability - can't fight, must retreat
+  if (creep.getActiveBodyparts(ATTACK) === 0) return true;
+
+  // Estimate damage per tick from nearby hostiles
+  const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
+  let incomingDPS = 0;
+  for (const hostile of hostiles) {
+    const range = creep.pos.getRangeTo(hostile);
+    if (range <= 1) {
+      incomingDPS += hostile.getActiveBodyparts(ATTACK) * 30;
+    }
+    if (range <= 3) {
+      incomingDPS += hostile.getActiveBodyparts(RANGED_ATTACK) * 10;
+    }
+  }
+
+  // If not taking damage, don't retreat
+  if (incomingDPS === 0) return false;
+
+  // Estimate ticks to reach tower range in home room
+  const distanceHome =
+    creep.room.name === creep.memory.room
+      ? 25 // Already in home room, just need to reach towers
+      : Game.map.getRoomLinearDistance(creep.room.name, creep.memory.room) * 50 + 25;
+
+  // Will I survive the trip?
+  const damageOnTrip = incomingDPS * distanceHome;
+  const survivalMargin = creep.hits - damageOnTrip;
+
+  // Retreat if projected HP on arrival is too low
+  return survivalMargin < 100;
+}
+
+function isFullyHealed(creep: Creep): boolean {
+  return creep.hits === creep.hitsMax && creep.getActiveBodyparts(ATTACK) > 0;
 }
 
 function getHealPosition(creep: Creep): RoomPosition {
@@ -110,14 +148,14 @@ function runRetreat(creep: Creep): boolean {
 // Main Remote Defender Logic
 // ============================================
 export function runRemoteDefender(creep: Creep): void {
-  // Priority 1: Retreat if damaged
-  if (isDamaged(creep)) {
+  // Priority 1: Smart retreat based on DPS calculation
+  if (shouldRetreat(creep)) {
     creep.memory.retreating = true;
   }
 
   if (creep.memory.retreating) {
-    if (creep.hits === creep.hitsMax) {
-      creep.memory.retreating = false; // fully healed
+    if (isFullyHealed(creep)) {
+      creep.memory.retreating = false; // fully healed and combat-capable
     } else {
       runRetreat(creep);
       return;
