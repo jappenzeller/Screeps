@@ -505,6 +505,130 @@ function calculateExpansionScore(room, allIntel, existingColonies, myUsername) {
   return Math.max(0, Math.round(score));
 }
 
+// ==================== Empire Endpoints ====================
+
+/**
+ * Get empire status from segment 90
+ */
+async function getEmpireStatus() {
+  const data = await fetchSegment90();
+
+  if (!data) {
+    return { error: "No data in segment 90" };
+  }
+
+  if (!data.empire) {
+    return {
+      error: "No empire data available",
+      hint: "Ensure bot is exporting empire data via AWSExporter.getEmpireStatus()",
+      availableKeys: Object.keys(data),
+    };
+  }
+
+  return {
+    live: true,
+    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    fetchedAt: Date.now(),
+    gameTick: data.gameTick,
+    timestamp: data.timestamp,
+    shard: data.shard,
+    ...data.empire,
+  };
+}
+
+/**
+ * Get expansion status from segment 90
+ */
+async function getExpansionStatus(roomName = null) {
+  const data = await fetchSegment90();
+
+  if (!data) {
+    return { error: "No data in segment 90" };
+  }
+
+  if (!data.empire || !data.empire.expansion) {
+    return {
+      error: "No expansion data available",
+      hint: "Ensure bot is exporting expansion data via AWSExporter.getEmpireStatus()",
+    };
+  }
+
+  const expansion = data.empire.expansion;
+
+  // If specific room requested, filter to that expansion
+  if (roomName) {
+    const roomExpansion = expansion.active?.find(e => e.roomName === roomName) ||
+                          expansion.queue?.find(e => e.roomName === roomName);
+
+    if (!roomExpansion) {
+      return {
+        error: `No expansion found for room ${roomName}`,
+        activeRooms: expansion.active?.map(e => e.roomName) || [],
+        queuedRooms: expansion.queue?.map(e => e.roomName) || [],
+      };
+    }
+
+    return {
+      live: true,
+      requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+      fetchedAt: Date.now(),
+      gameTick: data.gameTick,
+      timestamp: data.timestamp,
+      shard: data.shard,
+      roomName,
+      ...roomExpansion,
+    };
+  }
+
+  // Return all expansion data
+  return {
+    live: true,
+    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    fetchedAt: Date.now(),
+    gameTick: data.gameTick,
+    timestamp: data.timestamp,
+    shard: data.shard,
+    ...expansion,
+  };
+}
+
+/**
+ * Queue an expansion command via memory segment 91
+ */
+async function queueExpansionCommand(action, roomName, parentRoom = null) {
+  if (!action) {
+    return { error: "Missing action (start, cancel, queue)" };
+  }
+
+  if (!roomName) {
+    return { error: "Missing roomName" };
+  }
+
+  let command;
+  switch (action) {
+    case "start":
+      if (!parentRoom) {
+        return { error: "Missing parentRoom for start action" };
+      }
+      command = `expansion.start("${roomName}", "${parentRoom}")`;
+      break;
+    case "queue":
+      if (!parentRoom) {
+        return { error: "Missing parentRoom for queue action" };
+      }
+      command = `expansion.queue("${roomName}", "${parentRoom}")`;
+      break;
+    case "cancel":
+      command = `expansion.cancel("${roomName}")`;
+      break;
+    default:
+      return { error: `Unknown action: ${action}. Use start, queue, or cancel` };
+  }
+
+  // Use the existing queueCommand function
+  return queueCommand(command);
+}
+
 // ==================== DynamoDB Route Handlers ====================
 
 // Route handlers
@@ -1034,6 +1158,20 @@ export async function handler(event) {
     // Position log endpoint - fetch data from segment 92 for heatmap rendering
     else if (path === 'GET /positions') {
       result = await fetchSegment92();
+    }
+    // Empire endpoints
+    else if (path === 'GET /empire') {
+      result = await getEmpireStatus();
+    }
+    else if (path === 'GET /empire/expansion') {
+      result = await getExpansionStatus();
+    }
+    else if (path === 'GET /empire/expansion/{roomName}') {
+      result = await getExpansionStatus(params.roomName);
+    }
+    else if (path === 'POST /empire/expansion') {
+      const { action, roomName, parentRoom } = body;
+      result = await queueExpansionCommand(action, roomName, parentRoom);
     }
     else {
       return {

@@ -103,6 +103,76 @@ resource "aws_apigatewayv2_route" "search_observations" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+# Intel routes
+resource "aws_apigatewayv2_route" "get_intel_room" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /intel/{roomName}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_intel_all" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /intel"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_expansion_candidates" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /intel/expansion-candidates"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+# Console command routes
+resource "aws_apigatewayv2_route" "post_command" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "POST /command"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_command" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /command"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_command_result" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /command/result"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+# Position log route
+resource "aws_apigatewayv2_route" "get_positions" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /positions"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+# Empire routes
+resource "aws_apigatewayv2_route" "get_empire" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /empire"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_empire_expansion" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /empire/expansion"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_empire_expansion_room" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /empire/expansion/{roomName}"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
+resource "aws_apigatewayv2_route" "post_empire_expansion" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "POST /empire/expansion"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"

@@ -24,6 +24,7 @@ import { roleCountUtility, getEffectiveCount } from "./utilities/populationUtili
 import { BootstrapManager } from "../expansion/BootstrapManager";
 import { getBootstrapBuilderBody } from "../creeps/BootstrapBuilder";
 import { getBootstrapHaulerBody } from "../creeps/BootstrapHauler";
+import { ExpansionManager } from "../empire";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
@@ -899,71 +900,98 @@ function mineralHarvesterUtility(deficit: number, state: ColonyState): number {
  * Claimer utility - spawns when expansion target is set and GCL allows
  * Trigger expansion via: Memory.expansion = { targetRoom: 'E47N38' }
  */
-function claimerUtility(_state: ColonyState): number {
-  // Check if expansion target is set
-  const expansionTarget = Memory.expansion?.targetRoom;
-  if (!expansionTarget) return 0;
-
+function claimerUtility(state: ColonyState): number {
   // Check GCL - can we claim another room?
   const currentRooms = Object.keys(Game.rooms).filter(
     (r) => Game.rooms[r].controller?.my
   ).length;
   if (currentRooms >= Game.gcl.level) return 0;
 
-  // Check if target room is already claimed by us
-  const targetRoom = Game.rooms[expansionTarget];
-  if (targetRoom?.controller?.my) {
-    // Already claimed - update status and return 0
-    if (Memory.expansion) {
-      Memory.expansion.status = "building_spawn";
+  // Check old expansion system first
+  const expansionTarget = Memory.expansion?.targetRoom;
+  if (expansionTarget) {
+    // Check if target room is already claimed by us
+    const targetRoom = Game.rooms[expansionTarget];
+    if (targetRoom?.controller?.my) {
+      // Already claimed - update status and return 0
+      if (Memory.expansion) {
+        Memory.expansion.status = "building_spawn";
+      }
+      return 0;
     }
-    return 0;
+
+    // Check if already have a claimer for this target
+    const existingClaimers = Object.values(Game.creeps).filter(
+      (c) =>
+        c.memory.role === "CLAIMER" && c.memory.targetRoom === expansionTarget
+    ).length;
+    if (existingClaimers > 0) return 0;
+
+    // High priority when expansion target is set
+    return 40;
   }
 
-  // Check if already have a claimer for this target
-  const existingClaimers = Object.values(Game.creeps).filter(
-    (c) =>
-      c.memory.role === "CLAIMER" && c.memory.targetRoom === expansionTarget
-  ).length;
-  if (existingClaimers > 0) return 0;
+  // Check new ExpansionManager system
+  const empActive = Memory.empireExpansion?.active || {};
+  const claimingExpansion = Object.values(empActive).find(
+    (e) => e.parentRoom === state.room.name && e.state === "CLAIMING" && !e.claimer
+  );
 
-  // High priority when expansion target is set
-  return 40;
+  if (claimingExpansion) {
+    // Check if already have a claimer for this target
+    const existingClaimers = Object.values(Game.creeps).filter(
+      (c) =>
+        c.memory.role === "CLAIMER" && c.memory.targetRoom === claimingExpansion.roomName
+    ).length;
+    if (existingClaimers > 0) return 0;
+
+    return 40;
+  }
+
+  return 0;
 }
 
 /**
- * Bootstrap builder utility - spawns when BootstrapManager needs builders
+ * Bootstrap builder utility - spawns when BootstrapManager or ExpansionManager needs builders
  * Only spawns from the parent room of an active bootstrap operation
  */
 function bootstrapBuilderUtility(state: ColonyState): number {
+  // Check old BootstrapManager system
   const bootstrapManager = new BootstrapManager();
-  const needs = bootstrapManager.getCreepNeeds();
-
-  // Check if this room is the parent and needs builders
-  const builderNeeds = needs.filter(
+  const oldNeeds = bootstrapManager.getCreepNeeds();
+  const oldBuilderNeeds = oldNeeds.filter(
     (n) => n.role === "BOOTSTRAP_BUILDER" && n.parentRoom === state.room.name
   );
 
-  if (builderNeeds.length === 0) return 0;
+  // Check new ExpansionManager system
+  const expansionManager = new ExpansionManager();
+  const newNeeds = expansionManager.getSpawnRequests(state.room.name);
+  const newBuilderNeeds = newNeeds.filter((n) => n.role === "BOOTSTRAP_BUILDER");
+
+  if (oldBuilderNeeds.length === 0 && newBuilderNeeds.length === 0) return 0;
 
   // High priority - getting spawn built is critical
   return 80;
 }
 
 /**
- * Bootstrap hauler utility - spawns when BootstrapManager needs haulers
+ * Bootstrap hauler utility - spawns when BootstrapManager or ExpansionManager needs haulers
  * Only spawns from the parent room of an active bootstrap operation
  */
 function bootstrapHaulerUtility(state: ColonyState): number {
+  // Check old BootstrapManager system
   const bootstrapManager = new BootstrapManager();
-  const needs = bootstrapManager.getCreepNeeds();
-
-  // Check if this room is the parent and needs haulers
-  const haulerNeeds = needs.filter(
+  const oldNeeds = bootstrapManager.getCreepNeeds();
+  const oldHaulerNeeds = oldNeeds.filter(
     (n) => n.role === "BOOTSTRAP_HAULER" && n.parentRoom === state.room.name
   );
 
-  if (haulerNeeds.length === 0) return 0;
+  // Check new ExpansionManager system
+  const expansionManager = new ExpansionManager();
+  const newNeeds = expansionManager.getSpawnRequests(state.room.name);
+  const newHaulerNeeds = newNeeds.filter((n) => n.role === "BOOTSTRAP_HAULER");
+
+  if (oldHaulerNeeds.length === 0 && newHaulerNeeds.length === 0) return 0;
 
   // High priority - energy delivery is critical for spawn construction
   return 75;
@@ -1060,37 +1088,86 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
     }
 
     case "BOOTSTRAP_BUILDER": {
+      // Check old BootstrapManager first
       const bootstrapManager = new BootstrapManager();
-      const status = bootstrapManager.getStatus();
-      if (!status) return base;
-      return {
-        ...base,
-        role: "BOOTSTRAP_BUILDER",
-        parentRoom: status.parentRoom,
-        targetRoom: status.targetRoom,
-        bootstrapState: "TRAVELING_TO_TARGET",
-      } as unknown as Partial<CreepMemory>;
+      const oldStatus = bootstrapManager.getStatus();
+      if (oldStatus) {
+        return {
+          ...base,
+          role: "BOOTSTRAP_BUILDER",
+          parentRoom: oldStatus.parentRoom,
+          targetRoom: oldStatus.targetRoom,
+          bootstrapState: "TRAVELING_TO_TARGET",
+        } as unknown as Partial<CreepMemory>;
+      }
+      // Check new ExpansionManager
+      const empActive = Memory.empireExpansion?.active || {};
+      const expansion = Object.values(empActive).find(
+        (e) => e.parentRoom === state.room.name
+      );
+      if (expansion) {
+        return {
+          ...base,
+          role: "BOOTSTRAP_BUILDER",
+          parentRoom: expansion.parentRoom,
+          targetRoom: expansion.roomName,
+          bootstrapState: "TRAVELING_TO_TARGET",
+        } as unknown as Partial<CreepMemory>;
+      }
+      return base;
     }
 
     case "BOOTSTRAP_HAULER": {
+      // Check old BootstrapManager first
       const bootstrapManager = new BootstrapManager();
-      const status = bootstrapManager.getStatus();
-      if (!status) return base;
-      return {
-        ...base,
-        role: "BOOTSTRAP_HAULER",
-        parentRoom: status.parentRoom,
-        targetRoom: status.targetRoom,
-        bootstrapState: "LOADING",
-      } as unknown as Partial<CreepMemory>;
+      const oldStatus = bootstrapManager.getStatus();
+      if (oldStatus) {
+        return {
+          ...base,
+          role: "BOOTSTRAP_HAULER",
+          parentRoom: oldStatus.parentRoom,
+          targetRoom: oldStatus.targetRoom,
+          bootstrapState: "LOADING",
+        } as unknown as Partial<CreepMemory>;
+      }
+      // Check new ExpansionManager
+      const empActive = Memory.empireExpansion?.active || {};
+      const expansion = Object.values(empActive).find(
+        (e) => e.parentRoom === state.room.name
+      );
+      if (expansion) {
+        return {
+          ...base,
+          role: "BOOTSTRAP_HAULER",
+          parentRoom: expansion.parentRoom,
+          targetRoom: expansion.roomName,
+          bootstrapState: "LOADING",
+        } as unknown as Partial<CreepMemory>;
+      }
+      return base;
     }
 
     case "CLAIMER": {
+      // Check old expansion system first
       const expansionTarget = Memory.expansion?.targetRoom;
-      return {
-        ...base,
-        targetRoom: expansionTarget || undefined,
-      };
+      if (expansionTarget) {
+        return {
+          ...base,
+          targetRoom: expansionTarget,
+        };
+      }
+      // Check new ExpansionManager - find claiming state expansion from this room
+      const empActive = Memory.empireExpansion?.active || {};
+      const claimingExpansion = Object.values(empActive).find(
+        (e) => e.parentRoom === state.room.name && e.state === "CLAIMING"
+      );
+      if (claimingExpansion) {
+        return {
+          ...base,
+          targetRoom: claimingExpansion.roomName,
+        };
+      }
+      return base;
     }
 
     default:

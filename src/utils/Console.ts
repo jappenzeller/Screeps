@@ -8,6 +8,7 @@ import { getSafeModeStatus } from "../defense/AutoSafeMode";
 import { TrafficMonitor } from "../core/TrafficMonitor";
 import { StatsCollector } from "./StatsCollector";
 import { BootstrapManager } from "../expansion/BootstrapManager";
+import { expansion as empireExpansion, ExpansionManager } from "../empire";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -77,6 +78,10 @@ bootstrap.status()   - Show expansion bootstrap status
 bootstrap.start(target, parent) - Start expansion to target room
 bootstrap.queue(target, parent) - Queue expansion for later
 bootstrap.cancel(target) - Cancel expansion to target room
+expansion.status()   - Show empire expansion status (new system)
+expansion.start(target, parent) - Start expansion (new system)
+expansion.queue(target, parent) - Queue expansion (new system)
+expansion.cancel(target) - Cancel expansion (new system)
 `);
   };
 
@@ -1272,6 +1277,75 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       }
 
       return "OK";
+    },
+  };
+
+  // Empire expansion commands (new architecture)
+  global.expansion = {
+    status: () => {
+      console.log(ExpansionManager.status());
+      return "OK";
+    },
+
+    start: (targetRoom: string, parentRoom?: string) => {
+      if (!targetRoom) {
+        console.log("Usage: expansion.start('E47N39', 'E46N37')");
+        console.log("  targetRoom: Room to expand to (required)");
+        console.log("  parentRoom: Room to support expansion (optional)");
+        return "Error: specify target room";
+      }
+
+      // Find parent room if not specified
+      if (!parentRoom) {
+        parentRoom = Object.keys(Game.rooms).find((r) => {
+          const room = Game.rooms[r];
+          return room.controller?.my && room.controller.level >= 4;
+        });
+      }
+
+      if (!parentRoom) {
+        console.log("Error: No suitable parent room found (need RCL 4+)");
+        return "Error: no parent room";
+      }
+
+      const result = empireExpansion.start(targetRoom, parentRoom);
+      if (result) {
+        console.log(`Started expansion to ${targetRoom} from ${parentRoom}`);
+        console.log("Use expansion.status() to monitor progress");
+      }
+      return result ? "OK" : "Failed";
+    },
+
+    queue: (targetRoom: string, parentRoom?: string) => {
+      if (!targetRoom) {
+        console.log("Usage: expansion.queue('E47N39', 'E46N37')");
+        return "Error: specify target room";
+      }
+
+      if (!parentRoom) {
+        parentRoom = Object.keys(Game.rooms).find((r) => {
+          const room = Game.rooms[r];
+          return room.controller?.my && room.controller.level >= 4;
+        });
+      }
+
+      if (!parentRoom) {
+        console.log("Error: No suitable parent room found (need RCL 4+)");
+        return "Error: no parent room";
+      }
+
+      empireExpansion.queue(targetRoom, parentRoom);
+      return "OK";
+    },
+
+    cancel: (targetRoom: string) => {
+      if (!targetRoom) {
+        console.log("Usage: expansion.cancel('E47N39')");
+        return "Error: specify target room";
+      }
+
+      const result = empireExpansion.cancel(targetRoom);
+      return result ? "OK" : "Failed";
     },
   };
 }

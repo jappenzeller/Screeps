@@ -27,6 +27,7 @@ import { CommandExecutor } from "./core/CommandExecutor";
 import { EconomyTracker } from "./core/EconomyTracker";
 import { PositionLogger } from "./logging/PositionLogger";
 import { BootstrapManager } from "./expansion/BootstrapManager";
+import { ExpansionManager, eventBus, initializeEmpireMemory } from "./empire";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -54,6 +55,9 @@ export function loop(): void {
   // Clean up dead creep memory
   cleanupMemory();
 
+  // Initialize empire memory structures
+  initializeEmpireMemory();
+
   // Gather intel for all visible rooms (populates Memory.intel)
   const homeRoom = Object.keys(Game.rooms).find(
     (name) => Game.rooms[name].controller?.my
@@ -73,6 +77,13 @@ export function loop(): void {
   // Run bootstrap manager (empire-wide expansion coordination)
   const bootstrapManager = new BootstrapManager();
   bootstrapManager.run();
+
+  // Run empire expansion manager (new architecture)
+  const expansionManager = new ExpansionManager();
+  expansionManager.run();
+
+  // Process empire events
+  eventBus.processEvents();
 
   // Run all creeps
   runCreeps();

@@ -9,6 +9,53 @@ import { EconomyTracker, ColonyEconomyMetrics } from "../core/EconomyTracker";
 
 const AWS_SEGMENT = 90;
 
+interface EmpireExport {
+  state: string;
+  stateChangedAt: number | undefined;
+  priorities: Record<string, number>;
+  expansion: {
+    active: EmpireExpansionExport[];
+    activeCount: number;
+    queue: Array<{ target: string; parent: string }>;
+    queueCount: number;
+    history: Record<string, unknown>;
+  };
+  gcl: {
+    level: number;
+    progress: number;
+    progressTotal: number;
+    percent: string;
+  };
+  colonies: string[];
+  colonyCount: number;
+}
+
+interface EmpireExpansionExport {
+  roomName: string;
+  parentRoom: string;
+  state: string;
+  stateChangedAt: number;
+  ticksInState: number;
+  startedAt: number;
+  totalTicks: number;
+  attempts: number;
+  claimer: string | null;
+  spawnSitePos: { x: number; y: number } | null;
+  spawnProgress: {
+    progress: number;
+    total: number;
+    percent: string;
+  } | null;
+  creeps: {
+    builders: number;
+    haulers: number;
+    total: number;
+    names: string[];
+  };
+  blockers: string[];
+  lastFailure: string | null;
+}
+
 interface AWSExportData {
   timestamp: number;
   gameTick: number;
@@ -19,6 +66,7 @@ interface AWSExportData {
   global: GlobalExport;
   diagnostics: Record<string, DiagnosticsExport>;
   intel: Record<string, RoomIntel>;
+  empire: EmpireExport | null;
 }
 
 interface CreepDetail {
@@ -369,6 +417,7 @@ export class AWSExporter {
       global: this.getGlobalStats(),
       diagnostics,
       intel: Memory.intel || {},
+      empire: this.getEmpireStatus(),
     };
 
     // Write to segment
@@ -955,6 +1004,88 @@ export class AWSExporter {
       },
       credits: Game.market?.credits || 0,
       totalCreeps: Object.keys(Game.creeps).length,
+    };
+  }
+
+  /**
+   * Get empire and expansion status for API export
+   */
+  private static getEmpireStatus(): EmpireExport | null {
+    if (!Memory.empire && !Memory.empireExpansion) {
+      return null;
+    }
+
+    const active = Memory.empireExpansion?.active || {};
+    const activeExpansions: EmpireExpansionExport[] = [];
+
+    for (const roomName in active) {
+      const exp = active[roomName];
+
+      // Count alive bootstrap creeps by role
+      const builders = exp.bootstrapCreeps.filter(
+        (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_BUILDER"
+      ).length;
+      const haulers = exp.bootstrapCreeps.filter(
+        (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_HAULER"
+      ).length;
+
+      // Get spawn site progress if exists
+      let spawnProgress: EmpireExpansionExport["spawnProgress"] = null;
+      if (exp.spawnSiteId) {
+        const site = Game.getObjectById(exp.spawnSiteId as Id<ConstructionSite>);
+        if (site) {
+          spawnProgress = {
+            progress: site.progress,
+            total: site.progressTotal,
+            percent: ((site.progress / site.progressTotal) * 100).toFixed(1),
+          };
+        }
+      }
+
+      activeExpansions.push({
+        roomName: exp.roomName,
+        parentRoom: exp.parentRoom,
+        state: exp.state,
+        stateChangedAt: exp.stateChangedAt,
+        ticksInState: Game.time - exp.stateChangedAt,
+        startedAt: exp.startedAt,
+        totalTicks: Game.time - exp.startedAt,
+        attempts: exp.attempts,
+        claimer: exp.claimer,
+        spawnSitePos: exp.spawnSitePos,
+        spawnProgress,
+        creeps: {
+          builders,
+          haulers,
+          total: exp.bootstrapCreeps.length,
+          names: exp.bootstrapCreeps,
+        },
+        blockers: exp.blockers,
+        lastFailure: exp.lastFailure,
+      });
+    }
+
+    return {
+      state: Memory.empire?.state || "UNKNOWN",
+      stateChangedAt: Memory.empire?.stateChangedAt,
+      priorities: Memory.empire?.priorities || {},
+      expansion: {
+        active: activeExpansions,
+        activeCount: activeExpansions.length,
+        queue: Memory.empireExpansion?.queue || [],
+        queueCount: Memory.empireExpansion?.queue?.length || 0,
+        history: Memory.empireExpansion?.history || {},
+      },
+      gcl: {
+        level: Game.gcl.level,
+        progress: Game.gcl.progress,
+        progressTotal: Game.gcl.progressTotal,
+        percent: ((Game.gcl.progress / Game.gcl.progressTotal) * 100).toFixed(2),
+      },
+      colonies: Object.values(Game.rooms)
+        .filter((r) => r.controller?.my)
+        .map((r) => r.name),
+      colonyCount: Object.values(Game.rooms).filter((r) => r.controller?.my).length,
     };
   }
 
