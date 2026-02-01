@@ -30,7 +30,7 @@ declare global {
 
 export class PositionLogger {
   private static SEGMENT_ID = 92;
-  private static MAX_ENTRIES = 5000; // ~50KB
+  private static MAX_ENTRIES = 1500; // ~75KB safe margin under 100KB limit
 
   public static run(roomName: string): void {
     if (!Memory.settings?.logPositions) return;
