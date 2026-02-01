@@ -20,8 +20,8 @@ import { shouldEmergencyRenew } from "../managers/RenewalManager";
  * Never seeks spawn, just takes advantage of passing by during deliveries
  */
 function tryRenew(creep: Creep): void {
-  // Only bother if TTL is getting low
-  if (!creep.ticksToLive || creep.ticksToLive > 1200) return;
+  // Only renew when TTL is genuinely low - prevents oscillation around threshold
+  if (!creep.ticksToLive || creep.ticksToLive > 600) return;
 
   // Must already be adjacent to spawn - don't seek it out
   const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
