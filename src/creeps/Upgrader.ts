@@ -32,6 +32,16 @@ function moveOffRoad(creep: Creep): void {
 }
 
 export function runUpgrader(creep: Creep): void {
+  // If not in assigned room, travel there (handles reassigned bootstrap creeps)
+  if (creep.room.name !== creep.memory.room) {
+    smartMoveTo(creep, new RoomPosition(25, 25, creep.memory.room), {
+      reusePath: 20,
+      visualizePathStyle: { stroke: "#ffffff" },
+    });
+    creep.say("GO");
+    return;
+  }
+
   // Initialize state
   if (!creep.memory.state) {
     creep.memory.state = creep.store[RESOURCE_ENERGY] > 0 ? "UPGRADING" : "COLLECTING";

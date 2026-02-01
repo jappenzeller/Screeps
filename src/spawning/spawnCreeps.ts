@@ -20,7 +20,13 @@ export function spawnCreeps(room: Room): void {
 
   // Get best spawn candidate based on utility scoring
   const candidate = getSpawnCandidate(room);
-  if (!candidate) return;
+  if (!candidate) {
+    // Debug: why no candidate?
+    if (Game.time % 10 === 0) {
+      console.log(`[${room.name}] No spawn candidate - energy: ${room.energyAvailable}/${room.energyCapacityAvailable}`);
+    }
+    return;
+  }
 
   const name = `${candidate.role}_${Game.time}`;
   const memory: CreepMemory = {
@@ -35,5 +41,7 @@ export function spawnCreeps(room: Room): void {
     console.log(
       `[${room.name}] Spawning ${candidate.role}${targetInfo} (utility: ${candidate.utility.toFixed(1)})`
     );
+  } else if (result !== ERR_NOT_ENOUGH_ENERGY) {
+    console.log(`[${room.name}] Spawn failed: ${result} for ${candidate.role} (cost: ${candidate.cost})`);
   }
 }

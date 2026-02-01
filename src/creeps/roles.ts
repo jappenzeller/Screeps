@@ -9,7 +9,6 @@ import { runRemoteHauler } from "./RemoteHauler";
 import { runReserver } from "./Reserver";
 import { runClaimer } from "./Claimer";
 import { runRemoteDefender } from "./RemoteDefender";
-import { runRemoteDefenderRanged } from "./RemoteDefenderRanged";
 import { runLinkFiller } from "./LinkFiller";
 import { runMineralHarvester } from "./MineralHarvester";
 import { runBootstrapBuilder } from "./BootstrapBuilder";
@@ -27,7 +26,8 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   BUILDER: runBuilder,
   DEFENDER: runDefender,
   REMOTE_DEFENDER: runRemoteDefender,
-  REMOTE_DEFENDER_RANGED: runRemoteDefenderRanged,
+  // Legacy: existing REMOTE_DEFENDER_RANGED creeps use the same runner
+  REMOTE_DEFENDER_RANGED: runRemoteDefender,
   SCOUT: runScout,
   REMOTE_MINER: runRemoteMiner,
   REMOTE_HAULER: runRemoteHauler,

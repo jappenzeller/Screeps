@@ -82,6 +82,8 @@ expansion.status()   - Show empire expansion status (new system)
 expansion.start(target, parent) - Start expansion (new system)
 expansion.queue(target, parent) - Queue expansion (new system)
 expansion.cancel(target) - Cancel expansion (new system)
+expansion.clear()    - Clear all expansion data (use when stuck)
+expansion.debug()    - Show raw memory for all expansion systems
 `);
   };
 
@@ -1346,6 +1348,16 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
 
       const result = empireExpansion.cancel(targetRoom);
       return result ? "OK" : "Failed";
+    },
+
+    clear: () => {
+      console.log("Clearing all expansion data from Memory.empireExpansion...");
+      return empireExpansion.clear();
+    },
+
+    debug: () => {
+      console.log("Showing raw expansion memory (all systems):");
+      return empireExpansion.debug();
     },
   };
 }

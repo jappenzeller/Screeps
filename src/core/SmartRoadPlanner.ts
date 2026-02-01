@@ -28,33 +28,57 @@ export class SmartRoadPlanner {
     // Gate: need RCL 3+ and extensions mostly done
     if (!this.shouldPlanRoads()) return;
 
-    // Limit concurrent road sites
-    const existingSites = this.room.find(FIND_CONSTRUCTION_SITES, {
-      filter: (s) => s.structureType === STRUCTURE_ROAD,
+    // Count existing road construction sites (home + remote)
+    const homeRoom = this.room;
+    const existingHomeSites = homeRoom.find(FIND_CONSTRUCTION_SITES, {
+      filter: (s: ConstructionSite) => s.structureType === STRUCTURE_ROAD,
     }).length;
 
-    if (existingSites >= MAX_CONCURRENT_ROAD_SITES) return;
+    // Phase 1: Home room roads (traffic-based or static fallback)
+    let homePlaced = 0;
+    const homeMax = Math.min(MAX_CONCURRENT_ROAD_SITES, MAX_CONCURRENT_ROAD_SITES - existingHomeSites);
 
+    if (homeMax > 0) {
+      homePlaced = this.planHomeRoads(homeMax);
+    }
+
+    // Phase 2: Remote route roads (home room side - storage to exit)
+    // These use a separate budget so they aren't starved by home roads
+    const routeMax = MAX_CONCURRENT_ROAD_SITES - existingHomeSites - homePlaced;
+    let routePlaced = 0;
+    if (routeMax > 0) {
+      routePlaced = this.planRemoteRoutes(routeMax);
+    }
+
+    // Phase 3: Remote room roads (inside remote rooms - exit to sources)
+    // Count remote road sites separately - don't let home room sites block remote
+    const remoteRoadSites = this.countRemoteRoadSites();
+    const remoteMax = MAX_CONCURRENT_ROAD_SITES - remoteRoadSites;
+    if (remoteMax > 0) {
+      this.planRemoteRoads(remoteMax);
+    }
+  }
+
+  /**
+   * Plan roads in the home room using traffic data or static fallback
+   */
+  private planHomeRoads(maxToPlace: number): number {
     // Get hotspots from traffic data
     const hotspots = this.monitor.getHotspots(10);
 
     if (hotspots.length === 0 || hotspots[0].visits < MIN_VISITS_FOR_ROAD) {
-      // Fallback to static planning if no traffic data yet
-      this.planStaticRoads(MAX_CONCURRENT_ROAD_SITES - existingSites);
-      return;
+      // Fallback to static planning if no traffic data or low traffic
+      return this.planStaticRoads(maxToPlace);
     }
 
     // Build roads at highest-traffic tiles first
     let placed = 0;
-    const maxToPlace = MAX_CONCURRENT_ROAD_SITES - existingSites;
 
     for (const spot of hotspots) {
       if (placed >= maxToPlace) break;
 
-      // Only build if truly high traffic
       if (spot.visits < MIN_VISITS_FOR_ROAD) continue;
 
-      // Don't place road on important structures like containers
       if (!this.canPlaceRoad(this.room, spot.x, spot.y)) continue;
 
       const result = this.room.createConstructionSite(spot.x, spot.y, STRUCTURE_ROAD);
@@ -62,28 +86,34 @@ export class SmartRoadPlanner {
         placed++;
         logger.info("SmartRoadPlanner", `Road at ${spot.x},${spot.y} (${spot.visits} visits)`);
 
-        // Record that we built this
         if (Memory.traffic?.[this.room.name]) {
           Memory.traffic[this.room.name].roadsBuilt.push(`${spot.x}:${spot.y}`);
         }
       }
     }
 
-    // If we still have budget and hotspots weren't enough, fill gaps
+    // Fill gaps if we placed some traffic roads but have budget left
     if (placed < maxToPlace && placed > 0) {
       this.fillRoadGaps(maxToPlace - placed);
     }
 
-    // Plan remote routes if we have budget remaining
-    const remaining = MAX_CONCURRENT_ROAD_SITES - existingSites - placed;
-    if (remaining > 0) {
-      const routePlaced = this.planRemoteRoutes(remaining);
-      // Plan roads inside remote rooms if we still have budget
-      const remoteRemaining = remaining - routePlaced;
-      if (remoteRemaining > 0) {
-        this.planRemoteRoads(remoteRemaining);
-      }
+    return placed;
+  }
+
+  /**
+   * Count road construction sites in remote rooms
+   */
+  private countRemoteRoadSites(): number {
+    let count = 0;
+    const remoteRooms = this.getActiveRemoteRooms();
+    for (const roomName of remoteRooms) {
+      const room = Game.rooms[roomName];
+      if (!room) continue;
+      count += room.find(FIND_CONSTRUCTION_SITES, {
+        filter: (s: ConstructionSite) => s.structureType === STRUCTURE_ROAD,
+      }).length;
     }
+    return count;
   }
 
   private shouldPlanRoads(): boolean {
@@ -147,16 +177,16 @@ export class SmartRoadPlanner {
   /**
    * Fallback: static road planning (spawn→sources→controller)
    */
-  private planStaticRoads(limit: number): void {
+  private planStaticRoads(limit: number): number {
     const spawn = this.room.find(FIND_MY_SPAWNS)[0];
-    if (!spawn) return;
+    if (!spawn) return 0;
 
     let placed = 0;
 
     // Path to sources
     const sources = this.room.find(FIND_SOURCES);
     for (const source of sources) {
-      if (placed >= limit) return;
+      if (placed >= limit) return placed;
       placed += this.planPath(spawn.pos, source.pos, limit - placed);
     }
 
@@ -168,10 +198,12 @@ export class SmartRoadPlanner {
     // Path from sources to storage (if exists)
     if (this.room.storage && placed < limit) {
       for (const source of sources) {
-        if (placed >= limit) return;
+        if (placed >= limit) return placed;
         placed += this.planPath(source.pos, this.room.storage.pos, limit - placed);
       }
     }
+
+    return placed;
   }
 
   private planPath(from: RoomPosition, to: RoomPosition, limit: number): number {

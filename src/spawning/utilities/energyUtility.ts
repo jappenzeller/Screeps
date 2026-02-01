@@ -98,7 +98,12 @@ export function sustainabilityUtility(
   additionalConsumption: number,
   income: number
 ): number {
-  if (income <= 0) return 0; // No income, don't spawn consumers
+  // If no income data yet (new room, tracker hasn't warmed up),
+  // return moderate sustainability to avoid blocking spawns
+  // Young colonies need to spawn creeps even without income tracking
+  if (income <= 0) {
+    return 0.5; // Assume moderate sustainability until tracking warms up
+  }
 
   const projectedConsumption = currentConsumption + additionalConsumption;
 

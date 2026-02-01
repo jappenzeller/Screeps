@@ -40,7 +40,6 @@ type SpawnRole =
   | "REMOTE_MINER"
   | "REMOTE_HAULER"
   | "REMOTE_DEFENDER"
-  | "REMOTE_DEFENDER_RANGED"
   | "RESERVER"
   | "SCOUT"
   | "LINK_FILLER"
@@ -58,7 +57,6 @@ const ALL_ROLES: SpawnRole[] = [
   "REMOTE_MINER",
   "REMOTE_HAULER",
   "REMOTE_DEFENDER",
-  "REMOTE_DEFENDER_RANGED",
   "RESERVER",
   "SCOUT",
   "LINK_FILLER",
@@ -98,7 +96,8 @@ interface ColonyState {
   remoteThreatsByRoom: Record<string, number>;
 
   // Work to do
-  constructionSites: number;
+  constructionSites: number; // Total including remote + assumed sites
+  hasRemoteContainerSite: boolean; // Critical infrastructure flag
   remoteRooms: string[];
 
   // Creeps near death (TTL < 100)
@@ -117,12 +116,22 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
   const candidates: SpawnCandidate[] = [];
   const state = getColonyState(room);
 
+  // Debug: show state at RCL 1-2
+  const debugSpawn = state.rcl <= 2 && Game.time % 20 === 0;
+  if (debugSpawn) {
+    console.log(`[${room.name}] SpawnDebug: rcl=${state.rcl} income=${state.energyIncome} avail=${state.energyAvailable} cap=${state.energyCapacity}`);
+    console.log(`[${room.name}] SpawnDebug: counts=${JSON.stringify(state.counts)} targets=${JSON.stringify(state.targets)}`);
+  }
+
   for (const role of ALL_ROLES) {
     const utility = calculateUtility(role, state);
     if (utility <= 0) continue;
 
     const body = buildBody(role, state);
-    if (body.length === 0) continue;
+    if (body.length === 0) {
+      if (debugSpawn) console.log(`[${room.name}] SpawnDebug: ${role} utility=${utility.toFixed(1)} but empty body`);
+      continue;
+    }
 
     const cost = body.reduce((sum, part) => sum + BODYPART_COST[part], 0);
 
@@ -133,18 +142,22 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
       "REMOTE_MINER",
       "REMOTE_HAULER",
       "REMOTE_DEFENDER",
-      "REMOTE_DEFENDER_RANGED",
       "RESERVER",
     ];
     if (requiresTargetRoom.includes(role) && !memory.targetRoom) {
       continue;
     }
 
+    if (debugSpawn) console.log(`[${room.name}] SpawnDebug: ${role} utility=${utility.toFixed(1)} cost=${cost}`);
+
     // DON'T filter by affordability here - collect all valid candidates
     candidates.push({ role, utility, body, memory, cost });
   }
 
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    if (debugSpawn) console.log(`[${room.name}] SpawnDebug: NO CANDIDATES`);
+    return null;
+  }
 
   // Sort by utility descending
   candidates.sort((a, b) => b.utility - a.utility);
@@ -158,6 +171,10 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
 
   // Can't afford best. Check if economy is functional.
   const hasIncome = state.energyIncome > 0;
+
+  if (debugSpawn) {
+    console.log(`[${room.name}] SpawnDebug: best=${best.role} cost=${best.cost} avail=${room.energyAvailable} hasIncome=${hasIncome}`);
+  }
 
   if (hasIncome) {
     // Economy is working. Wait for energy to accumulate.
@@ -196,7 +213,6 @@ function getColonyState(room: Room): ColonyState {
     "HARVESTER",
     "LINK_FILLER",
     "REMOTE_DEFENDER",
-    "REMOTE_DEFENDER_RANGED",
   ]);
 
   for (const c of creeps) {
@@ -222,14 +238,34 @@ function getColonyState(room: Room): ColonyState {
     }
   }
 
-  // Get targets (desired counts)
-  const targets = getCreepTargets(room);
-
   // Get remote threats
   const remoteThreatsByRoom = getRemoteThreats(room.name);
 
   // Get remote mining targets
   const remoteRooms = getRemoteMiningTargets(room.name);
+
+  // Count construction sites (home + remote + assumed for non-visible remotes)
+  let constructionSites = room.find(FIND_CONSTRUCTION_SITES).length;
+  let hasRemoteContainerSite = false;
+  for (const remoteName of remoteRooms) {
+    const remoteRoom = Game.rooms[remoteName];
+    if (remoteRoom) {
+      const remoteSites = remoteRoom.find(FIND_CONSTRUCTION_SITES);
+      constructionSites += remoteSites.length;
+      if (remoteSites.some((s) => s.structureType === STRUCTURE_CONTAINER)) {
+        hasRemoteContainerSite = true;
+      }
+    } else {
+      // Can't see room, but assume some sites if we're mining there
+      const intel = Memory.rooms?.[remoteName];
+      if (intel?.lastScan && Game.time - intel.lastScan < 1000) {
+        constructionSites += 2; // Assume container + roads needed
+      }
+    }
+  }
+
+  // Get targets (desired counts) - pass site count to avoid recalculation
+  const targets = getCreepTargets(room, constructionSites);
 
   return {
     room,
@@ -243,7 +279,8 @@ function getColonyState(room: Room): ColonyState {
     targets,
     homeThreats: room.find(FIND_HOSTILE_CREEPS).length,
     remoteThreatsByRoom,
-    constructionSites: room.find(FIND_CONSTRUCTION_SITES).length,
+    constructionSites,
+    hasRemoteContainerSite,
     remoteRooms,
     dyingSoon,
   };
@@ -252,34 +289,18 @@ function getColonyState(room: Room): ColonyState {
 /**
  * Calculate desired creep counts for each role
  */
-function getCreepTargets(room: Room): Record<string, number> {
+function getCreepTargets(room: Room, totalSites: number): Record<string, number> {
   const rcl = room.controller?.level || 0;
   const sources = room.find(FIND_SOURCES).length;
-  const hasStorage = !!room.storage;
   const remoteRooms = getRemoteMiningTargets(room.name);
 
-  // Count construction sites in home AND remote rooms
-  let totalSites = room.find(FIND_CONSTRUCTION_SITES).length;
-  for (const remoteName of remoteRooms) {
-    const remoteRoom = Game.rooms[remoteName];
-    if (remoteRoom) {
-      totalSites += remoteRoom.find(FIND_CONSTRUCTION_SITES).length;
-    } else {
-      // Can't see room, but assume some sites if we're mining there
-      const intel = Memory.rooms?.[remoteName];
-      if (intel?.lastScan && Game.time - intel.lastScan < 1000) {
-        totalSites += 2; // Assume container + roads needed
-      }
-    }
-  }
-
-  // Scale builders: 1 per 5 sites, minimum 1 if any sites, max based on RCL
-  const maxBuilders = Math.min(rcl, 4);
-  const builderTarget = totalSites > 0 ? Math.min(Math.ceil(totalSites / 5), maxBuilders) : 0;
+  // Scale builders: 1 per 10 sites, floor of 2 if any sites exist (RCL 1 needs 2 builders)
+  const maxBuildersByEconomy = Math.max(2, Math.min(rcl, 4));
+  const builderTarget = totalSites > 0 ? Math.min(Math.ceil(totalSites / 10), maxBuildersByEconomy) : 0;
 
   const targets: Record<string, number> = {
     HARVESTER: sources,
-    HAULER: hasStorage ? Math.max(2, sources) : sources,
+    HAULER: sources, // 1 hauler per source - scales correctly for 1-source rooms
     UPGRADER: rcl < 8 ? Math.min(rcl, 3) : 1,
     BUILDER: builderTarget,
     DEFENDER: 0, // Dynamic based on threats
@@ -360,8 +381,6 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return remoteHaulerUtility(effectiveDeficit, state);
     case "REMOTE_DEFENDER":
       return remoteDefenderUtility(state);
-    case "REMOTE_DEFENDER_RANGED":
-      return remoteDefenderRangedUtility(state);
     case "RESERVER":
       return reserverUtility(effectiveDeficit, state);
     case "SCOUT":
@@ -422,7 +441,14 @@ function haulerUtility(deficit: number, state: ColonyState): number {
 
   // If we have income but no haulers, energy is piling up - high utility
   if ((state.counts.HAULER || 0) === 0 && state.energyIncome > 0) {
-    utility *= 10;
+    utility *= 10; // No haulers at all - critical
+  } else if ((state.counts.HAULER || 0) < state.targets.HAULER) {
+    // Below target — scale boost by how far below
+    // 1 hauler when target is 2: multiplier = 3
+    // This ensures the second hauler spawns before remote/scout roles
+    const understaffRatio =
+      1 - (state.counts.HAULER || 0) / Math.max(state.targets.HAULER, 1);
+    utility *= 1 + understaffRatio * 2;
   } else {
     utility *= 1 + incomeRatio;
   }
@@ -440,14 +466,19 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   const base = CONFIG.SPAWNING.BASE_UTILITY.UPGRADER;
   const energy = getEnergyState(state.room);
 
-  // Factor 1: Storage level (smooth scaling)
-  const storageFactor = storageUtility(energy.stored, CONFIG.ENERGY.STORAGE_THRESHOLDS);
+  // Factor 1: Storage level
+  // Young colonies (no storage) get a fixed baseline — they MUST upgrade to progress
+  const hasStorage = !!state.room.storage;
+  const storageFactor = hasStorage
+    ? storageUtility(energy.stored, CONFIG.ENERGY.STORAGE_THRESHOLDS)
+    : 0.6; // Fixed baseline for young colonies
 
   // Factor 2: Can we sustain another upgrader?
-  const avgWorkParts = 15; // Estimate for new upgrader
+  // Scale down expected work parts for young colonies (they get tiny bodies)
+  const expectedWorkParts = hasStorage ? 15 : 1;
   const sustainFactor = sustainabilityUtility(
     energy.upgradeConsumption,
-    avgWorkParts,
+    expectedWorkParts,
     energy.harvestIncome
   );
 
@@ -473,36 +504,25 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
 function builderUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
 
-  // Count total sites including remote rooms
-  let totalSites = state.constructionSites;
-  let hasRemoteContainer = false;
-
-  for (const remoteName of state.remoteRooms) {
-    const room = Game.rooms[remoteName];
-    if (room) {
-      const remoteSites = room.find(FIND_CONSTRUCTION_SITES);
-      totalSites += remoteSites.length;
-
-      // Check for remote container sites (critical infrastructure)
-      if (remoteSites.some((s) => s.structureType === STRUCTURE_CONTAINER)) {
-        hasRemoteContainer = true;
-      }
-    }
-  }
-
+  // Use pre-calculated site count from state (includes home + remote + assumed)
+  const totalSites = state.constructionSites;
   if (totalSites === 0) return 0;
 
   const base = CONFIG.SPAWNING.BASE_UTILITY.BUILDER;
   const energy = getEnergyState(state.room);
 
-  // Factor 1: Storage level (smooth scaling)
-  const storageFactor = storageUtility(energy.stored, CONFIG.ENERGY.STORAGE_THRESHOLDS);
+  // Factor 1: Storage level
+  // Young colonies (no storage) get a fixed baseline — they MUST build to progress
+  const hasStorage = !!state.room.storage;
+  const storageFactor = hasStorage
+    ? storageUtility(energy.stored, CONFIG.ENERGY.STORAGE_THRESHOLDS)
+    : 0.6; // Fixed baseline for young colonies
 
   // Factor 2: Can we sustain another builder?
-  const avgWorkParts = 5; // Builders use ~2.5 energy/tick when active
+  const expectedWorkParts = hasStorage ? 5 : 1;
   const sustainFactor = sustainabilityUtility(
     energy.builderConsumption,
-    avgWorkParts * 0.5, // 50% uptime estimate
+    expectedWorkParts * 0.5, // 50% uptime estimate
     energy.harvestIncome
   );
 
@@ -520,7 +540,7 @@ function builderUtility(deficit: number, state: ColonyState): number {
   const siteFactor = Math.min(totalSites / 5, 2);
 
   // Factor 6: Remote container boost (critical infrastructure)
-  const containerBoost = hasRemoteContainer ? 1.5 : 1;
+  const containerBoost = state.hasRemoteContainerSite ? 1.5 : 1;
 
   // Combine factors
   const multiplier =
@@ -577,26 +597,29 @@ function remoteMinerUtility(deficit: number, state: ColonyState): number {
  * - No active miners (TTL > 50)
  * - No containers in remote rooms
  */
-function remoteHaulerUtility(deficit: number, state: ColonyState): number {
+/**
+ * Remote hauler utility - critical for capturing remote income
+ *
+ * Key insight: the FIRST hauler for a room with active miners is extremely
+ * valuable because without it, all mined energy is wasted. Subsequent
+ * haulers have diminishing returns.
+ *
+ * Utility range: 0-55 (above reserver at 30, below remote defender at 65)
+ */
+function remoteHaulerUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl < 4) return 0;
-  if (deficit <= 0) return 0;
 
-  // Check all remote rooms for viability
   let totalActiveMiners = 0;
-  let totalContainers = 0;
-  let anyRoomHasHostiles = false;
+  let roomsWithMinersNoHaulers = 0;
 
   for (const roomName of state.remoteRooms) {
     const roomMem = Memory.rooms?.[roomName];
 
-    // Check for hostiles - haulers useless if miners can't work
-    if (roomMem?.hostiles && roomMem.hostiles > 0) {
-      anyRoomHasHostiles = true;
-      continue; // Skip this room for hauler calculation
-    }
+    // Skip rooms with hostiles - haulers would just flee
+    if (roomMem?.hostiles && roomMem.hostiles > 0) continue;
 
-    // Count active miners (TTL > 50) for this remote room
-    const activeMiners = Object.values(Game.creeps).filter(
+    // Count active miners in this room
+    const roomMiners = Object.values(Game.creeps).filter(
       (c) =>
         c.memory.role === "REMOTE_MINER" &&
         c.memory.targetRoom === roomName &&
@@ -604,32 +627,26 @@ function remoteHaulerUtility(deficit: number, state: ColonyState): number {
         c.ticksToLive > 50
     ).length;
 
-    totalActiveMiners += activeMiners;
+    if (roomMiners === 0) continue;
+    totalActiveMiners += roomMiners;
 
-    // Check for containers in remote room
-    const remoteRoom = Game.rooms[roomName];
-    if (remoteRoom) {
-      // Have vision - check directly
-      const containers = remoteRoom.find(FIND_STRUCTURES, {
-        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
-      });
-      totalContainers += containers.length;
+    // Count haulers assigned to this room
+    const roomHaulers = Object.values(Game.creeps).filter(
+      (c) =>
+        c.memory.role === "REMOTE_HAULER" &&
+        c.memory.targetRoom === roomName &&
+        c.ticksToLive &&
+        c.ticksToLive > 100
+    ).length;
+
+    if (roomHaulers === 0) {
+      roomsWithMinersNoHaulers++;
     }
-    // Note: Without vision, we can't verify containers exist
-    // Only spawn haulers if we have room vision or active miners already working
   }
 
-  // If all remote rooms have hostiles, no utility
-  if (anyRoomHasHostiles && totalActiveMiners === 0) {
-    return 0;
-  }
+  if (totalActiveMiners === 0) return 0;
 
-  // No active miners = no energy production = no hauler needed
-  if (totalActiveMiners === 0) {
-    return 0;
-  }
-
-  // Count existing haulers for deficit calculation
+  // Count all existing remote haulers for this colony
   const existingHaulers = Object.values(Game.creeps).filter(
     (c) =>
       c.memory.role === "REMOTE_HAULER" &&
@@ -638,69 +655,53 @@ function remoteHaulerUtility(deficit: number, state: ColonyState): number {
       c.ticksToLive > 100
   ).length;
 
-  // Need ~1.5 haulers per active miner
   const haulersNeeded = Math.ceil(totalActiveMiners * 1.5);
   const actualDeficit = haulersNeeded - existingHaulers;
 
-  if (actualDeficit <= 0) {
-    return 0;
+  if (actualDeficit <= 0) return 0;
+
+  // Base utility 40
+  let utility = 40;
+
+  // First-hauler bonus: rooms with miners but NO haulers get +15
+  // This ensures the first hauler for an unserviced room spawns quickly
+  if (roomsWithMinersNoHaulers > 0) {
+    utility += 15; // Total: 55 — beats reserver(30), scout(15), builder(25)
   }
 
-  // Scale utility by deficit ratio (not fixed thresholds)
-  const baseUtility = 35;
-  let utility = baseUtility * (actualDeficit / Math.max(haulersNeeded, 1));
-
-  // Scale by home economy
-  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
-  utility *= incomeRatio;
+  // Scale down slightly as we approach full coverage
+  // But never below 30 when there's still a deficit
+  const coverageRatio = existingHaulers / Math.max(haulersNeeded, 1);
+  utility *= Math.max(0.75, 1 - coverageRatio * 0.5);
 
   return utility;
 }
 
 /**
- * Remote defender utility - checks memory for threats and creates squads as needed
- * Uses squad-based spawning to coordinate attacks against healer-supported invaders
+ * Remote defender utility - hybrid ranged/heal defender for remote rooms
  *
- * Both melee and ranged defenders spawn independently when threats detected.
- * Utility is 60 (higher than RESERVER at 50) to ensure defenders spawn first.
- *
- * IMPORTANT: Must check Memory.rooms[roomName].hostiles directly because:
- * - Creeps flee when they see hostiles and update memory
- * - Without vision, we rely on memory for threat info
- * - Squads need to be created when threats are detected
+ * Spawns when threats detected in remote rooms. Uses simple threat detection
+ * based on Memory.rooms[roomName].hostiles. Utility 65 ensures defenders
+ * spawn before reservers (25) but after critical economy roles.
  */
 function remoteDefenderUtility(state: ColonyState): number {
   if (state.rcl < 4) return 0;
 
-  const squadManager = new RemoteSquadManager(state.room);
   const SCAN_AGE_THRESHOLD = 200; // Consider scans stale after 200 ticks
 
-  // Debug logging
-  const DEBUG = Game.time % 20 === 0; // Log every 20 ticks
-  if (DEBUG) console.log(`[DEFENDER] Checking ${state.remoteRooms.length} remote rooms`);
-
-  // First check Memory.rooms for hostiles in remote rooms
-  // This catches threats even when we don't have vision
+  // Check for threats in remote rooms
+  let threatenedRooms = 0;
   for (const remoteName of state.remoteRooms) {
     const roomMem = Memory.rooms?.[remoteName];
-    if (!roomMem) {
-      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: SKIP - no memory`);
-      continue;
-    }
+    if (!roomMem) continue;
 
     // Check scan age - don't spawn defenders for stale intel
     const scanAge = Game.time - (roomMem.lastScan || 0);
-    if (scanAge > SCAN_AGE_THRESHOLD) {
-      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: SKIP - stale scan (${scanAge} ticks old)`);
-      continue;
-    }
+    if (scanAge > SCAN_AGE_THRESHOLD) continue;
 
-    // Check for hostiles (from memory or live)
+    // Check for hostiles
     const hostileCount = roomMem.hostiles || 0;
-    if (hostileCount === 0) {
-      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: SKIP - no hostiles`);
-      continue;
-    }
+    if (hostileCount === 0) continue;
 
     // Check for dangerous hostiles (with attack parts)
     const hostileDetails = (roomMem as any).hostileDetails;
@@ -712,118 +713,84 @@ function remoteDefenderUtility(state: ColonyState): number {
       hasDangerous = hostileCount > 0;
     }
 
-    if (!hasDangerous) {
-      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: SKIP - hostiles not dangerous`);
-      continue;
-    }
-
-    if (DEBUG) console.log(`[DEFENDER] ${remoteName}: THREAT DETECTED - ${hostileCount} hostiles`);
-
-    // Request a squad if one doesn't exist
-    const existingSquad = squadManager.getSquad(remoteName);
-    if (!existingSquad || existingSquad.status === "DISBANDED") {
-      // Analyze threat to determine squad size
-      const analysis = squadManager.analyzeThreat(remoteName);
-      if (analysis.recommendedSquadSize > 0) {
-        squadManager.requestSquad(remoteName, analysis.recommendedSquadSize);
-        if (DEBUG) console.log(`[DEFENDER] ${remoteName}: Requested squad size ${analysis.recommendedSquadSize}`);
-      } else {
-        // Default to 1 defender if we can't analyze
-        squadManager.requestSquad(remoteName, 1);
-        if (DEBUG) console.log(`[DEFENDER] ${remoteName}: Requested squad size 1 (default)`);
-      }
-    } else {
-      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: Squad exists, status=${existingSquad.status}`);
+    if (hasDangerous) {
+      threatenedRooms++;
     }
   }
 
-  // Now check squad needs (includes newly created squads)
-  const needs = squadManager.getDefendersNeeded();
+  if (threatenedRooms === 0) return 0;
 
-  if (DEBUG) console.log(`[DEFENDER] Squad needs: ${JSON.stringify(needs)}`);
-
-  // No squad needs = no utility
-  if (needs.length === 0) {
-    if (DEBUG) console.log(`[DEFENDER] No squad needs, returning utility=0`);
-    return 0;
-  }
-
-  // Find the most urgent need (most defenders needed)
-  let totalNeeded = 0;
-  for (const need of needs) {
-    totalNeeded += need.count;
-  }
-
-  if (totalNeeded === 0) {
-    if (DEBUG) console.log(`[DEFENDER] totalNeeded=0, returning utility=0`);
-    return 0;
-  }
-
-  // Base utility for melee defender - MUST BE HIGHER THAN RESERVER (50)
-  // 60 for first defender, +10 for each additional needed
-  const BASE_UTILITY = 60;
-
-  // Scale with number of defenders needed
-  const utility = BASE_UTILITY + (totalNeeded - 1) * 10;
-
-  if (DEBUG) console.log(`[DEFENDER] Returning utility=${utility} (need ${totalNeeded} defenders)`);
-
-  return utility;
-}
-
-/**
- * Remote defender ranged utility - spawns independently when threats exist
- * Provides ranged support and healing for melee defenders
- *
- * Both defenders spawn when threat detected - ranged doesn't wait for melee.
- * Slightly lower utility (28) than melee (30) so melee spawns first.
- */
-function remoteDefenderRangedUtility(state: ColonyState): number {
-  if (state.rcl < 6) return 0; // Need RCL 6 for the energy cost
-
-  // Use squad manager - melee defender utility creates squads when threats detected
-  const squadManager = new RemoteSquadManager(state.room);
-  const needs = squadManager.getDefendersNeeded();
-
-  // No squad needs = no utility
-  if (needs.length === 0) return 0;
-
-  // Check if we already have ranged support
-  const existingRanged = Object.values(Game.creeps).filter(
+  // Count existing defenders
+  const existingDefenders = Object.values(Game.creeps).filter(
     (c) =>
-      c.memory.role === "REMOTE_DEFENDER_RANGED" &&
+      c.memory.role === "REMOTE_DEFENDER" &&
       c.memory.room === state.room.name &&
       c.ticksToLive &&
       c.ticksToLive > 100
   ).length;
 
-  // Only need 1 ranged defender total
-  if (existingRanged >= 1) return 0;
+  // Need 1 defender per threatened room
+  if (existingDefenders >= threatenedRooms) return 0;
 
-  // Base utility for ranged defender
-  // Slightly lower than melee (30) so melee spawns first
-  return 28;
+  // Utility 65 - higher than reserver (25), lower than economy roles
+  return 65;
 }
 
 /**
  * Reserver utility - lower priority than miners/haulers
  */
-function reserverUtility(deficit: number, state: ColonyState): number {
+/**
+ * Reserver utility - protects remote income by maintaining reservation
+ *
+ * Reservers directly protect remote income by preventing source capacity decay.
+ * Their utility shouldn't be suppressed by home incomeRatio (which is based on
+ * HOME income, not remote).
+ *
+ * Fixed utility 30 when needed — above scout(15), below remote hauler first(55)
+ */
+function reserverUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl < 4) return 0;
-  if (deficit <= 0) return 0;
   if (state.remoteRooms.length === 0) return 0;
 
-  // Need active remote mining before reserving
-  if ((state.counts.REMOTE_MINER || 0) === 0) return 0;
+  // Check if any remote room needs reservation
+  let needsReservation = false;
+  const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
 
-  // Lower priority than miners/haulers
-  let utility = deficit * 25;
+  for (const roomName of state.remoteRooms) {
+    // Need reserver if: no reservation, or reservation < 1000 ticks
+    const remoteRoom = Game.rooms[roomName];
+    const reservation = remoteRoom?.controller?.reservation;
+    if (!reservation || reservation.ticksToEnd < 1000 || reservation.username !== myUsername) {
+      // Only if we have miners there (worth protecting)
+      const hasMiners = Object.values(Game.creeps).some(
+        (c) =>
+          c.memory.role === "REMOTE_MINER" &&
+          c.memory.targetRoom === roomName &&
+          c.ticksToLive &&
+          c.ticksToLive > 100
+      );
+      if (hasMiners) {
+        // Check if we already have a reserver assigned
+        const hasReserver = Object.values(Game.creeps).some(
+          (c) =>
+            c.memory.role === "RESERVER" &&
+            c.memory.targetRoom === roomName &&
+            c.ticksToLive &&
+            c.ticksToLive > 150
+        );
+        if (!hasReserver) {
+          needsReservation = true;
+          break;
+        }
+      }
+    }
+  }
 
-  // Scale by economy
-  const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
-  utility *= incomeRatio;
+  if (!needsReservation) return 0;
 
-  return utility;
+  // Fixed utility 30 — above scout(15), below remote hauler first(55)
+  // No incomeRatio suppression — reservation protects remote income directly
+  return 30;
 }
 
 /**
@@ -849,28 +816,31 @@ function linkFillerUtility(deficit: number, state: ColonyState): number {
  * Scout utility - spawns multiple scouts for faster exploration
  * Up to 4 scouts can scan simultaneously in different directions
  */
+/**
+ * Scout utility - capped low to never outbid economy/infrastructure roles
+ *
+ * Scouts are nice-to-have, not critical. Max utility 15.
+ * Economy roles (hauler, remote hauler, reserver) must always win.
+ */
 function scoutUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl < 3) return 0;
 
-  // Count rooms needing scan
   const roomsNeedingScan = countRoomsNeedingScan(state.room.name);
   if (roomsNeedingScan === 0) return 0;
 
-  // Count existing scouts
   const existingScouts = Object.values(Game.creeps).filter(
     (c) => c.memory.role === "SCOUT" && c.memory.room === state.room.name
   ).length;
 
-  // Cap at 4 scouts or rooms needing scan, whichever is lower
-  const maxScouts = Math.min(4, roomsNeedingScan);
+  // Cap at 2 scouts max (down from 4 — diminishing returns on exploration)
+  const maxScouts = Math.min(2, roomsNeedingScan);
   if (existingScouts >= maxScouts) return 0;
 
-  // Higher utility when more rooms need scanning
-  // Base utility scales with urgency, decreases with existing scouts
-  const baseUtility = 25;
-  const urgency = Math.min(roomsNeedingScan / 20, 2); // scales up to 2x
+  // Base 10, urgency scales up to 1.5x, cap at 15
+  const urgency = Math.min(roomsNeedingScan / 20, 1.5);
+  const utility = (10 * urgency) / (existingScouts + 1);
 
-  return (baseUtility * urgency) / (existingScouts + 1);
+  return Math.min(utility, 15);
 }
 
 /**
@@ -1006,15 +976,34 @@ function bootstrapHaulerUtility(state: ColonyState): number {
 /**
  * Build appropriate body for a role given available energy
  */
+/**
+ * Build appropriate body for a role given available energy
+ *
+ * Emergency mode (build with available energy) ONLY triggers when
+ * both harvesters AND haulers are missing — true economy death.
+ * A missing hauler alone is not an emergency if harvesters + storage exist.
+ *
+ * Special case: First hauler bootstrap. If harvesters are stationary at
+ * containers but no hauler exists, energy won't reach spawn naturally.
+ * Build first hauler with available energy to break the deadlock.
+ */
 function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
-  // Emergency detection: no harvesters OR no haulers
   const noHarvesters = (state.counts.HARVESTER || 0) === 0;
   const noHaulers = (state.counts.HAULER || 0) === 0;
-  const isEmergency = noHarvesters || noHaulers;
 
-  // In emergency, build what we can afford NOW
+  // True emergency: economy is completely dead
+  // Both harvesters AND haulers must be gone, OR we have no harvesters and low storage
+  const isEmergency =
+    (noHarvesters && noHaulers) || (noHarvesters && state.energyStored < 1000);
+
+  // Special case: First hauler bootstrap
+  // If harvesters exist but no haulers, harvesters may be stationary at containers
+  // Energy won't reach spawn naturally - build first hauler with available energy
+  const isHaulerBootstrap = role === "HAULER" && noHaulers;
+
+  // In emergency OR hauler bootstrap, build what we can afford NOW
   // Otherwise, build for full capacity (wait for energy)
-  const energy = isEmergency ? state.energyAvailable : state.energyCapacity;
+  const energy = (isEmergency || isHaulerBootstrap) ? state.energyAvailable : state.energyCapacity;
 
   // Bootstrap roles use their own body builders
   if (role === "BOOTSTRAP_BUILDER") {
@@ -1062,16 +1051,6 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
     }
 
     case "REMOTE_DEFENDER": {
-      const targetRoom = findThreatenedRemoteRoom(state);
-      return {
-        ...base,
-        targetRoom: targetRoom || undefined,
-      };
-    }
-
-    case "REMOTE_DEFENDER_RANGED": {
-      // Ranged defender follows melee defender, doesn't need its own target
-      // Just assign home room - it will find the melee defender dynamically
       const targetRoom = findThreatenedRemoteRoom(state);
       return {
         ...base,
@@ -1383,17 +1362,31 @@ function findRemoteRoomNeedingHauler(state: ColonyState): string | null {
 }
 
 function findThreatenedRemoteRoom(state: ColonyState): string | null {
+  const SCAN_AGE_THRESHOLD = 200;
+
   // Use squad manager to find rooms that need defenders
   const squadManager = new RemoteSquadManager(state.room);
   const needs = squadManager.getDefendersNeeded();
 
   if (needs.length === 0) return null;
 
-  // Return the room with the highest need
+  // Return the room with the highest need that still has active threats
   let bestRoom: string | null = null;
   let maxNeeded = 0;
 
   for (const need of needs) {
+    const roomMem = Memory.rooms?.[need.roomName];
+
+    // Validate room still has active threats (not stale intel)
+    if (!roomMem) continue;
+    const scanAge = Game.time - (roomMem.lastScan || 0);
+    if (scanAge > SCAN_AGE_THRESHOLD) continue;
+    if ((roomMem.hostiles || 0) === 0) {
+      // No threats - disband the stale squad
+      squadManager.disbandSquad(need.roomName);
+      continue;
+    }
+
     if (need.count > maxNeeded) {
       maxNeeded = need.count;
       bestRoom = need.roomName;

@@ -29,7 +29,8 @@ export class ExpansionManager {
 
     for (const roomName in expansions) {
       const state = expansions[roomName];
-      this.cleanupDeadCreeps(state);
+      this.syncBootstrapCreeps(state); // Discover untracked creeps first
+      this.cleanupDeadCreeps(state); // Then remove dead ones
       this.runStateMachine(state);
     }
 
@@ -114,6 +115,9 @@ export class ExpansionManager {
       const state = Memory.empireExpansion!.active[roomName];
       if (state.parentRoom !== parentRoom) continue;
 
+      // CRITICAL: Sync creeps before counting to avoid over-spawning
+      this.syncBootstrapCreeps(state);
+
       // CLAIMING state: need claimer
       if (state.state === "CLAIMING" && !state.claimer) {
         requests.push({
@@ -132,14 +136,26 @@ export class ExpansionManager {
           (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_HAULER"
         ).length;
 
+        // Check if we already have a self-harvesting builder
+        const hasSelfHarvester = state.bootstrapCreeps.some((name) => {
+          const creep = Game.creeps[name];
+          return (
+            creep?.memory.role === "BOOTSTRAP_BUILDER" &&
+            (creep.memory as BootstrapBuilderMemory).selfHarvest === true
+          );
+        });
+
         for (let i = builders; i < this.config.builderCount; i++) {
+          // First builder (or if none have selfHarvest) gets selfHarvest flag
+          const shouldSelfHarvest = !hasSelfHarvester && i === builders;
           requests.push({
             role: "BOOTSTRAP_BUILDER",
             memory: {
               role: "BOOTSTRAP_BUILDER",
               room: parentRoom,
               targetRoom: roomName,
-            },
+              selfHarvest: shouldSelfHarvest,
+            } as Partial<BootstrapBuilderMemory>,
             priority: 85,
           });
         }
@@ -413,6 +429,41 @@ export class ExpansionManager {
 
   // === HELPERS ===
 
+  /**
+   * Sync bootstrapCreeps array with actual Game.creeps
+   * This catches creeps that were spawned but never registered
+   */
+  private syncBootstrapCreeps(state: EmpireExpansionState): void {
+    // Find all creeps targeting this expansion room
+    const actualCreeps = Object.keys(Game.creeps).filter((name) => {
+      const creep = Game.creeps[name];
+      if (!creep) return false;
+      if (creep.memory.targetRoom !== state.roomName) return false;
+      return (
+        creep.memory.role === "BOOTSTRAP_BUILDER" || creep.memory.role === "BOOTSTRAP_HAULER"
+      );
+    });
+
+    // Find creeps that exist but aren't tracked
+    for (const name of actualCreeps) {
+      if (!state.bootstrapCreeps.includes(name)) {
+        state.bootstrapCreeps.push(name);
+        console.log(`[Expansion] Discovered untracked ${Game.creeps[name].memory.role}: ${name}`);
+      }
+    }
+
+    // Also sync claimer if one exists but isn't tracked
+    if (!state.claimer) {
+      const claimer = Object.values(Game.creeps).find(
+        (c) => c.memory.role === "CLAIMER" && c.memory.targetRoom === state.roomName
+      );
+      if (claimer) {
+        state.claimer = claimer.name;
+        console.log(`[Expansion] Discovered untracked claimer: ${claimer.name}`);
+      }
+    }
+  }
+
   private cleanupDeadCreeps(state: EmpireExpansionState): void {
     if (state.claimer && !Game.creeps[state.claimer]) {
       console.log(`[Expansion] Claimer ${state.claimer} died`);
@@ -451,11 +502,15 @@ export class ExpansionManager {
   // === CONSOLE API ===
 
   static status(): string {
+    // Read FRESH from Memory each call - no caching
     const active = Memory.empireExpansion?.active || {};
     const queue = Memory.empireExpansion?.queue || [];
     const history = Memory.empireExpansion?.history || {};
 
-    const lines: string[] = ["=== Empire Expansion Status ==="];
+    const lines: string[] = [
+      "=== Empire Expansion Status ===",
+      `(Memory.empireExpansion.active keys: ${Object.keys(active).join(", ") || "none"})`,
+    ];
 
     // Active expansions
     const activeCount = Object.keys(active).length;
@@ -521,6 +576,23 @@ export const expansion = {
     initializeEmpireMemory();
     Memory.empireExpansion!.queue.push({ target, parent });
     console.log(`[Expansion] Queued ${target} (from ${parent})`);
+    return "OK";
+  },
+  // Clear all expansion data (use when stuck)
+  clear: () => {
+    if (Memory.empireExpansion) {
+      const activeRooms = Object.keys(Memory.empireExpansion.active);
+      Memory.empireExpansion.active = {};
+      Memory.empireExpansion.queue = [];
+      console.log(`[Expansion] Cleared ${activeRooms.length} active expansions: ${activeRooms.join(", ")}`);
+    }
+    return "OK";
+  },
+  // Debug: show raw memory
+  debug: () => {
+    console.log("Memory.empireExpansion:", JSON.stringify(Memory.empireExpansion, null, 2));
+    console.log("Memory.expansion:", JSON.stringify(Memory.expansion, null, 2));
+    console.log("Memory.bootstrap:", JSON.stringify(Memory.bootstrap, null, 2));
     return "OK";
   },
 };

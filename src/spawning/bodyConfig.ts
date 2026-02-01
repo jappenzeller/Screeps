@@ -95,28 +95,21 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
   },
 
   /**
-   * REMOTE_DEFENDER - Clears hostile creeps from remote rooms
-   * Combat-oriented with damage buffer
+   * REMOTE_DEFENDER - Hybrid ranged/heal defender for remote rooms
+   * Can fight at range 3 (no kiting), self-heal for sustain
+   * Pattern: RANGED_ATTACK + MOVE gives ranged DPS
+   * Suffix: HEAL + MOVE for self-sustain
+   * At 2300 energy: ~8 RANGED_ATTACK, 2 HEAL, 2 TOUGH, 12 MOVE
+   *   = 80 ranged DPS + 24 HPS self-heal
+   *   Enough to kill standard invader pairs
    */
   REMOTE_DEFENDER: {
-    pattern: [ATTACK, MOVE],
-    prefix: [TOUGH, TOUGH],
-    minEnergy: 230,
-    fallback: [TOUGH, ATTACK, ATTACK, MOVE, MOVE, MOVE],
-    moveMode: "pattern",
-    sortForCombat: true,
-  },
-
-  /**
-   * REMOTE_DEFENDER_RANGED - Ranged support for melee defenders
-   * Ranged attack + heal for sustain, keeps distance
-   */
-  REMOTE_DEFENDER_RANGED: {
     pattern: [RANGED_ATTACK, MOVE],
-    suffix: [HEAL, MOVE],
-    maxRepeats: 4,
-    minEnergy: 900,
-    fallback: [RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, HEAL, MOVE, MOVE, MOVE, MOVE],
+    prefix: [TOUGH, TOUGH],
+    suffix: [HEAL, HEAL, MOVE, MOVE],
+    maxRepeats: 8,
+    minEnergy: 520,
+    fallback: [RANGED_ATTACK, RANGED_ATTACK, HEAL, MOVE, MOVE, MOVE],
     moveMode: "pattern",
     sortForCombat: true,
   },

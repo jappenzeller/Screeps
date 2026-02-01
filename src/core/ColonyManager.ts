@@ -717,28 +717,24 @@ export class ColonyManager {
 
     const phase = this.getPhase();
     const sources = state.sources.length;
-    const hasContainers = state.structures.containers.length > 0;
-    const hasStorage = !!state.structures.storage;
+    const rcl = state.room.controller?.level || 0;
     const constructionSites = state.constructionSites.length;
 
-    // Harvesters: 1 per source with containers, 2 per source without
-    const harvesters = hasContainers ? sources : sources * 2;
+    // Harvesters: 1 per source (static miners at containers)
+    const harvesters = sources;
 
-    // Haulers: 0 without containers, 2 with containers, 3 with storage
-    let haulers = 0;
-    if (hasContainers) haulers = 2;
-    if (hasStorage) haulers = 3;
+    // Haulers: 1 per source (matches spawning logic)
+    const haulers = sources;
 
-    // Upgraders: varies by phase
-    let upgraders = 1;
-    if (phase === ColonyPhase.DEVELOPING) upgraders = 2;
-    if (phase === ColonyPhase.STABLE) upgraders = 3;
+    // Upgraders: scales with RCL, cap at 3 until RCL 8
+    const upgraders = rcl < 8 ? Math.min(rcl, 3) : 1;
 
-    // Builders: 0 if no sites, 1-2 based on site count
-    let builders = 0;
-    if (constructionSites > 0) {
-      builders = Math.min(2, Math.ceil(constructionSites / 5));
-    }
+    // Builders: floor of 2 when sites exist, scales 1 per 10 sites
+    // Matches spawning logic: Math.max(2, Math.min(rcl, 4)) cap
+    const maxBuildersByEconomy = Math.max(2, Math.min(rcl, 4));
+    const builders = constructionSites > 0
+      ? Math.min(Math.ceil(constructionSites / 10), maxBuildersByEconomy)
+      : 0;
 
     // Defenders: based on threat level
     let defenders = 0;
@@ -765,7 +761,6 @@ export class ColonyManager {
     let remoteHaulers = 0;
     let reservers = 0;
 
-    const rcl = state.room.controller?.level || 0;
     if (rcl >= 4) {
       const remoteTargets = this.getRemoteMiningTargets();
 

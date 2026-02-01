@@ -2,9 +2,12 @@ import { moveToRoom, smartMoveTo } from "../utils/movement";
 import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 
 /**
- * RemoteDefender - Squad-based defense for remote mining rooms
- * Stages at home until squad is ready, then attacks together
- * Persists via renewal when idle (no threats)
+ * RemoteDefender - Hybrid ranged/heal defender for remote mining rooms
+ *
+ * Uses RANGED_ATTACK for combat at range 3 (no kiting needed) and
+ * HEAL parts for self-sustain. Can handle standard invader pairs solo.
+ *
+ * Persists via renewal when idle (no threats).
  */
 
 // ============================================
@@ -77,11 +80,11 @@ function runRenewal(creep: Creep): boolean {
 
 /**
  * Smart retreat decision based on DPS calculation
- * Only retreat if we can't survive the fight
+ * Only retreat if we can't survive the fight with self-heal
  */
 function shouldRetreat(creep: Creep): boolean {
-  // Lost attack capability - can't fight, must retreat
-  if (creep.getActiveBodyparts(ATTACK) === 0) return true;
+  // Lost ranged attack capability - can't fight, must retreat
+  if (creep.getActiveBodyparts(RANGED_ATTACK) === 0) return true;
 
   // Estimate damage per tick from nearby hostiles
   const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
@@ -96,8 +99,15 @@ function shouldRetreat(creep: Creep): boolean {
     }
   }
 
-  // If not taking damage, don't retreat
-  if (incomingDPS === 0) return false;
+  // Calculate our self-heal capability
+  const selfHealPerTick = creep.getActiveBodyparts(HEAL) * 12;
+
+  // If we can out-heal the damage, don't retreat
+  if (selfHealPerTick >= incomingDPS) return false;
+
+  // Net damage after self-heal
+  const netDamage = incomingDPS - selfHealPerTick;
+  if (netDamage <= 0) return false;
 
   // Estimate ticks to reach tower range in home room
   const distanceHome =
@@ -106,7 +116,7 @@ function shouldRetreat(creep: Creep): boolean {
       : Game.map.getRoomLinearDistance(creep.room.name, creep.memory.room) * 50 + 25;
 
   // Will I survive the trip?
-  const damageOnTrip = incomingDPS * distanceHome;
+  const damageOnTrip = netDamage * distanceHome;
   const survivalMargin = creep.hits - damageOnTrip;
 
   // Retreat if projected HP on arrival is too low
@@ -114,7 +124,7 @@ function shouldRetreat(creep: Creep): boolean {
 }
 
 function isFullyHealed(creep: Creep): boolean {
-  return creep.hits === creep.hitsMax && creep.getActiveBodyparts(ATTACK) > 0;
+  return creep.hits === creep.hitsMax && creep.getActiveBodyparts(RANGED_ATTACK) > 0;
 }
 
 function getHealPosition(creep: Creep): RoomPosition {
@@ -165,13 +175,13 @@ export function runRemoteDefender(creep: Creep): void {
   const homeRoom = creep.memory.room;
   let targetRoom = creep.memory.targetRoom;
 
-  // Check if we need reassignment (orphaned from disbanded squad)
-  const currentSquad = targetRoom ? Memory.remoteSquads?.[targetRoom] : null;
-  const isOrphaned = !currentSquad || currentSquad.status === "DISBANDED";
+  // Check if target room still has threats
+  const targetMem = targetRoom ? Memory.rooms?.[targetRoom] : null;
+  const targetHasThreats = targetMem && targetMem.hostiles && targetMem.hostiles > 0;
 
-  if (isOrphaned) {
+  if (!targetHasThreats) {
     // Look for another room that needs defenders
-    const newTarget = findRoomNeedingDefender(homeRoom, creep.name);
+    const newTarget = findRoomNeedingDefender(homeRoom);
     if (newTarget) {
       creep.memory.targetRoom = newTarget;
       targetRoom = newTarget;
@@ -207,47 +217,8 @@ export function runRemoteDefender(creep: Creep): void {
     return;
   }
 
-  const homeRoomObj = Game.rooms[homeRoom];
-  if (!homeRoomObj) {
-    // Can't access home room - just go attack
-    if (creep.room.name !== targetRoom) {
-      moveToRoom(creep, targetRoom, "#ff0000");
-      return;
-    }
-    attackHostiles(creep);
-    return;
-  }
-
-  const squadManager = new RemoteSquadManager(homeRoomObj);
-
-  // Register with squad
-  squadManager.registerDefender(creep.name, targetRoom);
-
-  const squad = squadManager.getSquad(targetRoom);
-  const isSquadReady = squadManager.isSquadReady(targetRoom);
-
-  // STAGING: Wait at home until squad is ready
-  if (!isSquadReady && creep.room.name === homeRoom) {
-    // Move to rally point (near spawn but not blocking)
-    const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
-    if (spawn) {
-      const rallyX = Math.min(spawn.pos.x + 3, 47);
-      const rallyY = Math.min(spawn.pos.y + 3, 47);
-      const rallyPoint = new RoomPosition(rallyX, rallyY, homeRoom);
-      if (creep.pos.getRangeTo(rallyPoint) > 2) {
-        smartMoveTo(creep, rallyPoint, { visualizePathStyle: { stroke: "#ffff00" } });
-      }
-    }
-    const memberCount = squad?.members.length || 0;
-    const required = squad?.requiredSize || 0;
-    creep.say(`${memberCount}/${required}`);
-    return;
-  }
-
-  // Squad is ready or we're already in target room - attack!
+  // Move to target room
   if (creep.room.name !== targetRoom) {
-    // Mark squad as attacking once anyone moves out
-    squadManager.setAttacking(targetRoom);
     moveToRoom(creep, targetRoom, "#ff0000");
     creep.say("GO");
     return;
@@ -256,29 +227,65 @@ export function runRemoteDefender(creep: Creep): void {
   // In target room - attack hostiles
   attackHostiles(creep);
 
-  // Check if room is clear
+  // Check if room is clear - update memory
   const remainingHostiles = creep.room.find(FIND_HOSTILE_CREEPS).length;
   const remainingCores = creep.room.find(FIND_HOSTILE_STRUCTURES, {
     filter: (s) => s.structureType === STRUCTURE_INVADER_CORE,
   }).length;
 
   if (remainingHostiles === 0 && remainingCores === 0) {
-    squadManager.disbandSquad(targetRoom);
+    // Clear threat from memory
+    if (Memory.rooms?.[targetRoom]) {
+      Memory.rooms[targetRoom].hostiles = 0;
+    }
+    // Disband the squad for this room
+    const homeRoomObj = Game.rooms[creep.memory.room];
+    if (homeRoomObj) {
+      const squadManager = new RemoteSquadManager(homeRoomObj);
+      squadManager.disbandSquad(targetRoom);
+    }
+    // Clear assignment so we can find new threats
+    creep.memory.targetRoom = undefined;
   }
 }
 
 function attackHostiles(creep: Creep): void {
+  // Self-heal if damaged (always do this first, uses HEAL action)
+  if (creep.hits < creep.hitsMax && creep.getActiveBodyparts(HEAL) > 0) {
+    creep.heal(creep);
+  }
+
   // Find and attack hostiles
   const hostile = findPriorityTarget(creep);
 
   if (hostile) {
-    const result = creep.attack(hostile);
-    if (result === ERR_NOT_IN_RANGE) {
+    const range = creep.pos.getRangeTo(hostile);
+
+    // Use rangedAttack (range 3) or rangedMassAttack if surrounded
+    if (range <= 3) {
+      // Check if multiple hostiles are close - use mass attack
+      const nearbyHostiles = creep.pos.findInRange(FIND_HOSTILE_CREEPS, 3);
+      if (nearbyHostiles.length > 1) {
+        creep.rangedMassAttack();
+      } else {
+        creep.rangedAttack(hostile);
+      }
+    }
+
+    // Move to maintain range 3 (optimal for ranged attack)
+    if (range > 3) {
       smartMoveTo(creep, hostile, {
         visualizePathStyle: { stroke: "#ff0000" },
         reusePath: 3,
       });
+    } else if (range < 2) {
+      // Too close - back up to avoid melee
+      const fleePath = PathFinder.search(creep.pos, { pos: hostile.pos, range: 4 }, { flee: true });
+      if (fleePath.path.length > 0) {
+        creep.move(creep.pos.getDirectionTo(fleePath.path[0]));
+      }
     }
+
     creep.say("ATK");
     return;
   }
@@ -289,8 +296,11 @@ function attackHostiles(creep: Creep): void {
   })[0];
 
   if (invaderCore) {
-    const result = creep.attack(invaderCore);
-    if (result === ERR_NOT_IN_RANGE) {
+    const range = creep.pos.getRangeTo(invaderCore);
+    if (range <= 3) {
+      creep.rangedAttack(invaderCore);
+    }
+    if (range > 1) {
       smartMoveTo(creep, invaderCore, { visualizePathStyle: { stroke: "#ff0000" } });
     }
     creep.say("CORE");
@@ -335,32 +345,13 @@ function getTargetPriority(hostile: Creep): number {
 
 /**
  * Find a remote room that needs defenders
- * Checks existing squads first, then looks for new threats
+ * Checks adjacent rooms for threats based on Memory.rooms intel
  */
-function findRoomNeedingDefender(homeRoom: string, creepName: string): string | null {
-  if (!Memory.remoteSquads) Memory.remoteSquads = {};
-
-  // First check existing squads that need more members
-  for (const roomName in Memory.remoteSquads) {
-    const squad = Memory.remoteSquads[roomName];
-
-    // Skip disbanded squads
-    if (squad.status === "DISBANDED") continue;
-
-    // Check if squad needs more members
-    const currentMembers = squad.members.filter((name) => Game.creeps[name]).length;
-    if (currentMembers < squad.requiredSize) {
-      // Join this squad
-      if (!squad.members.includes(creepName)) {
-        squad.members.push(creepName);
-      }
-      return roomName;
-    }
-  }
-
-  // No squads need help - check for new threats without squads
+function findRoomNeedingDefender(homeRoom: string): string | null {
   const exits = Game.map.describeExits(homeRoom);
   if (!exits) return null;
+
+  const SCAN_AGE_THRESHOLD = 200;
 
   for (const dir in exits) {
     const roomName = exits[dir as ExitKey];
@@ -368,12 +359,27 @@ function findRoomNeedingDefender(homeRoom: string, creepName: string): string | 
 
     // Skip Source Keeper rooms
     const intel = Memory.rooms?.[roomName];
-    if (intel?.hasKeepers) continue;
+    if (!intel) continue;
+    if (intel.hasKeepers) continue;
 
-    const hostileCount = intel?.hostiles || 0;
-    if (hostileCount > 0 && !Memory.remoteSquads[roomName]) {
-      // Threat without squad - go solo
-      return roomName;
+    // Check scan age - don't respond to stale intel
+    const scanAge = Game.time - (intel.lastScan || 0);
+    if (scanAge > SCAN_AGE_THRESHOLD) continue;
+
+    const hostileCount = intel.hostiles || 0;
+    if (hostileCount > 0) {
+      // Check for dangerous hostiles
+      const hostileDetails = (intel as any).hostileDetails;
+      let hasDangerous = false;
+      if (hostileDetails && Array.isArray(hostileDetails)) {
+        hasDangerous = hostileDetails.some((h: any) => h.hasCombat);
+      } else {
+        hasDangerous = hostileCount > 0;
+      }
+
+      if (hasDangerous) {
+        return roomName;
+      }
     }
   }
 

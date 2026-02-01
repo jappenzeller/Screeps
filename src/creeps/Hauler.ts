@@ -1,5 +1,5 @@
 import { ColonyManager } from "../core/ColonyManager";
-import { smartMoveTo } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
 /**
  * Hauler: Picks up energy from containers/ground and delivers to structures.
@@ -9,10 +9,11 @@ import { smartMoveTo } from "../utils/movement";
  * - Haulers wait at their container if a miner is present (energy coming)
  * - Container switching has a cooldown to prevent rapid oscillation
  *
- * No Renewal:
- * - Haulers are cheap (1150 energy, ~70 spawn ticks) and mobile
- * - Renewal creates traffic jams near spawn
- * - Just let them die and respawn
+ * Renewal Strategy:
+ * - Large haulers (500+ energy cost) are renewed when near spawn with low TTL
+ * - TTL threshold scales with body size (larger = renew earlier)
+ * - Small haulers (<500 cost) just die and respawn - cheaper than renewal overhead
+ * - Renewal only triggers if already within 3 tiles of spawn (don't pull across map)
  */
 
 /**
@@ -51,6 +52,109 @@ function selectContainer(creep: Creep): StructureContainer | null {
   // Pick highest score
   scored.sort((a, b) => b.score - a.score);
   return scored[0]?.container || null;
+}
+
+/**
+ * Check if this hauler should attempt renewal.
+ * Returns: 'critical' (must seek spawn now), 'opportunistic' (renew if near), or false
+ */
+function shouldRenew(creep: Creep): "critical" | "opportunistic" | false {
+  // Only renew large creeps - small ones are cheap to replace
+  const bodyCost = creep.body.reduce((sum, part) => sum + BODYPART_COST[part.type], 0);
+  if (bodyCost < 500) return false;
+
+  const ttl = creep.ticksToLive || 1500;
+  const spawnTime = creep.body.length;
+
+  // Critical: TTL is low enough that we MUST seek spawn now or die
+  // Give ourselves spawn time + travel buffer (50 ticks ~= 25 tiles on roads)
+  const criticalThreshold = spawnTime + 50;
+  if (ttl <= criticalThreshold) {
+    return "critical";
+  }
+
+  // Opportunistic: TTL is getting low, renew if we happen to be near spawn
+  const opportunisticThreshold = Math.max(200, spawnTime * 5);
+  if (ttl <= opportunisticThreshold) {
+    const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+    if (spawn && creep.pos.getRangeTo(spawn) <= 3 && !spawn.spawning) {
+      return "opportunistic";
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Attempt to renew the creep at the nearest spawn.
+ * @param mode 'critical' means drop everything and get to spawn, 'opportunistic' means only if convenient
+ * Returns true if renewal is in progress (skip normal duties).
+ */
+function tryRenew(creep: Creep, mode: "critical" | "opportunistic"): boolean {
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return false;
+
+  // Set renewing flag so spawning system doesn't spawn a replacement
+  creep.memory.renewing = true;
+
+  // In critical mode, always move toward spawn even if it's spawning
+  // We need to be there when it finishes
+  if (mode === "critical") {
+    if (creep.pos.isNearTo(spawn)) {
+      if (!spawn.spawning) {
+        const result = spawn.renewCreep(creep);
+        if (result === OK) {
+          if (!creep.memory._renewTicks) creep.memory._renewTicks = 0;
+          creep.memory._renewTicks++;
+          creep.memory._lastRenewTick = Game.time;
+          creep.say("RENEW!");
+
+          // Check if fully renewed (TTL > 1400), clear flag
+          if ((creep.ticksToLive || 0) > 1400) {
+            delete creep.memory.renewing;
+          }
+          return true;
+        }
+      } else {
+        // Wait for spawn to finish
+        creep.say("WAIT");
+        return true;
+      }
+    } else {
+      smartMoveTo(creep, spawn, { reusePath: 3 });
+      creep.say(`TTL${creep.ticksToLive}`);
+      return true;
+    }
+    return true; // Always return true in critical mode - we're committed
+  }
+
+  // Opportunistic mode - only if spawn is free and we're close
+  if (spawn.spawning) {
+    delete creep.memory.renewing; // Clear flag if we can't renew
+    return false;
+  }
+
+  if (creep.pos.isNearTo(spawn)) {
+    const result = spawn.renewCreep(creep);
+    if (result === OK) {
+      if (!creep.memory._renewTicks) creep.memory._renewTicks = 0;
+      creep.memory._renewTicks++;
+      creep.memory._lastRenewTick = Game.time;
+      creep.say("RENEW");
+
+      // Check if fully renewed (TTL > 1400), clear flag
+      if ((creep.ticksToLive || 0) > 1400) {
+        delete creep.memory.renewing;
+      }
+      return true;
+    }
+    delete creep.memory.renewing;
+    return false;
+  } else {
+    smartMoveTo(creep, spawn, { reusePath: 5 });
+    creep.say("2RENEW");
+    return true;
+  }
 }
 
 function moveOffRoad(creep: Creep): void {
@@ -143,6 +247,28 @@ function collectFromContainers(creep: Creep): boolean {
 }
 
 export function runHauler(creep: Creep): void {
+  // Priority 0: If not in home room, go back!
+  // findClosestByPath can return objects in adjacent rooms, causing haulers to wander
+  if (creep.room.name !== creep.memory.room) {
+    moveToRoom(creep, creep.memory.room, "#ff0000");
+    creep.say("HOME!");
+    return;
+  }
+
+  // Priority 1: Renew if needed
+  // Large haulers (46 parts, 2300 energy, 46 tick spawn) are expensive to replace
+  const renewMode = shouldRenew(creep);
+  if (renewMode) {
+    if (tryRenew(creep, renewMode)) {
+      return; // Skip normal duties this tick
+    }
+  } else {
+    // Clear renewing flag if we're not renewing anymore
+    if (creep.memory.renewing) {
+      delete creep.memory.renewing;
+    }
+  }
+
   const manager = ColonyManager.getInstance(creep.memory.room);
 
   // Task tracking
@@ -213,21 +339,33 @@ export function runHauler(creep: Creep): void {
 }
 
 function collect(creep: Creep): void {
-  // Priority 1: Dropped energy (high priority - prevents waste)
-  const droppedEnergy = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
-  });
+  // === Tier 0: Already adjacent to assigned container — just withdraw ===
+  // Don't reconsider targets, don't search for drops, just take the energy.
+  if (creep.memory.targetContainer) {
+    const target = Game.getObjectById(creep.memory.targetContainer as Id<StructureContainer>);
+    if (target && creep.pos.isNearTo(target) && target.store[RESOURCE_ENERGY] > 0) {
+      creep.withdraw(target, RESOURCE_ENERGY);
+      return;
+    }
+  }
 
-  if (droppedEnergy) {
-    if (creep.pickup(droppedEnergy) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, droppedEnergy, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+  // === Tier 1: Nearby dropped energy (range ≤ 3) — opportunistic grab ===
+  // Only pick up drops we're practically on top of. Prevents decay waste
+  // without causing cross-room chasing.
+  const nearbyDrop = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 3, {
+    filter: (r: Resource) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
+  })[0];
+
+  if (nearbyDrop) {
+    if (creep.pickup(nearbyDrop) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, nearbyDrop, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 3 });
     }
     return;
   }
 
-  // Priority 2: Tombstones with energy
+  // === Tier 2: Tombstones (temporary, high value) ===
   const tombstone = creep.pos.findClosestByPath(FIND_TOMBSTONES, {
-    filter: (t) => t.store[RESOURCE_ENERGY] >= 50,
+    filter: (t: Tombstone) => t.store[RESOURCE_ENERGY] >= 50,
   });
 
   if (tombstone) {
@@ -237,12 +375,27 @@ function collect(creep: Creep): void {
     return;
   }
 
-  // Priority 3: Smart container collection with affinity
+  // === Tier 3: Smart container collection with affinity ===
   if (collectFromContainers(creep)) {
     return;
   }
 
-  // Priority 4: Storage (if has excess)
+  // === Tier 4: Room-wide drops — fallback for pre-container rooms ===
+  // Only search room-wide when no container target exists.
+  if (!creep.memory.targetContainer) {
+    const farDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+      filter: (r: Resource) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
+    });
+
+    if (farDrop) {
+      if (creep.pickup(farDrop) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, farDrop, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+      }
+      return;
+    }
+  }
+
+  // === Tier 5: Storage (if has excess) ===
   const storage = creep.room.storage;
   if (storage && storage.store[RESOURCE_ENERGY] > 10000) {
     if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
@@ -257,19 +410,15 @@ function collect(creep: Creep): void {
     : null;
 
   if (targetContainer) {
-    if (creep.pos.getRangeTo(targetContainer) > 1) {
-      smartMoveTo(creep, targetContainer, { visualizePathStyle: { stroke: "#888888" } });
-    } else {
-      moveOffRoad(creep);
+    if (!creep.pos.isNearTo(targetContainer)) {
+      smartMoveTo(creep, targetContainer, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
     }
     return;
   }
 
   const source = creep.pos.findClosestByPath(FIND_SOURCES);
   if (source && creep.pos.getRangeTo(source) > 3) {
-    smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#888888" } });
-  } else {
-    moveOffRoad(creep);
+    smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
   }
 }
 

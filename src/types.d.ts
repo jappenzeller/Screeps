@@ -259,7 +259,16 @@ interface BootstrapBuilderMemory extends CreepMemory {
   role: "BOOTSTRAP_BUILDER";
   parentRoom: string;
   targetRoom: string;
-  bootstrapState: "TRAVELING_TO_TARGET" | "BUILDING" | "RETURNING_FOR_ENERGY";
+  // New states: TRAVELING, COLLECTING, BUILDING
+  // Old states kept for backward compat: TRAVELING_TO_TARGET, RETURNING_FOR_ENERGY
+  bootstrapState:
+    | "TRAVELING"
+    | "COLLECTING"
+    | "BUILDING"
+    | "TRAVELING_TO_TARGET"
+    | "RETURNING_FOR_ENERGY";
+  // If true, this builder harvests directly from source instead of waiting for haulers
+  selfHarvest?: boolean;
 }
 
 // Bootstrap hauler creep memory
@@ -267,7 +276,7 @@ interface BootstrapHaulerMemory extends CreepMemory {
   role: "BOOTSTRAP_HAULER";
   parentRoom: string;
   targetRoom: string;
-  bootstrapState: "LOADING" | "DELIVERING";
+  bootstrapState: "LOADING" | "TRAVELING_TO_TARGET" | "DELIVERING" | "RETURNING";
 }
 
 // Expansion tracking for claiming new rooms
