@@ -22,6 +22,8 @@ import { RemoteSquadManager } from "./defense/RemoteSquadManager";
 import { gatherRoomIntel } from "./creeps/Scout";
 import { trackEnergyFlow } from "./utils/metrics";
 import { RenewalManager } from "./managers/RenewalManager";
+import { drawRoomVisuals } from "./visuals/creepVisuals";
+import { CommandExecutor } from "./core/CommandExecutor";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -37,6 +39,12 @@ if (!global._initialized) {
  * Main game loop - runs every tick
  */
 export function loop(): void {
+  // Initialize memory segments (commands + AWS export)
+  CommandExecutor.init();
+
+  // Process any pending commands FIRST (before other logic)
+  CommandExecutor.run();
+
   // Start stats tracking for this tick
   StatsCollector.startTick();
 
@@ -156,6 +164,11 @@ function runRoom(room: Room): void {
 
     // Cleanup dead members and timed out squads
     squadManager.cleanup();
+  }
+
+  // 11. Draw custom visuals (toggle with Memory.settings.showVisuals)
+  if (Memory.settings?.showVisuals !== false) {
+    drawRoomVisuals(room);
   }
 }
 

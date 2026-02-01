@@ -1,6 +1,5 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { smartMoveTo } from "../utils/movement";
-import { shouldEmergencyRenew } from "../managers/RenewalManager";
 
 /**
  * Hauler: Picks up energy from containers/ground and delivers to structures.
@@ -10,29 +9,11 @@ import { shouldEmergencyRenew } from "../managers/RenewalManager";
  * - Haulers wait at their container if a miner is present (energy coming)
  * - Container switching has a cooldown to prevent rapid oscillation
  *
- * Renewal:
- * - Opportunistic only - renew when naturally adjacent to spawn
- * - Never diverts from tasks to seek spawn
+ * No Renewal:
+ * - Haulers are cheap (1150 energy, ~70 spawn ticks) and mobile
+ * - Renewal creates traffic jams near spawn
+ * - Just let them die and respawn
  */
-
-/**
- * Opportunistic renewal - only renew when naturally adjacent to spawn
- * Never seeks spawn, just takes advantage of passing by during deliveries
- */
-function tryRenew(creep: Creep): void {
-  // Only renew when TTL is genuinely low - prevents oscillation around threshold
-  if (!creep.ticksToLive || creep.ticksToLive > 600) return;
-
-  // Must already be adjacent to spawn - don't seek it out
-  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
-  if (!spawn) return;
-  if (creep.pos.getRangeTo(spawn) !== 1) return;
-
-  // Don't interrupt spawning
-  if (spawn.spawning) return;
-
-  spawn.renewCreep(creep);
-}
 
 /**
  * Select the best container to collect from based on energy, distance, and competition.
@@ -162,20 +143,6 @@ function collectFromContainers(creep: Creep): boolean {
 }
 
 export function runHauler(creep: Creep): void {
-  // Opportunistic renewal - fire and forget, doesn't block normal behavior
-  tryRenew(creep);
-
-  // Emergency renewal check - only for critical, dying haulers that are the last one
-  if (shouldEmergencyRenew(creep)) {
-    const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
-    if (spawn && !creep.pos.isNearTo(spawn)) {
-      creep.say("RENEW");
-      smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 3 });
-      return;
-    }
-    // If near spawn, continue normal work - RenewalManager will handle it
-  }
-
   const manager = ColonyManager.getInstance(creep.memory.room);
 
   // Task tracking

@@ -183,6 +183,20 @@ interface DebugFlags {
   showTraffic?: boolean;
 }
 
+// Visual settings
+interface SettingsFlags {
+  showVisuals?: boolean;
+}
+
+// Expansion tracking for claiming new rooms
+interface ExpansionData {
+  targetRoom?: string;
+  status?: "claiming" | "building_spawn" | "operational";
+  lastClaimed?: string;
+  claimedAt?: number;
+  spawnSiteId?: string;
+}
+
 // Extend Memory for advisor data, traffic, and intel
 interface Memory {
   advisor?: AdvisorData;
@@ -190,6 +204,8 @@ interface Memory {
   intel?: { [roomName: string]: RoomIntel };
   homeRoom?: string;
   debug?: DebugFlags;
+  settings?: SettingsFlags;
+  expansion?: ExpansionData;
 }
 
 // Global console declaration for Screeps

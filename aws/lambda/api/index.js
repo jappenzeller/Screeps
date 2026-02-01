@@ -784,6 +784,121 @@ async function searchObservations(roomName, query) {
   };
 }
 
+// ==================== Console Command Endpoint ====================
+
+const COMMAND_SEGMENT = 91;
+
+/**
+ * Queue a command for execution via memory segment 91
+ * The game code will pick it up and write the result back
+ */
+async function queueCommand(command, shard = "shard0") {
+  if (!command) {
+    return { error: "Missing command" };
+  }
+
+  // Basic safety check - block obviously dangerous commands
+  const blocked = [
+    "Game.cpu.halt",
+    "delete Memory",
+    "Memory = {}",
+    "Memory = null",
+    "RawMemory.set",
+  ];
+
+  if (blocked.some((b) => command.includes(b))) {
+    return { error: "Command blocked for safety", command };
+  }
+
+  const token = await getScreepsToken();
+  const requestId = `cmd_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  // Write command to segment 91
+  const segmentPayload = JSON.stringify({
+    status: "pending",
+    requestId: requestId,
+    command: command,
+    sentAt: Date.now(),
+  });
+
+  const response = await fetch("https://screeps.com/api/user/memory-segment", {
+    method: "POST",
+    headers: {
+      "X-Token": token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      segment: COMMAND_SEGMENT,
+      shard: shard,
+      data: segmentPayload,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    console.error("Failed to write command segment:", error);
+    return { error: "Failed to queue command", details: error };
+  }
+
+  // Log command for audit trail
+  console.log(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      action: "queue_command",
+      requestId: requestId,
+      command: command,
+      shard: shard,
+    })
+  );
+
+  return {
+    success: true,
+    requestId: requestId,
+    command: command,
+    shard: shard,
+    message: "Command queued. Fetch /command/result to get output after next game tick.",
+  };
+}
+
+/**
+ * Get command result from memory segment 91
+ */
+async function getCommandResult(shard = "shard0", requestId = null) {
+  const token = await getScreepsToken();
+
+  const response = await fetch(
+    `https://screeps.com/api/user/memory-segment?segment=${COMMAND_SEGMENT}&shard=${shard}`,
+    {
+      headers: { "X-Token": token },
+    }
+  );
+
+  if (!response.ok) {
+    return { error: "Failed to fetch result segment" };
+  }
+
+  const data = await response.json();
+
+  if (!data.ok || !data.data) {
+    return { status: "empty", message: "No command result available" };
+  }
+
+  const result = JSON.parse(data.data);
+
+  // If requestId provided, verify it matches
+  if (requestId && result.requestId !== requestId) {
+    return {
+      status: "mismatch",
+      message: "Result is from a different command",
+      expectedRequestId: requestId,
+      actualRequestId: result.requestId,
+      currentResult: result,
+    };
+  }
+
+  return result;
+}
+
 export async function handler(event) {
   console.log('API request:', event.routeKey, event.pathParameters);
 
@@ -864,6 +979,31 @@ export async function handler(event) {
     else if (path === 'GET /intel/expansion-candidates') {
       const homeRoom = query.home || null;
       result = await getExpansionCandidates(homeRoom);
+    }
+    // Console command endpoint (POST with JSON body) - queue for segment execution
+    else if (path === 'POST /command') {
+      const { command, shard } = body;
+      result = await queueCommand(command, shard || SCREEPS_SHARD);
+    }
+    // Console command endpoint (GET with base64 encoded cmd in query) - queue for segment execution
+    else if (path === 'GET /command') {
+      const encoded = query.cmd;
+      if (!encoded) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'Missing cmd parameter' }),
+        };
+      }
+      const command = Buffer.from(encoded, 'base64').toString('utf-8');
+      const shard = query.shard || SCREEPS_SHARD;
+      result = await queueCommand(command, shard);
+    }
+    // Command result endpoint - fetch result from segment 91
+    else if (path === 'GET /command/result') {
+      const shard = query.shard || SCREEPS_SHARD;
+      const requestId = query.requestId || null;
+      result = await getCommandResult(shard, requestId);
     }
     else {
       return {

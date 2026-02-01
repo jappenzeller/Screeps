@@ -40,7 +40,8 @@ type SpawnRole =
   | "RESERVER"
   | "SCOUT"
   | "LINK_FILLER"
-  | "MINERAL_HARVESTER";
+  | "MINERAL_HARVESTER"
+  | "CLAIMER";
 
 const ALL_ROLES: SpawnRole[] = [
   "HARVESTER",
@@ -56,6 +57,7 @@ const ALL_ROLES: SpawnRole[] = [
   "SCOUT",
   "LINK_FILLER",
   "MINERAL_HARVESTER",
+  "CLAIMER",
 ];
 
 export interface SpawnCandidate {
@@ -181,16 +183,29 @@ function getColonyState(room: Room): ColonyState {
   const counts: Record<string, number> = {};
   const dyingSoon: Record<string, number> = {};
 
+  // Roles that autonomously renew - never count as dying soon
+  const selfRenewingRoles = new Set([
+    "HARVESTER",
+    "LINK_FILLER",
+    "REMOTE_DEFENDER",
+    "REMOTE_DEFENDER_RANGED",
+  ]);
+
   for (const c of creeps) {
     const role = c.memory.role;
     counts[role] = (counts[role] || 0) + 1;
+
+    // Skip self-renewing roles - they manage their own lifecycle
+    if (selfRenewingRoles.has(role)) continue;
+
+    // Skip creeps actively renewing
+    if (c.memory.renewing) continue;
 
     // Use higher threshold for remote roles (need travel time buffer)
     const isRemoteRole =
       role === "REMOTE_MINER" ||
       role === "REMOTE_HAULER" ||
       role === "RESERVER" ||
-      role === "REMOTE_DEFENDER" ||
       role === "SCOUT";
     const dyingThreshold = isRemoteRole ? DYING_SOON_REMOTE : DYING_SOON_LOCAL;
 
@@ -347,6 +362,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return linkFillerUtility(effectiveDeficit, state);
     case "MINERAL_HARVESTER":
       return mineralHarvesterUtility(effectiveDeficit, state);
+    case "CLAIMER":
+      return claimerUtility(state);
     default:
       return 0;
   }
@@ -629,17 +646,64 @@ function remoteHaulerUtility(deficit: number, state: ColonyState): number {
 }
 
 /**
- * Remote defender utility - based on squad needs from RemoteSquadManager
+ * Remote defender utility - checks memory for threats and creates squads as needed
  * Uses squad-based spawning to coordinate attacks against healer-supported invaders
  *
  * Both melee and ranged defenders spawn independently when threats detected.
  * Melee gets slightly higher utility (30) to spawn first.
+ *
+ * IMPORTANT: Must check Memory.rooms[roomName].hostiles directly because:
+ * - Creeps flee when they see hostiles and update memory
+ * - Without vision, we rely on memory for threat info
+ * - Squads need to be created when threats are detected
  */
 function remoteDefenderUtility(state: ColonyState): number {
   if (state.rcl < 4) return 0;
 
-  // Use squad manager to determine defender needs
   const squadManager = new RemoteSquadManager(state.room);
+  const SCAN_AGE_THRESHOLD = 200; // Consider scans stale after 200 ticks
+
+  // First check Memory.rooms for hostiles in remote rooms
+  // This catches threats even when we don't have vision
+  for (const remoteName of state.remoteRooms) {
+    const roomMem = Memory.rooms?.[remoteName];
+    if (!roomMem) continue;
+
+    // Check scan age - don't spawn defenders for stale intel
+    const scanAge = Game.time - (roomMem.lastScan || 0);
+    if (scanAge > SCAN_AGE_THRESHOLD) continue;
+
+    // Check for hostiles (from memory or live)
+    const hostileCount = roomMem.hostiles || 0;
+    if (hostileCount === 0) continue;
+
+    // Check for dangerous hostiles (with attack parts)
+    const hostileDetails = (roomMem as any).hostileDetails;
+    let hasDangerous = false;
+    if (hostileDetails && Array.isArray(hostileDetails)) {
+      hasDangerous = hostileDetails.some((h: any) => h.hasCombat);
+    } else {
+      // No details, assume any hostiles are dangerous
+      hasDangerous = hostileCount > 0;
+    }
+
+    if (!hasDangerous) continue;
+
+    // Request a squad if one doesn't exist
+    const existingSquad = squadManager.getSquad(remoteName);
+    if (!existingSquad || existingSquad.status === "DISBANDED") {
+      // Analyze threat to determine squad size
+      const analysis = squadManager.analyzeThreat(remoteName);
+      if (analysis.recommendedSquadSize > 0) {
+        squadManager.requestSquad(remoteName, analysis.recommendedSquadSize);
+      } else {
+        // Default to 1 defender if we can't analyze
+        squadManager.requestSquad(remoteName, 1);
+      }
+    }
+  }
+
+  // Now check squad needs (includes newly created squads)
   const needs = squadManager.getDefendersNeeded();
 
   // No squad needs = no utility
@@ -673,7 +737,7 @@ function remoteDefenderUtility(state: ColonyState): number {
 function remoteDefenderRangedUtility(state: ColonyState): number {
   if (state.rcl < 6) return 0; // Need RCL 6 for the energy cost
 
-  // Use squad manager to determine if threats exist (same as melee)
+  // Use squad manager - melee defender utility creates squads when threats detected
   const squadManager = new RemoteSquadManager(state.room);
   const needs = squadManager.getDefendersNeeded();
 
@@ -786,6 +850,42 @@ function mineralHarvesterUtility(deficit: number, state: ColonyState): number {
   }
 
   return utility;
+}
+
+/**
+ * Claimer utility - spawns when expansion target is set and GCL allows
+ * Trigger expansion via: Memory.expansion = { targetRoom: 'E47N38' }
+ */
+function claimerUtility(_state: ColonyState): number {
+  // Check if expansion target is set
+  const expansionTarget = Memory.expansion?.targetRoom;
+  if (!expansionTarget) return 0;
+
+  // Check GCL - can we claim another room?
+  const currentRooms = Object.keys(Game.rooms).filter(
+    (r) => Game.rooms[r].controller?.my
+  ).length;
+  if (currentRooms >= Game.gcl.level) return 0;
+
+  // Check if target room is already claimed by us
+  const targetRoom = Game.rooms[expansionTarget];
+  if (targetRoom?.controller?.my) {
+    // Already claimed - update status and return 0
+    if (Memory.expansion) {
+      Memory.expansion.status = "building_spawn";
+    }
+    return 0;
+  }
+
+  // Check if already have a claimer for this target
+  const existingClaimers = Object.values(Game.creeps).filter(
+    (c) =>
+      c.memory.role === "CLAIMER" && c.memory.targetRoom === expansionTarget
+  ).length;
+  if (existingClaimers > 0) return 0;
+
+  // High priority when expansion target is set
+  return 40;
 }
 
 // ============================================

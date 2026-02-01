@@ -92,6 +92,9 @@ export class RenewalManager {
     // Don't renew if already near max (leave some buffer)
     if (ttl >= 1400) return 0;
 
+    // Skip haulers - they're cheap and mobile, renewal causes traffic jams
+    if (creep.memory.role === "HAULER") return 0;
+
     const bodyParts = creep.body.length;
     const creepCost = this.getCreepCost(creep);
 
@@ -137,9 +140,9 @@ export function shouldEmergencyRenew(creep: Creep): boolean {
   const bodyParts = creep.body.length;
   const role = creep.memory.role;
 
-  // Only for large, critical roles
+  // Only for large, stationary roles (not haulers - they're cheap and mobile)
   if (bodyParts < 30) return false;
-  if (!["HARVESTER", "HAULER"].includes(role)) return false;
+  if (role !== "HARVESTER") return false;
 
   // Only if TTL is critically low
   if (ttl > 150) return false;

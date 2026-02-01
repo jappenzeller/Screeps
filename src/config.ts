@@ -84,6 +84,7 @@ export const CONFIG = {
       LINK_FILLER: 70, // Infrastructure
       SCOUT: 25, // Intel gathering - spawn before second upgrader
       MINERAL_HARVESTER: 15, // Luxury - future value for labs
+      CLAIMER: 40, // Expansion - high priority when target set
     },
 
     // Optimal counts by RCL (role -> [rcl1, rcl2, ..., rcl8])

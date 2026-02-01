@@ -58,6 +58,11 @@ export function runClaimer(creep: Creep): void {
   } else if (result === OK) {
     creep.say("CLM");
     logger.info("Claimer", `Claimed room ${targetRoom}!`);
+    // Update expansion status
+    if (!Memory.expansion) Memory.expansion = {};
+    Memory.expansion.lastClaimed = targetRoom;
+    Memory.expansion.claimedAt = Game.time;
+    Memory.expansion.status = "building_spawn";
   } else if (result === ERR_GCL_NOT_ENOUGH) {
     logger.warn("Claimer", "Not enough GCL to claim another room");
     // Fall back to reserving

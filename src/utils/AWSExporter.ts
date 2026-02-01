@@ -91,6 +91,7 @@ interface ColonyExport {
   scouting: ScoutingExport;
   traffic: TrafficExport;
   remoteDefense: RemoteDefenseStatus;
+  mineral: MineralExport;
 }
 
 interface DefenseExport {
@@ -149,6 +150,9 @@ interface RemoteCreepExport {
 interface ScoutingExport {
   scouts: ScoutCreepExport[];
   roomsNeedingScan: string[];
+  totalRemaining: number;
+  totalScanned: number;
+  scannedRooms: Record<string, ScannedRoomSummary>;
 }
 
 interface ScoutCreepExport {
@@ -158,6 +162,21 @@ interface ScoutCreepExport {
   state: string;
   ttl: number;
   pos: { x: number; y: number };
+}
+
+interface ScannedRoomSummary {
+  sources: number;
+  mineral: MineralConstant | null;
+  controller: boolean;
+  owner: string | null;
+  reserved: string | null;
+  roomType: string;
+  hasKeepers: boolean;
+  hasInvaderCore: boolean;
+  swampPercent: number;
+  wallPercent: number;
+  scannedAt: number;
+  distance: number;
 }
 
 // Remote Defense Diagnostic Interfaces
@@ -206,6 +225,13 @@ interface RemoteDefenseTrigger {
   hasInvaderCore: boolean;
   existingDefenders: number;
   maxDefenders: number;
+}
+
+interface MineralExport {
+  type: MineralConstant | null;
+  amount: number;
+  extractor: boolean;
+  harvester: string | null;
 }
 
 interface GlobalExport {
@@ -473,6 +499,7 @@ export class AWSExporter {
         scouting: this.getScoutingStatus(roomName),
         traffic: StatsCollector.exportTrafficMetrics(room),
         remoteDefense: this.getRemoteDefenseStatus(roomName),
+        mineral: this.getMineralStatus(room, roomName),
       });
     }
 
@@ -679,28 +706,50 @@ export class AWSExporter {
         pos: { x: c.pos.x, y: c.pos.y },
       }));
 
-    // Find rooms needing scan (adjacent rooms with stale intel)
-    const roomsNeedingScan: string[] = [];
-    const exits = Game.map.describeExits(homeRoom);
+    // Get scout queue from any active scout
+    const scoutWithQueue = Object.values(Game.creeps).find(
+      (c) =>
+        c.memory.room === homeRoom &&
+        c.memory.role === "SCOUT" &&
+        (c.memory as ScoutMemory).scoutQueue
+    );
+    const scoutQueue = (scoutWithQueue?.memory as ScoutMemory)?.scoutQueue || [];
 
-    if (exits) {
-      for (const dir in exits) {
-        const roomName = exits[dir as ExitKey];
-        if (!roomName) continue;
+    // Get intel data
+    const intel = Memory.intel || {};
+    const STALE_THRESHOLD = 10000;
 
-        const intel = Memory.rooms?.[roomName];
-        const lastScan = intel?.lastScan || 0;
+    // Find rooms needing scan from scout queue
+    const roomsNeedingScan = scoutQueue.filter((room) => {
+      const existing = intel[room];
+      return !existing || Game.time - existing.lastScanned > STALE_THRESHOLD;
+    });
 
-        // Room needs scan if never scanned or > 2000 ticks stale
-        if (Game.time - lastScan > 2000) {
-          roomsNeedingScan.push(roomName);
-        }
-      }
+    // Build scanned rooms summary from Memory.intel
+    const scannedRooms: Record<string, ScannedRoomSummary> = {};
+    for (const [roomName, data] of Object.entries(intel)) {
+      scannedRooms[roomName] = {
+        sources: data.sources?.length || 0,
+        mineral: data.mineral?.type || null,
+        controller: !!data.ownerRcl || data.roomType === "normal",
+        owner: data.owner || null,
+        reserved: data.reservation?.username || null,
+        roomType: data.roomType || "normal",
+        hasKeepers: data.roomType === "sourceKeeper",
+        hasInvaderCore: data.invaderCore || false,
+        swampPercent: data.terrain?.swampPercent || 0,
+        wallPercent: data.terrain?.wallPercent || 0,
+        scannedAt: data.lastScanned || 0,
+        distance: data.distanceFromHome || Game.map.getRoomLinearDistance(homeRoom, roomName),
+      };
     }
 
     return {
       scouts,
       roomsNeedingScan,
+      totalRemaining: roomsNeedingScan.length,
+      totalScanned: Object.keys(scannedRooms).length,
+      scannedRooms,
     };
   }
 
@@ -863,6 +912,29 @@ export class AWSExporter {
       roomVisibility,
       remoteCreepStates,
       spawnTriggers,
+    };
+  }
+
+  /**
+   * Get mineral harvesting status for a room
+   */
+  private static getMineralStatus(room: Room, roomName: string): MineralExport {
+    const minerals = room.find(FIND_MINERALS);
+    const mineral = minerals[0];
+
+    const extractor = room.find(FIND_STRUCTURES, {
+      filter: (s) => s.structureType === STRUCTURE_EXTRACTOR,
+    }).length > 0;
+
+    const harvester = Object.values(Game.creeps).find(
+      (c) => c.memory.role === "MINERAL_HARVESTER" && c.memory.room === roomName
+    )?.name || null;
+
+    return {
+      type: mineral?.mineralType || null,
+      amount: mineral?.mineralAmount || 0,
+      extractor,
+      harvester,
     };
   }
 
