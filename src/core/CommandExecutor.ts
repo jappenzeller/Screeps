@@ -21,8 +21,8 @@ export class CommandExecutor {
    * Initialize active segments - call once per tick before accessing segments
    */
   public static init(): void {
-    // Ensure both segments 90 (AWS export) and 91 (commands) are active
-    RawMemory.setActiveSegments([90, 91]);
+    // Ensure segments are active: 90 (AWS export), 91 (commands), 92 (position log)
+    RawMemory.setActiveSegments([90, 91, 92]);
   }
 
   /**

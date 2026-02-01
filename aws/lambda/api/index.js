@@ -196,6 +196,32 @@ async function fetchSegment90() {
 }
 
 /**
+ * Fetch segment 92 (position log) directly from Screeps API
+ */
+async function fetchSegment92() {
+  const token = await getScreepsToken();
+
+  const response = await fetch(
+    `https://screeps.com/api/user/memory-segment?segment=92&shard=${SCREEPS_SHARD}`,
+    {
+      headers: {
+        "X-Token": token,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Screeps API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (!data.data) return { room: null, startTick: 0, entries: [] };
+
+  return typeof data.data === "string" ? JSON.parse(data.data) : data.data;
+}
+
+/**
  * Get live data from segment 90
  */
 async function getLiveData(roomName) {
@@ -1004,6 +1030,10 @@ export async function handler(event) {
       const shard = query.shard || SCREEPS_SHARD;
       const requestId = query.requestId || null;
       result = await getCommandResult(shard, requestId);
+    }
+    // Position log endpoint - fetch data from segment 92 for heatmap rendering
+    else if (path === 'GET /positions') {
+      result = await fetchSegment92();
     }
     else {
       return {

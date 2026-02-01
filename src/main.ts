@@ -25,6 +25,7 @@ import { RenewalManager } from "./managers/RenewalManager";
 import { drawRoomVisuals } from "./visuals/creepVisuals";
 import { CommandExecutor } from "./core/CommandExecutor";
 import { EconomyTracker } from "./core/EconomyTracker";
+import { PositionLogger } from "./logging/PositionLogger";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -175,6 +176,9 @@ function runRoom(room: Room): void {
   if (Memory.settings?.showVisuals !== false) {
     drawRoomVisuals(room);
   }
+
+  // 12. Position logging for heatmap (toggle with Memory.settings.logPositions)
+  PositionLogger.run(room.name);
 }
 
 function runCreeps(): void {
