@@ -9,7 +9,30 @@ import { shouldEmergencyRenew } from "../managers/RenewalManager";
  * - Each hauler has a primary container assignment to prevent oscillation
  * - Haulers wait at their container if a miner is present (energy coming)
  * - Container switching has a cooldown to prevent rapid oscillation
+ *
+ * Renewal:
+ * - Opportunistic only - renew when naturally adjacent to spawn
+ * - Never diverts from tasks to seek spawn
  */
+
+/**
+ * Opportunistic renewal - only renew when naturally adjacent to spawn
+ * Never seeks spawn, just takes advantage of passing by during deliveries
+ */
+function tryRenew(creep: Creep): void {
+  // Only bother if TTL is getting low
+  if (!creep.ticksToLive || creep.ticksToLive > 1200) return;
+
+  // Must already be adjacent to spawn - don't seek it out
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return;
+  if (creep.pos.getRangeTo(spawn) !== 1) return;
+
+  // Don't interrupt spawning
+  if (spawn.spawning) return;
+
+  spawn.renewCreep(creep);
+}
 
 /**
  * Select the best container to collect from based on energy, distance, and competition.
@@ -139,6 +162,9 @@ function collectFromContainers(creep: Creep): boolean {
 }
 
 export function runHauler(creep: Creep): void {
+  // Opportunistic renewal - fire and forget, doesn't block normal behavior
+  tryRenew(creep);
+
   // Emergency renewal check - only for critical, dying haulers that are the last one
   if (shouldEmergencyRenew(creep)) {
     const spawn = creep.room.find(FIND_MY_SPAWNS)[0];
