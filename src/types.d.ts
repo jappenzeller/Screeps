@@ -195,6 +195,9 @@ interface ExpansionData {
   lastClaimed?: string;
   claimedAt?: number;
   spawnSiteId?: string;
+  // New structure for claimed rooms
+  claimed?: Record<string, { claimedAt: number; claimedBy: string }>;
+  bootstrapping?: string; // Room currently being bootstrapped
 }
 
 // Extend Memory for advisor data, traffic, and intel
