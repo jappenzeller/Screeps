@@ -650,7 +650,7 @@ function remoteHaulerUtility(deficit: number, state: ColonyState): number {
  * Uses squad-based spawning to coordinate attacks against healer-supported invaders
  *
  * Both melee and ranged defenders spawn independently when threats detected.
- * Melee gets slightly higher utility (30) to spawn first.
+ * Utility is 60 (higher than RESERVER at 50) to ensure defenders spawn first.
  *
  * IMPORTANT: Must check Memory.rooms[roomName].hostiles directly because:
  * - Creeps flee when they see hostiles and update memory
@@ -663,19 +663,32 @@ function remoteDefenderUtility(state: ColonyState): number {
   const squadManager = new RemoteSquadManager(state.room);
   const SCAN_AGE_THRESHOLD = 200; // Consider scans stale after 200 ticks
 
+  // Debug logging
+  const DEBUG = Game.time % 20 === 0; // Log every 20 ticks
+  if (DEBUG) console.log(`[DEFENDER] Checking ${state.remoteRooms.length} remote rooms`);
+
   // First check Memory.rooms for hostiles in remote rooms
   // This catches threats even when we don't have vision
   for (const remoteName of state.remoteRooms) {
     const roomMem = Memory.rooms?.[remoteName];
-    if (!roomMem) continue;
+    if (!roomMem) {
+      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: SKIP - no memory`);
+      continue;
+    }
 
     // Check scan age - don't spawn defenders for stale intel
     const scanAge = Game.time - (roomMem.lastScan || 0);
-    if (scanAge > SCAN_AGE_THRESHOLD) continue;
+    if (scanAge > SCAN_AGE_THRESHOLD) {
+      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: SKIP - stale scan (${scanAge} ticks old)`);
+      continue;
+    }
 
     // Check for hostiles (from memory or live)
     const hostileCount = roomMem.hostiles || 0;
-    if (hostileCount === 0) continue;
+    if (hostileCount === 0) {
+      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: SKIP - no hostiles`);
+      continue;
+    }
 
     // Check for dangerous hostiles (with attack parts)
     const hostileDetails = (roomMem as any).hostileDetails;
@@ -687,7 +700,12 @@ function remoteDefenderUtility(state: ColonyState): number {
       hasDangerous = hostileCount > 0;
     }
 
-    if (!hasDangerous) continue;
+    if (!hasDangerous) {
+      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: SKIP - hostiles not dangerous`);
+      continue;
+    }
+
+    if (DEBUG) console.log(`[DEFENDER] ${remoteName}: THREAT DETECTED - ${hostileCount} hostiles`);
 
     // Request a squad if one doesn't exist
     const existingSquad = squadManager.getSquad(remoteName);
@@ -696,18 +714,27 @@ function remoteDefenderUtility(state: ColonyState): number {
       const analysis = squadManager.analyzeThreat(remoteName);
       if (analysis.recommendedSquadSize > 0) {
         squadManager.requestSquad(remoteName, analysis.recommendedSquadSize);
+        if (DEBUG) console.log(`[DEFENDER] ${remoteName}: Requested squad size ${analysis.recommendedSquadSize}`);
       } else {
         // Default to 1 defender if we can't analyze
         squadManager.requestSquad(remoteName, 1);
+        if (DEBUG) console.log(`[DEFENDER] ${remoteName}: Requested squad size 1 (default)`);
       }
+    } else {
+      if (DEBUG) console.log(`[DEFENDER] ${remoteName}: Squad exists, status=${existingSquad.status}`);
     }
   }
 
   // Now check squad needs (includes newly created squads)
   const needs = squadManager.getDefendersNeeded();
 
+  if (DEBUG) console.log(`[DEFENDER] Squad needs: ${JSON.stringify(needs)}`);
+
   // No squad needs = no utility
-  if (needs.length === 0) return 0;
+  if (needs.length === 0) {
+    if (DEBUG) console.log(`[DEFENDER] No squad needs, returning utility=0`);
+    return 0;
+  }
 
   // Find the most urgent need (most defenders needed)
   let totalNeeded = 0;
@@ -715,14 +742,19 @@ function remoteDefenderUtility(state: ColonyState): number {
     totalNeeded += need.count;
   }
 
-  if (totalNeeded === 0) return 0;
+  if (totalNeeded === 0) {
+    if (DEBUG) console.log(`[DEFENDER] totalNeeded=0, returning utility=0`);
+    return 0;
+  }
 
-  // Base utility for melee defender
-  // Slightly higher than ranged (28) so melee spawns first
-  const BASE_UTILITY = 30;
+  // Base utility for melee defender - MUST BE HIGHER THAN RESERVER (50)
+  // 60 for first defender, +10 for each additional needed
+  const BASE_UTILITY = 60;
 
   // Scale with number of defenders needed
   const utility = BASE_UTILITY + (totalNeeded - 1) * 10;
+
+  if (DEBUG) console.log(`[DEFENDER] Returning utility=${utility} (need ${totalNeeded} defenders)`);
 
   return utility;
 }
