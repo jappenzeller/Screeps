@@ -14,6 +14,7 @@ declare global {
     working?: boolean;
     targetId?: Id<AnyStructure | Source | ConstructionSite | Resource>;
     sourceId?: Id<Source>;
+    _renewWaitStart?: number;
   }
 
   // Extend the built-in RoomMemory interface

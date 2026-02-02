@@ -101,7 +101,9 @@
       "Bash(aws quicksight describe-dashboard:*)",
       "Bash(aws quicksight update-dashboard-published-version:*)",
       "Bash(aws apigatewayv2 update-integration:*)",
-      "Bash(aws apigatewayv2 create-integration:*)"
+      "Bash(aws apigatewayv2 create-integration:*)",
+      "WebFetch(domain:dossn1w7n5.execute-api.us-east-1.amazonaws.com)",
+      "Bash(echo:*)"
     ]
   }
 }

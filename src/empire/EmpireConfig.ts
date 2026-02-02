@@ -13,6 +13,7 @@ export interface ExpansionConfig {
   bootstrapTimeout: number;
   builderCount: number;
   haulerCount: number;
+  autoExpand: boolean; // Enable automatic expansion
   weights: {
     economic: number;
     strategic: number;
@@ -36,6 +37,7 @@ export const DEFAULT_CONFIG: EmpireConfig = {
     bootstrapTimeout: 15000,
     builderCount: 2,
     haulerCount: 3,
+    autoExpand: true,
     weights: {
       economic: 0.35,
       strategic: 0.3,

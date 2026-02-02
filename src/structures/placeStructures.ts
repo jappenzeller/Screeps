@@ -19,14 +19,16 @@ export function placeStructures(room: Room): void {
   });
 
   // Priority order - place what's missing
+  // Note: STRUCTURE_EXTENSION and STRUCTURE_CONTAINER are handled by
+  // ExtensionPlanner and ContainerPlanner respectively (wired in main.ts)
   const structures: BuildableStructureConstant[] = [
     STRUCTURE_SPAWN,
-    STRUCTURE_EXTENSION,
+    // STRUCTURE_EXTENSION - handled by ExtensionPlanner
     STRUCTURE_TOWER,
     STRUCTURE_STORAGE,
     STRUCTURE_LINK,
     STRUCTURE_EXTRACTOR,
-    STRUCTURE_CONTAINER,
+    // STRUCTURE_CONTAINER - handled by ContainerPlanner
     STRUCTURE_ROAD,
   ];
 

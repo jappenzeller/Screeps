@@ -184,6 +184,34 @@ export const CRITICAL_INVARIANTS: Record<string, Invariant> = {
     }
     return null;
   },
+
+  /**
+   * INV-011: Never spawn non-economy roles during bootstrap (0 income)
+   */
+  "no-non-economy-bootstrap": (state, candidate) => {
+    const noIncome = state.energyIncome === 0;
+    const noHarvesters = (state.counts.HARVESTER || 0) === 0;
+    const noHaulers = (state.counts.HAULER || 0) === 0;
+
+    if (noIncome && (noHarvesters || noHaulers)) {
+      const nonEconomy = [
+        "SCOUT",
+        "RESERVER",
+        "REMOTE_MINER",
+        "REMOTE_HAULER",
+        "REMOTE_DEFENDER",
+        "LINK_FILLER",
+        "MINERAL_HARVESTER",
+        "CLAIMER",
+        "BOOTSTRAP_BUILDER",
+        "BOOTSTRAP_HAULER",
+      ];
+      if (candidate && nonEconomy.includes(candidate.role)) {
+        return `Bootstrap spawned non-economy role ${candidate.role} with 0 income`;
+      }
+    }
+    return null;
+  },
 };
 
 /**

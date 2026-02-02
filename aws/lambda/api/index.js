@@ -593,6 +593,48 @@ async function getExpansionStatus(roomName = null) {
 }
 
 /**
+ * Get full expansion overview including candidates and parent readiness
+ * This is the comprehensive expansion endpoint for the Empire Administrator
+ */
+async function getExpansionOverview() {
+  const data = await fetchSegment90();
+
+  if (!data) {
+    return { error: "No data in segment 90" };
+  }
+
+  if (!data.empire || !data.empire.expansionOverview) {
+    // Fall back to basic expansion data if overview not available
+    if (data.empire?.expansion) {
+      return {
+        live: true,
+        requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+        fetchedAt: Date.now(),
+        gameTick: data.gameTick,
+        timestamp: data.timestamp,
+        shard: data.shard,
+        hint: "expansionOverview not available, showing basic expansion data. Update bot code.",
+        ...data.empire.expansion,
+      };
+    }
+    return {
+      error: "No expansion data available",
+      hint: "Ensure bot is exporting expansion data via AWSExporter",
+    };
+  }
+
+  return {
+    live: true,
+    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    fetchedAt: Date.now(),
+    gameTick: data.gameTick,
+    timestamp: data.timestamp,
+    shard: data.shard,
+    ...data.empire.expansionOverview,
+  };
+}
+
+/**
  * Queue an expansion command via memory segment 91
  */
 async function queueExpansionCommand(action, roomName, parentRoom = null) {
@@ -1172,6 +1214,10 @@ export async function handler(event) {
     else if (path === 'POST /empire/expansion') {
       const { action, roomName, parentRoom } = body;
       result = await queueExpansionCommand(action, roomName, parentRoom);
+    }
+    // Expansion overview endpoint (comprehensive with candidates + readiness)
+    else if (path === 'GET /expansion') {
+      result = await getExpansionOverview();
     }
     else {
       return {

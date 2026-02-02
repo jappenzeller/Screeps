@@ -13,6 +13,8 @@ import {
   initializeEmpireMemory,
 } from "./EmpireMemory";
 import { SpawnPlacementCalculator } from "./SpawnPlacementCalculator";
+import { RoomEvaluator, RoomScore } from "./RoomEvaluator";
+import { ExpansionReadiness, ReadinessCheck } from "./ExpansionReadiness";
 
 export class ExpansionManager {
   private config = getConfig().expansion;
@@ -499,6 +501,69 @@ export class ExpansionManager {
     return total;
   }
 
+  // === AUTO-EXPANSION ===
+
+  /**
+   * Check if automatic expansion should trigger
+   * Call this every ~100 ticks from main loop
+   */
+  checkAutoExpansion(): void {
+    // Skip if disabled
+    if (!this.config.autoExpand) return;
+
+    // Skip if already expanding
+    const activeCount = Object.keys(Memory.empireExpansion!.active).length;
+    if (activeCount >= this.config.maxSimultaneous) return;
+
+    // Check empire readiness
+    const readiness = new ExpansionReadiness();
+    const { ready, bestParent, blockers } = readiness.canExpand();
+
+    if (!ready) {
+      // Log occasionally for debugging
+      if (Game.time % 1000 === 0) {
+        console.log(`[Expansion] Not ready: ${blockers.join(", ")}`);
+      }
+      return;
+    }
+
+    // Find best target
+    const evaluator = new RoomEvaluator();
+    const bestTarget = evaluator.getBestTarget();
+
+    if (!bestTarget) {
+      if (Game.time % 1000 === 0) {
+        console.log("[Expansion] No viable targets found");
+      }
+      return;
+    }
+
+    // Start expansion!
+    console.log(
+      `[Expansion] AUTO: Starting expansion to ${bestTarget.roomName} (score: ${bestTarget.totalScore.toFixed(1)}) from ${bestParent}`
+    );
+    this.startExpansion(bestTarget.roomName, bestParent!);
+  }
+
+  /**
+   * Get expansion candidates for display/API
+   */
+  getCandidates(maxResults: number = 5): RoomScore[] {
+    const evaluator = new RoomEvaluator();
+    return evaluator.rankCandidates(maxResults);
+  }
+
+  /**
+   * Get parent readiness for display/API
+   */
+  getParentReadiness(): { roomName: string; readiness: ReadinessCheck }[] {
+    const checker = new ExpansionReadiness();
+    return checker.rankParentColonies().map((p) => ({
+      roomName: p.roomName,
+      readiness: p.readiness,
+    }));
+  }
+
   // === CONSOLE API ===
 
   static status(): string {
@@ -594,5 +659,62 @@ export const expansion = {
     console.log("Memory.expansion:", JSON.stringify(Memory.expansion, null, 2));
     console.log("Memory.bootstrap:", JSON.stringify(Memory.bootstrap, null, 2));
     return "OK";
+  },
+  // Show expansion candidates
+  candidates: (count?: number) => {
+    const evaluator = new RoomEvaluator();
+    const candidates = evaluator.rankCandidates(count || 10);
+
+    console.log("=== EXPANSION CANDIDATES ===");
+    for (const c of candidates) {
+      const status = c.viable ? "Y" : "X";
+      console.log(
+        `${status} ${c.roomName}: ${c.totalScore.toFixed(1)} (E:${c.economic.toFixed(0)} S:${c.strategic.toFixed(0)} D:${c.defensive.toFixed(0)})`
+      );
+      console.log(
+        `   ${c.details.sources} sources, ${c.details.mineral || "no mineral"}, ${c.details.remotePotential} remote sources`
+      );
+      if (c.blockers.length > 0) {
+        console.log(`   Blockers: ${c.blockers.join(", ")}`);
+      }
+    }
+    return `${candidates.length} candidates`;
+  },
+  // Show parent readiness
+  readiness: () => {
+    const checker = new ExpansionReadiness();
+    const parents = checker.rankParentColonies();
+
+    console.log("=== PARENT READINESS ===");
+    for (const p of parents) {
+      const r = p.readiness;
+      const status = r.ready ? "Y READY" : "X NOT READY";
+      console.log(`${p.roomName}: ${status} (score: ${r.score})`);
+      if (r.blockers.length > 0) {
+        console.log(`   Blockers: ${r.blockers.join(", ")}`);
+      }
+      if (r.warnings.length > 0) {
+        console.log(`   Warnings: ${r.warnings.join(", ")}`);
+      }
+    }
+
+    const overall = checker.canExpand();
+    console.log(`\nEmpire can expand: ${overall.ready ? "YES" : "NO"}`);
+    if (overall.bestParent) {
+      console.log(`Best parent: ${overall.bestParent}`);
+    }
+    return overall.ready ? "Ready" : overall.blockers.join(", ");
+  },
+  // Toggle auto-expand
+  auto: (enable?: boolean) => {
+    initializeEmpireMemory();
+    if (enable === undefined) {
+      const current = Memory.empire?.config?.autoExpand ?? true;
+      return `Auto-expand is ${current ? "ENABLED" : "DISABLED"}`;
+    }
+
+    Memory.empire!.config = Memory.empire!.config || {};
+    Memory.empire!.config.autoExpand = enable;
+    return `Auto-expand ${enable ? "ENABLED" : "DISABLED"}`;
   },
 };

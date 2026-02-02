@@ -33,12 +33,15 @@ export class ContainerPlanner {
 
     // Regenerate controller container position if missing and should exist (RCL 2+)
     // Handles rooms that had plans created before this position was added
+    // Skip if controller already has a container
     if (!plan.controller && this.room.controller && this.room.controller.level >= 2) {
-      const controllerPos = this.findControllerContainerPosition();
-      if (controllerPos) {
-        plan.controller = { x: controllerPos.x, y: controllerPos.y };
-        Memory.rooms[this.room.name].containerPlan = plan;
-        logger.info("ContainerPlanner", `Added controller container to plan for ${this.room.name}`);
+      if (!ContainerPlanner.getControllerContainer(this.room)) {
+        const controllerPos = this.findControllerContainerPosition();
+        if (controllerPos) {
+          plan.controller = { x: controllerPos.x, y: controllerPos.y };
+          Memory.rooms[this.room.name].containerPlan = plan;
+          logger.info("ContainerPlanner", `Added controller container to plan for ${this.room.name}`);
+        }
       }
     }
 
@@ -55,20 +58,26 @@ export class ContainerPlanner {
     const spawn = this.room.find(FIND_MY_SPAWNS)[0];
     const sources = this.room.find(FIND_SOURCES);
 
-    // Plan container for each source
+    // Plan container for each source (skip if already has one)
     for (const source of sources) {
+      // Check if source already has a container
+      if (ContainerPlanner.getSourceContainer(source)) {
+        continue; // Already has container, don't plan another
+      }
       const pos = this.findBestContainerPosition(source, spawn);
       if (pos) {
         plan.sources[source.id] = { x: pos.x, y: pos.y };
       }
     }
 
-    // Plan container near controller (RCL 2+)
+    // Plan container near controller (RCL 2+, skip if already has one)
     // Upgraders need a withdrawal target, haulers need a delivery point near controller
     if (this.room.controller && this.room.controller.level >= 2) {
-      const controllerPos = this.findControllerContainerPosition();
-      if (controllerPos) {
-        plan.controller = { x: controllerPos.x, y: controllerPos.y };
+      if (!ContainerPlanner.getControllerContainer(this.room)) {
+        const controllerPos = this.findControllerContainerPosition();
+        if (controllerPos) {
+          plan.controller = { x: controllerPos.x, y: controllerPos.y };
+        }
       }
     }
 

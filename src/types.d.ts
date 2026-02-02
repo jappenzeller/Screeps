@@ -36,6 +36,7 @@ interface CreepMemory {
   // Remote hauler renewal tracking
   _lastRenewTick?: number;
   _renewTicks?: number;
+  _renewWaitStart?: number; // Tick when started waiting at spawn for renewal
 
   // Harvester/defender renewal state
   renewing?: boolean;

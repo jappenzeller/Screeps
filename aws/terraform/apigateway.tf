@@ -173,6 +173,13 @@ resource "aws_apigatewayv2_route" "post_empire_expansion" {
   target    = "integrations/${aws_apigatewayv2_integration.api.id}"
 }
 
+# Expansion overview route (comprehensive candidates + readiness)
+resource "aws_apigatewayv2_route" "get_expansion" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /expansion"
+  target    = "integrations/${aws_apigatewayv2_integration.api.id}"
+}
+
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"

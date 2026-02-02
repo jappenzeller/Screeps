@@ -20,6 +20,13 @@ function getSpawnDistance(creep: Creep): number {
 function shouldGoRenew(creep: Creep): boolean {
   if (!creep.ticksToLive) return false;
 
+  // Don't renew undersized creeps - let them die and spawn bigger replacements
+  const bodyCost = creep.body.reduce((sum, part) => sum + BODYPART_COST[part.type], 0);
+  const capacity = creep.room.energyCapacityAvailable;
+  if (bodyCost < capacity * 0.5) {
+    return false;
+  }
+
   const distance = getSpawnDistance(creep);
   const roundTrip = distance * 2;
   const buffer = 30;
@@ -47,6 +54,25 @@ function runRenewal(creep: Creep): boolean {
     smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
     creep.say("RENEW");
     return true;
+  }
+
+  // At spawn - check energy first
+  if (spawn.room.energyAvailable < 50) {
+    // No energy - wait briefly if TTL critical, otherwise give up
+    if (creep.ticksToLive && creep.ticksToLive < 30) {
+      creep.say("NO NRG");
+      return true; // wait a bit
+    }
+    return false; // give up, let replacement spawn
+  }
+
+  // Check for queue - give up if 2+ other creeps waiting
+  const creepsAtSpawn = spawn.pos.findInRange(FIND_MY_CREEPS, 1).filter(
+    (c) => c.name !== creep.name
+  ).length;
+  if (creepsAtSpawn >= 2) {
+    creep.say("QUEUE");
+    return false; // too crowded
   }
 
   // At spawn

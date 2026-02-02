@@ -73,7 +73,7 @@ export function buildBodyFromConfig(config: BodyConfig, energy: number): BodyPar
       if (remaining < unitCost) break;
 
       parts.push(...config.pattern);
-      remaining -= patternCost;
+      remaining -= unitCost; // FIXED: Reserve energy for MOVE parts
       repeats++;
     }
   } else {
@@ -112,6 +112,29 @@ export function buildBodyFromConfig(config: BodyConfig, energy: number): BodyPar
   // If we couldn't build anything useful, use fallback
   if (parts.length < 3 && config.fallback && energy >= fallbackCost) {
     return sortBodyParts([...config.fallback], config.sortForCombat);
+  }
+
+  // CRITICAL: Guarantee at least 1 MOVE for any creep that needs to move
+  // Even "static" miners need to reach their position after spawning
+  const hasMoveMode = config.moveMode !== "pattern";
+  const currentMoves = parts.filter((p) => p === MOVE).length;
+  if (hasMoveMode && currentMoves === 0 && parts.length < 50) {
+    // Try to add 1 MOVE by removing lowest-priority part if needed
+    const moveCost = BODYPART_COST[MOVE];
+    if (remaining >= moveCost) {
+      parts.push(MOVE);
+    } else if (parts.length > 2) {
+      // Not enough energy - sacrifice a WORK or CARRY to afford MOVE
+      // This is better than a completely stuck creep
+      const removedPart = parts.pop()!;
+      const refund = BODYPART_COST[removedPart];
+      if (refund + remaining >= moveCost) {
+        parts.push(MOVE);
+      } else {
+        // Put it back, we can't afford the swap
+        parts.push(removedPart);
+      }
+    }
   }
 
   return sortBodyParts(parts, config.sortForCombat);

@@ -97,9 +97,11 @@ export class RenewalManager {
 
     const bodyParts = creep.body.length;
     const creepCost = this.getCreepCost(creep);
+    const capacity = this.room.energyCapacityAvailable;
 
     // Skip cheap/small creeps - not worth spawn time
-    if (bodyParts < 10 || creepCost < 500) return 0;
+    // Also skip undersized creeps that should be replaced with bigger ones
+    if (bodyParts < 10 || creepCost < 500 || creepCost < capacity * 0.5) return 0;
 
     // Calculate renewal metrics
     const ttlGain = Math.floor(600 / bodyParts);

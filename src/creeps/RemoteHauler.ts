@@ -42,6 +42,13 @@ function tryRenew(creep: Creep): boolean {
     return false;
   }
 
+  // Don't renew undersized creeps - let them die and spawn bigger replacements
+  const bodyCost = creep.body.reduce((sum, part) => sum + BODYPART_COST[part.type], 0);
+  const capacity = creep.room.energyCapacityAvailable;
+  if (bodyCost < capacity * 0.5) {
+    return false;
+  }
+
   // Find spawn first - need to know range before cooldown check
   const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
   if (!spawn) return false;
@@ -201,6 +208,31 @@ function deliver(creep: Creep, homeRoom: string): void {
   if (tryRenew(creep)) {
     return; // Spent tick renewing
   }
+
+  // === EMERGENCY: Fill spawn/extensions when home economy is dead ===
+  // If no harvesters AND no haulers exist, remote haulers are the only
+  // way to get energy into spawn. Override normal delivery priority.
+  const homeCreeps = Object.values(Game.creeps).filter(
+    (c) => c.memory.room === homeRoom
+  );
+  const hasHarvesters = homeCreeps.some((c) => c.memory.role === "HARVESTER");
+  const hasHaulers = homeCreeps.some((c) => c.memory.role === "HAULER");
+
+  if (!hasHarvesters || !hasHaulers) {
+    const spawnOrExt = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+      filter: (s) =>
+        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+    });
+    if (spawnOrExt) {
+      if (creep.transfer(spawnOrExt, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, spawnOrExt, ROAD_OPTS_DELIVER);
+      }
+      creep.say("SOS");
+      return;
+    }
+  }
+  // === END EMERGENCY ===
 
   // Priority 1: Storage
   const storage = creep.room.storage;

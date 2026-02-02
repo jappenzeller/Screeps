@@ -1,6 +1,13 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
 
+// Extend CreepMemory for renewal wait tracking
+declare global {
+  interface CreepMemory {
+    _renewWaitStart?: number;
+  }
+}
+
 /**
  * Hauler: Picks up energy from containers/ground and delivers to structures.
  *
@@ -57,6 +64,11 @@ function selectContainer(creep: Creep): StructureContainer | null {
 /**
  * Check if this hauler should attempt renewal.
  * Returns: 'critical' (must seek spawn now), 'opportunistic' (renew if near), or false
+ *
+ * Queue prevention:
+ * - Don't renew if other creeps already waiting at spawn
+ * - Don't renew if room energy is too low
+ * - Opportunistic only triggers when ALREADY adjacent (don't travel for it)
  */
 function shouldRenew(creep: Creep): "critical" | "opportunistic" | false {
   // Only renew large creeps - small ones are cheap to replace
@@ -65,19 +77,32 @@ function shouldRenew(creep: Creep): "critical" | "opportunistic" | false {
 
   const ttl = creep.ticksToLive || 1500;
   const spawnTime = creep.body.length;
+  const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return false;
+
+  // Check if room has enough energy to renew (need at least 50 for one tick)
+  if (spawn.room.energyAvailable < 50) return false;
+
+  // Check for queue at spawn - don't join if 2+ creeps already waiting
+  const creepsAtSpawn = spawn.pos.findInRange(FIND_MY_CREEPS, 1).filter(
+    (c) => c.name !== creep.name
+  ).length;
+  if (creepsAtSpawn >= 2) return false;
 
   // Critical: TTL is low enough that we MUST seek spawn now or die
   // Give ourselves spawn time + travel buffer (50 ticks ~= 25 tiles on roads)
   const criticalThreshold = spawnTime + 50;
   if (ttl <= criticalThreshold) {
+    // Even in critical mode, don't bother if spawn is too far and we'll die anyway
+    const distToSpawn = creep.pos.getRangeTo(spawn);
+    if (distToSpawn > ttl) return false; // Can't make it
     return "critical";
   }
 
-  // Opportunistic: TTL is getting low, renew if we happen to be near spawn
+  // Opportunistic: ONLY if we're already adjacent to spawn (don't travel for it)
   const opportunisticThreshold = Math.max(200, spawnTime * 5);
   if (ttl <= opportunisticThreshold) {
-    const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
-    if (spawn && creep.pos.getRangeTo(spawn) <= 3 && !spawn.spawning) {
+    if (creep.pos.isNearTo(spawn) && !spawn.spawning) {
       return "opportunistic";
     }
   }
@@ -87,20 +112,55 @@ function shouldRenew(creep: Creep): "critical" | "opportunistic" | false {
 
 /**
  * Attempt to renew the creep at the nearest spawn.
- * @param mode 'critical' means drop everything and get to spawn, 'opportunistic' means only if convenient
+ * @param mode 'critical' means move toward spawn, 'opportunistic' means only if already adjacent
  * Returns true if renewal is in progress (skip normal duties).
+ *
+ * Anti-queue features:
+ * - Gives up if waiting too long (10 ticks) with no energy
+ * - Gives up if 2+ other creeps already at spawn
+ * - Opportunistic mode doesn't move toward spawn
  */
 function tryRenew(creep: Creep, mode: "critical" | "opportunistic"): boolean {
   const spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
   if (!spawn) return false;
 
+  // Check for queue - give up if too many creeps waiting
+  const creepsAtSpawn = spawn.pos.findInRange(FIND_MY_CREEPS, 1).filter(
+    (c) => c.name !== creep.name
+  ).length;
+  if (creepsAtSpawn >= 2) {
+    delete creep.memory.renewing;
+    delete creep.memory._renewWaitStart;
+    creep.say("QUEUE");
+    return false; // Give up, too crowded
+  }
+
   // Set renewing flag so spawning system doesn't spawn a replacement
   creep.memory.renewing = true;
 
-  // In critical mode, always move toward spawn even if it's spawning
-  // We need to be there when it finishes
+  // In critical mode, move toward spawn but give up if waiting too long with no energy
   if (mode === "critical") {
     if (creep.pos.isNearTo(spawn)) {
+      // Check if we've been waiting too long with no energy
+      if (spawn.room.energyAvailable < 50) {
+        if (!creep.memory._renewWaitStart) {
+          creep.memory._renewWaitStart = Game.time;
+        }
+        const waitTime = Game.time - (creep.memory._renewWaitStart as number);
+        if (waitTime > 10) {
+          // Give up - no energy for 10 ticks, go back to work
+          delete creep.memory.renewing;
+          delete creep.memory._renewWaitStart;
+          creep.say("NO NRG");
+          return false;
+        }
+        creep.say(`WAIT${10 - waitTime}`);
+        return true;
+      }
+
+      // Reset wait timer if we have energy
+      delete creep.memory._renewWaitStart;
+
       if (!spawn.spawning) {
         const result = spawn.renewCreep(creep);
         if (result === OK) {
@@ -116,8 +176,19 @@ function tryRenew(creep: Creep, mode: "critical" | "opportunistic"): boolean {
           return true;
         }
       } else {
-        // Wait for spawn to finish
-        creep.say("WAIT");
+        // Spawn is busy - wait but track time
+        if (!creep.memory._renewWaitStart) {
+          creep.memory._renewWaitStart = Game.time;
+        }
+        const waitTime = Game.time - (creep.memory._renewWaitStart as number);
+        if (waitTime > 20) {
+          // Spawn busy for 20 ticks, give up
+          delete creep.memory.renewing;
+          delete creep.memory._renewWaitStart;
+          creep.say("GIVEUP");
+          return false;
+        }
+        creep.say(`WAIT${waitTime}`);
         return true;
       }
     } else {
@@ -125,12 +196,12 @@ function tryRenew(creep: Creep, mode: "critical" | "opportunistic"): boolean {
       creep.say(`TTL${creep.ticksToLive}`);
       return true;
     }
-    return true; // Always return true in critical mode - we're committed
+    return true;
   }
 
-  // Opportunistic mode - only if spawn is free and we're close
-  if (spawn.spawning) {
-    delete creep.memory.renewing; // Clear flag if we can't renew
+  // Opportunistic mode - ONLY if already adjacent (no movement)
+  if (spawn.spawning || spawn.room.energyAvailable < 50) {
+    delete creep.memory.renewing;
     return false;
   }
 
@@ -148,13 +219,11 @@ function tryRenew(creep: Creep, mode: "critical" | "opportunistic"): boolean {
       }
       return true;
     }
-    delete creep.memory.renewing;
-    return false;
-  } else {
-    smartMoveTo(creep, spawn, { reusePath: 5 });
-    creep.say("2RENEW");
-    return true;
   }
+
+  // Not adjacent or renewal failed - give up (opportunistic doesn't move)
+  delete creep.memory.renewing;
+  return false;
 }
 
 function moveOffRoad(creep: Creep): void {

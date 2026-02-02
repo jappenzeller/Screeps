@@ -6,8 +6,54 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { StatsCollector, TrafficExport } from "./StatsCollector";
 import { EconomyTracker, ColonyEconomyMetrics } from "../core/EconomyTracker";
+import { RoomEvaluator, RoomScore } from "../empire/RoomEvaluator";
+import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/ExpansionReadiness";
 
 const AWS_SEGMENT = 90;
+
+interface ExpansionCandidateExport {
+  roomName: string;
+  totalScore: number;
+  viable: boolean;
+  blockers: string[];
+  economic: number;
+  strategic: number;
+  defensive: number;
+  details: {
+    sources: number;
+    mineral: string | null;
+    mineralValue: number;
+    swampPercent: number;
+    wallPercent: number;
+    distanceFromParent: number;
+    distanceFromEnemies: number;
+    remotePotential: number;
+  };
+}
+
+interface ParentReadinessExport {
+  roomName: string;
+  ready: boolean;
+  score: number;
+  blockers: string[];
+  warnings: string[];
+  distanceToTarget: number;
+}
+
+interface ExpansionOverviewExport {
+  canExpand: boolean;
+  bestParent: string | null;
+  empireBlockers: string[];
+  autoExpand: boolean;
+  active: EmpireExpansionExport[];
+  activeCount: number;
+  queue: Array<{ target: string; parent: string }>;
+  queueCount: number;
+  candidates: ExpansionCandidateExport[];
+  candidateCount: number;
+  parentReadiness: ParentReadinessExport[];
+  history: Record<string, unknown>;
+}
 
 interface EmpireExport {
   state: string;
@@ -20,6 +66,7 @@ interface EmpireExport {
     queueCount: number;
     history: Record<string, unknown>;
   };
+  expansionOverview: ExpansionOverviewExport;
   gcl: {
     level: number;
     progress: number;
@@ -1065,6 +1112,9 @@ export class AWSExporter {
       });
     }
 
+    // Get expansion overview with candidates and readiness
+    const expansionOverview = this.getExpansionOverview(activeExpansions);
+
     return {
       state: Memory.empire?.state || "UNKNOWN",
       stateChangedAt: Memory.empire?.stateChangedAt,
@@ -1076,6 +1126,7 @@ export class AWSExporter {
         queueCount: Memory.empireExpansion?.queue?.length || 0,
         history: Memory.empireExpansion?.history || {},
       },
+      expansionOverview,
       gcl: {
         level: Game.gcl.level,
         progress: Game.gcl.progress,
@@ -1086,6 +1137,66 @@ export class AWSExporter {
         .filter((r) => r.controller?.my)
         .map((r) => r.name),
       colonyCount: Object.values(Game.rooms).filter((r) => r.controller?.my).length,
+    };
+  }
+
+  /**
+   * Get expansion overview with candidates and parent readiness
+   */
+  private static getExpansionOverview(activeExpansions: EmpireExpansionExport[]): ExpansionOverviewExport {
+    const readiness = new ExpansionReadiness();
+    const evaluator = new RoomEvaluator();
+
+    // Check if empire can expand
+    const { ready: canExpand, bestParent, blockers: empireBlockers } = readiness.canExpand();
+
+    // Get config
+    const autoExpand = Memory.empire?.config?.autoExpand ?? true;
+
+    // Get ranked candidates (top 10)
+    const candidates: ExpansionCandidateExport[] = evaluator.rankCandidates(10).map((score: RoomScore) => ({
+      roomName: score.roomName,
+      totalScore: score.totalScore,
+      viable: score.viable,
+      blockers: score.blockers,
+      economic: score.economic,
+      strategic: score.strategic,
+      defensive: score.defensive,
+      details: {
+        sources: score.details.sources,
+        mineral: score.details.mineral,
+        mineralValue: score.details.mineralValue,
+        swampPercent: score.details.swampPercent,
+        wallPercent: score.details.wallPercent,
+        distanceFromParent: score.details.distanceFromParent,
+        distanceFromEnemies: score.details.distanceFromEnemies,
+        remotePotential: score.details.remotePotential,
+      },
+    }));
+
+    // Get parent readiness for all colonies
+    const parentReadiness: ParentReadinessExport[] = readiness.rankParentColonies().map((p: ParentCandidate) => ({
+      roomName: p.roomName,
+      ready: p.readiness.ready,
+      score: p.readiness.score,
+      blockers: p.readiness.blockers,
+      warnings: p.readiness.warnings,
+      distanceToTarget: p.distanceToTarget,
+    }));
+
+    return {
+      canExpand,
+      bestParent,
+      empireBlockers,
+      autoExpand,
+      active: activeExpansions,
+      activeCount: activeExpansions.length,
+      queue: Memory.empireExpansion?.queue || [],
+      queueCount: Memory.empireExpansion?.queue?.length || 0,
+      candidates,
+      candidateCount: candidates.length,
+      parentReadiness,
+      history: Memory.empireExpansion?.history || {},
     };
   }
 

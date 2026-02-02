@@ -29,6 +29,13 @@ function getIdleToSpawnDistance(creep: Creep): number {
 function shouldGoRenew(creep: Creep): boolean {
   if (!creep.ticksToLive) return false;
 
+  // Don't renew undersized creeps - let them die and spawn bigger replacements
+  const bodyCost = creep.body.reduce((sum, part) => sum + BODYPART_COST[part.type], 0);
+  const capacity = creep.room.energyCapacityAvailable;
+  if (bodyCost < capacity * 0.5) {
+    return false;
+  }
+
   // Distance from idle position to spawn
   const idleToSpawn = getIdleToSpawnDistance(creep);
   const buffer = 30;

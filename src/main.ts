@@ -7,6 +7,9 @@ import { logger } from "./utils/Logger";
 import { CONFIG } from "./config";
 import { registerConsoleCommands } from "./utils/Console";
 import { placeStructures } from "./structures/placeStructures";
+import { ContainerPlanner } from "./structures/ContainerPlanner";
+import { ExtensionPlanner } from "./structures/ExtensionPlanner";
+import { ConstructionCoordinator } from "./core/ConstructionCoordinator";
 import { spawnCreeps } from "./spawning/spawnCreeps";
 import { TowerManager } from "./structures/TowerManager";
 import { LinkManager } from "./structures/LinkManager";
@@ -83,6 +86,11 @@ export function loop(): void {
   const expansionManager = new ExpansionManager();
   expansionManager.run();
 
+  // Check for automatic expansion every 100 ticks
+  if (Game.time % 100 === 0) {
+    expansionManager.checkAutoExpansion();
+  }
+
   // Process empire events
   eventBus.processEvents();
 
@@ -131,7 +139,24 @@ function runRoom(room: Room): void {
     );
   }
 
-  // 2. Place construction sites (simple, direct)
+  // 2. Specialized structure planners (priority-gated, every 10 ticks)
+  if (Game.time % 10 === 0) {
+    const coordinator = new ConstructionCoordinator(room);
+
+    // Containers first (economy foundation)
+    if (coordinator.canPlaceSites(STRUCTURE_CONTAINER)) {
+      const containerPlanner = new ContainerPlanner(room);
+      containerPlanner.run();
+    }
+
+    // Extensions second (spawn capacity)
+    if (coordinator.canPlaceSites(STRUCTURE_EXTENSION)) {
+      const extensionPlanner = new ExtensionPlanner(room);
+      extensionPlanner.run();
+    }
+  }
+
+  // 3. Place remaining structures (towers, storage, links, roads, etc.)
   placeStructures(room);
 
   // 3. Opportunistic creep renewal (before spawn decisions)

@@ -159,13 +159,41 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
   const hasIncome = state.energyIncome > 0;
 
   if (hasIncome) {
+    // Check for storage deadlock: harvesters exist but no haulers,
+    // and spawn can't fill because energy goes to containers/storage.
+    const noHaulers = (state.counts.HAULER || 0) === 0;
+    const spawnStarved = room.energyAvailable < 200;
+    const hasStoredEnergy = state.energyStored > 1000;
+
+    if (noHaulers && spawnStarved && hasStoredEnergy) {
+      // Deadlock: energy exists but can't reach spawn.
+      // Bootstrap a hauler with available energy.
+      const haulerCandidates = candidates.filter(
+        (c) => c.role === "HAULER" && c.cost <= room.energyAvailable
+      );
+      if (haulerCandidates.length > 0) {
+        return haulerCandidates[0];
+      }
+    }
+
     // Economy is working. Wait for energy to accumulate.
     return null;
   }
 
-  // Economy is dead (no harvesters producing). Bootstrap with whatever we can afford.
-  const affordable = candidates.filter((c) => c.cost <= room.energyAvailable);
-  return affordable.length > 0 ? affordable[0] : null;
+  // Economy is dead (no harvesters producing). Bootstrap with ECONOMY roles only.
+  // Never waste energy on scouts/reservers/remote roles during bootstrap.
+  const ECONOMY_ROLES: SpawnRole[] = ["HARVESTER", "HAULER", "BUILDER", "UPGRADER", "DEFENDER"];
+  const economyCandidates = candidates.filter(
+    (c) => c.cost <= room.energyAvailable && ECONOMY_ROLES.includes(c.role)
+  );
+
+  if (economyCandidates.length > 0) {
+    return economyCandidates[0]; // Already sorted by utility desc
+  }
+
+  // No economy roles affordable. Don't waste energy on non-economy roles.
+  // Wait for remote haulers to deliver more energy to spawn.
+  return null;
 }
 
 /**

@@ -1359,5 +1359,17 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       console.log("Showing raw expansion memory (all systems):");
       return empireExpansion.debug();
     },
+
+    candidates: (count?: number) => {
+      return empireExpansion.candidates(count);
+    },
+
+    readiness: () => {
+      return empireExpansion.readiness();
+    },
+
+    auto: (enable?: boolean) => {
+      return empireExpansion.auto(enable);
+    },
   };
 }

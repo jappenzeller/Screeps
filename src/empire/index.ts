@@ -14,3 +14,5 @@ export {
 } from "./EmpireMemory";
 export { SpawnPlacementCalculator, PlacementResult } from "./SpawnPlacementCalculator";
 export { ExpansionManager, expansion } from "./ExpansionManager";
+export { RoomEvaluator, RoomScore } from "./RoomEvaluator";
+export { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "./ExpansionReadiness";
