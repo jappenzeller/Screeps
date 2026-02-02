@@ -15,10 +15,9 @@ export class ContainerPlanner {
    * Run container planning - call periodically (every 10-50 ticks)
    */
   run(): void {
-    // Containers unlock at RCL 2
-    if (!this.room.controller || this.room.controller.level < 2) {
-      return;
-    }
+    // Source containers can be placed at any RCL - they're the economy foundation
+    // Controller container gated at RCL 2+ (handled in createPlan/placeConstructionSites)
+    if (!this.room.controller) return;
 
     // Initialize room memory
     if (!Memory.rooms) Memory.rooms = {};
@@ -30,6 +29,17 @@ export class ContainerPlanner {
       plan = this.createPlan();
       Memory.rooms[this.room.name].containerPlan = plan;
       logger.info("ContainerPlanner", `Created container plan for ${this.room.name}`);
+    }
+
+    // Regenerate controller container position if missing and should exist (RCL 2+)
+    // Handles rooms that had plans created before this position was added
+    if (!plan.controller && this.room.controller && this.room.controller.level >= 2) {
+      const controllerPos = this.findControllerContainerPosition();
+      if (controllerPos) {
+        plan.controller = { x: controllerPos.x, y: controllerPos.y };
+        Memory.rooms[this.room.name].containerPlan = plan;
+        logger.info("ContainerPlanner", `Added controller container to plan for ${this.room.name}`);
+      }
     }
 
     // Always try to place sites - check each position individually
@@ -53,9 +63,9 @@ export class ContainerPlanner {
       }
     }
 
-    // Plan container near controller (RCL 5+ with storage only)
-    // At low RCL, controller containers waste builder time - upgraders should get energy from haulers
-    if (this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
+    // Plan container near controller (RCL 2+)
+    // Upgraders need a withdrawal target, haulers need a delivery point near controller
+    if (this.room.controller && this.room.controller.level >= 2) {
       const controllerPos = this.findControllerContainerPosition();
       if (controllerPos) {
         plan.controller = { x: controllerPos.x, y: controllerPos.y };
@@ -169,9 +179,8 @@ export class ContainerPlanner {
       this.placeContainerSite(pos.x, pos.y);
     }
 
-    // Place controller container (RCL 5+ with storage only)
-    // This check handles old plans that may have controller position from before this fix
-    if (plan.controller && this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
+    // Place controller container (RCL 2+)
+    if (plan.controller && this.room.controller && this.room.controller.level >= 2) {
       this.placeContainerSite(plan.controller.x, plan.controller.y);
     }
   }

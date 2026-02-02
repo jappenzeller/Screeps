@@ -28,6 +28,7 @@ import { EconomyTracker } from "./core/EconomyTracker";
 import { PositionLogger } from "./logging/PositionLogger";
 import { BootstrapManager } from "./expansion/BootstrapManager";
 import { ExpansionManager, eventBus, initializeEmpireMemory } from "./empire";
+import { getMilestones, getMilestonePhase } from "./core/ColonyMilestones";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -116,6 +117,19 @@ function runRoom(room: Room): void {
   // 1. Run ColonyManager to generate/refresh tasks
   const manager = ColonyManager.getInstance(room.name);
   manager.run();
+
+  // 1b. Log milestone status for early colonies (every 50 ticks)
+  if (Game.time % 50 === 0 && room.controller && room.controller.level <= 3) {
+    const m = getMilestones(room);
+    const phase = getMilestonePhase(m);
+    console.log(
+      `[${room.name}] RCL ${room.controller.level} | ${phase} | ` +
+        `srcCont:${m.hasSourceContainers ? "Y" : "N"}/${m.allSourceContainers ? "Y" : "N"} ` +
+        `ctrlCont:${m.hasControllerContainer ? "Y" : "N"} ` +
+        `ext:${m.hasExtensions ? "Y" : "N"}/${m.allExtensions ? "Y" : "N"} ` +
+        `hauler:${m.hasHauler ? "Y" : "N"}`
+    );
+  }
 
   // 2. Place construction sites (simple, direct)
   placeStructures(room);

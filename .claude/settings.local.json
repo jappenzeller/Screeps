@@ -78,7 +78,30 @@
       "Bash(MSYS_NO_PATHCONV=1 AWS_PROFILE=screeps-monitor aws logs:*)",
       "Bash(npm run:*)",
       "Bash(npx tsc --noEmit)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(terraform apply:*)",
+      "Bash(aws lambda list-functions:*)",
+      "Bash(aws apigatewayv2 get-apis:*)",
+      "Bash(aws apigatewayv2 get-routes:*)",
+      "Bash(aws apigatewayv2 get-integrations:*)",
+      "Bash(aws apigatewayv2 create-route:*)",
+      "Bash(aws logs:*)",
+      "Bash(MSYS_NO_PATHCONV=1 aws logs tail:*)",
+      "Bash(aws apigatewayv2 get-stages:*)",
+      "Bash(aws apigatewayv2 create-deployment:*)",
+      "Bash(aws apigatewayv2 update-stage:*)",
+      "Bash(aws apigatewayv2 get-route:*)",
+      "Bash(aws apigatewayv2 get-integration:*)",
+      "Bash(aws apigatewayv2 update-route:*)",
+      "Bash(aws quicksight list-analyses:*)",
+      "Bash(aws quicksight list-dashboards:*)",
+      "Bash(aws quicksight create-analysis:*)",
+      "Bash(aws quicksight list-data-sets:*)",
+      "Bash(aws quicksight describe-analysis:*)",
+      "Bash(aws quicksight describe-dashboard:*)",
+      "Bash(aws quicksight update-dashboard-published-version:*)",
+      "Bash(aws apigatewayv2 update-integration:*)",
+      "Bash(aws apigatewayv2 create-integration:*)"
     ]
   }
 }

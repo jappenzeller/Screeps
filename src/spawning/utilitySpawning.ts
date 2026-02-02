@@ -11,6 +11,7 @@
 import { getHostileCount } from "../utils/remoteIntel";
 import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 import { LinkManager } from "../structures/LinkManager";
+import { getMilestones } from "../core/ColonyMilestones";
 import { buildBody as buildBodyFromConfig, ROLE_MIN_COST } from "./bodyBuilder";
 import { CONFIG } from "../config";
 import { combineUtilities } from "../utils/smoothing";
@@ -116,22 +117,12 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
   const candidates: SpawnCandidate[] = [];
   const state = getColonyState(room);
 
-  // Debug: show state at RCL 1-2
-  const debugSpawn = state.rcl <= 2 && Game.time % 20 === 0;
-  if (debugSpawn) {
-    console.log(`[${room.name}] SpawnDebug: rcl=${state.rcl} income=${state.energyIncome} avail=${state.energyAvailable} cap=${state.energyCapacity}`);
-    console.log(`[${room.name}] SpawnDebug: counts=${JSON.stringify(state.counts)} targets=${JSON.stringify(state.targets)}`);
-  }
-
   for (const role of ALL_ROLES) {
     const utility = calculateUtility(role, state);
     if (utility <= 0) continue;
 
     const body = buildBody(role, state);
-    if (body.length === 0) {
-      if (debugSpawn) console.log(`[${room.name}] SpawnDebug: ${role} utility=${utility.toFixed(1)} but empty body`);
-      continue;
-    }
+    if (body.length === 0) continue;
 
     const cost = body.reduce((sum, part) => sum + BODYPART_COST[part], 0);
 
@@ -148,16 +139,11 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
       continue;
     }
 
-    if (debugSpawn) console.log(`[${room.name}] SpawnDebug: ${role} utility=${utility.toFixed(1)} cost=${cost}`);
-
     // DON'T filter by affordability here - collect all valid candidates
     candidates.push({ role, utility, body, memory, cost });
   }
 
-  if (candidates.length === 0) {
-    if (debugSpawn) console.log(`[${room.name}] SpawnDebug: NO CANDIDATES`);
-    return null;
-  }
+  if (candidates.length === 0) return null;
 
   // Sort by utility descending
   candidates.sort((a, b) => b.utility - a.utility);
@@ -171,10 +157,6 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
 
   // Can't afford best. Check if economy is functional.
   const hasIncome = state.energyIncome > 0;
-
-  if (debugSpawn) {
-    console.log(`[${room.name}] SpawnDebug: best=${best.role} cost=${best.cost} avail=${room.energyAvailable} hasIncome=${hasIncome}`);
-  }
 
   if (hasIncome) {
     // Economy is working. Wait for energy to accumulate.
@@ -288,20 +270,57 @@ function getColonyState(room: Room): ColonyState {
 
 /**
  * Calculate desired creep counts for each role
+ * Uses milestone-based logic for early colonies (RCL 1-3 without storage)
  */
 function getCreepTargets(room: Room, totalSites: number): Record<string, number> {
   const rcl = room.controller?.level || 0;
   const sources = room.find(FIND_SOURCES).length;
   const remoteRooms = getRemoteMiningTargets(room.name);
+  const m = getMilestones(room);
 
-  // Scale builders: 1 per 10 sites, floor of 2 if any sites exist (RCL 1 needs 2 builders)
-  const maxBuildersByEconomy = Math.max(2, Math.min(rcl, 4));
-  const builderTarget = totalSites > 0 ? Math.min(Math.ceil(totalSites / 10), maxBuildersByEconomy) : 0;
+  // Early colony (RCL 1-3 without storage): milestone-driven targets
+  const isEarlyColony = rcl <= 3 && !m.hasStorage;
+
+  // Builder target calculation
+  let builderTarget = 0;
+  if (totalSites > 0) {
+    if (isEarlyColony) {
+      // Early game: always target 2 builders when sites exist
+      builderTarget = 2;
+    } else if (rcl <= 3) {
+      builderTarget = Math.min(2, Math.max(2, Math.min(rcl, 4)));
+    } else {
+      // RCL 4+: scale by site count
+      const maxBuildersByEconomy = Math.min(rcl, 4);
+      builderTarget = Math.min(Math.ceil(totalSites / 10), maxBuildersByEconomy);
+    }
+  }
+
+  // Hauler target: only spawn haulers after source containers exist
+  let haulerTarget = sources;
+  if (isEarlyColony && !m.hasSourceContainers) {
+    haulerTarget = 0; // No containers = haulers have nothing to pick up
+  }
+
+  // Upgrader target: milestone-gated
+  let upgraderTarget = 0;
+  if (isEarlyColony) {
+    if (!m.hasControllerContainer) {
+      upgraderTarget = 0; // No controller container = upgraders ZZZ
+    } else if (m.allExtensions) {
+      upgraderTarget = Math.min(rcl, 3); // Infrastructure done, push RCL
+    } else {
+      upgraderTarget = 1; // Building extensions, limit upgraders
+    }
+  } else {
+    // RCL 4+ or has storage: normal scaling
+    upgraderTarget = rcl < 8 ? Math.min(rcl, 3) : 1;
+  }
 
   const targets: Record<string, number> = {
     HARVESTER: sources,
-    HAULER: sources, // 1 hauler per source - scales correctly for 1-source rooms
-    UPGRADER: rcl < 8 ? Math.min(rcl, 3) : 1,
+    HAULER: haulerTarget,
+    UPGRADER: upgraderTarget,
     BUILDER: builderTarget,
     DEFENDER: 0, // Dynamic based on threats
     REMOTE_MINER: 0,
@@ -743,10 +762,11 @@ function remoteDefenderUtility(state: ColonyState): number {
  * Reserver utility - protects remote income by maintaining reservation
  *
  * Reservers directly protect remote income by preventing source capacity decay.
+ * A lapsed reservation halves source output (3000→1500 per cycle).
  * Their utility shouldn't be suppressed by home incomeRatio (which is based on
  * HOME income, not remote).
  *
- * Fixed utility 30 when needed — above scout(15), below remote hauler first(55)
+ * Fixed utility 45 when needed — above remote miners (40), below remote haulers first (55)
  */
 function reserverUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl < 4) return 0;
@@ -757,10 +777,11 @@ function reserverUtility(_deficit: number, state: ColonyState): number {
   const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
 
   for (const roomName of state.remoteRooms) {
-    // Need reserver if: no reservation, or reservation < 1000 ticks
+    // Need reserver if: no reservation, or reservation < 2000 ticks
+    // 2000 tick buffer allows for spawn time + travel time
     const remoteRoom = Game.rooms[roomName];
     const reservation = remoteRoom?.controller?.reservation;
-    if (!reservation || reservation.ticksToEnd < 1000 || reservation.username !== myUsername) {
+    if (!reservation || reservation.ticksToEnd < 2000 || reservation.username !== myUsername) {
       // Only if we have miners there (worth protecting)
       const hasMiners = Object.values(Game.creeps).some(
         (c) =>
@@ -770,13 +791,14 @@ function reserverUtility(_deficit: number, state: ColonyState): number {
           c.ticksToLive > 100
       );
       if (hasMiners) {
-        // Check if we already have a reserver assigned
+        // Check if we already have a reserver assigned with enough TTL
+        // 200 ticks gives buffer for spawn + travel of replacement
         const hasReserver = Object.values(Game.creeps).some(
           (c) =>
             c.memory.role === "RESERVER" &&
             c.memory.targetRoom === roomName &&
             c.ticksToLive &&
-            c.ticksToLive > 150
+            c.ticksToLive > 200
         );
         if (!hasReserver) {
           needsReservation = true;
@@ -788,9 +810,9 @@ function reserverUtility(_deficit: number, state: ColonyState): number {
 
   if (!needsReservation) return 0;
 
-  // Fixed utility 30 — above scout(15), below remote hauler first(55)
-  // No incomeRatio suppression — reservation protects remote income directly
-  return 30;
+  // Utility 45 — above remote miners (40), below remote haulers first (55)
+  // Reservation protects remote income directly
+  return 45;
 }
 
 /**
@@ -1416,8 +1438,8 @@ function findRemoteRoomNeedingReserver(state: ColonyState): string | null {
       return roomName;
     }
 
-    // Has reserver - check if we need a replacement (TTL < 150 for travel time)
-    const reserverDying = existingReserver.ticksToLive && existingReserver.ticksToLive < 150;
+    // Has reserver - check if we need a replacement (TTL < 200 for spawn + travel time)
+    const reserverDying = existingReserver.ticksToLive && existingReserver.ticksToLive < 200;
     if (!reserverDying) continue;
 
     // Reserver dying soon - check if reservation needs maintenance
