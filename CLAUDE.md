@@ -446,6 +446,14 @@ Always test in simulation first for major changes.
 
 **IMPORTANT**: After every deployment to Screeps (`npm run push`), immediately commit all changes and push to GitHub. GitHub must always be in sync with what's running on the server. Use a descriptive commit message summarizing the changes.
 
+**IMPORTANT**: Before each deploy, review `docs/` and update any documentation affected by your changes. Keep docs in sync with code:
+
+- Modified a system? Update the relevant doc (SPAWNING.md, ECONOMY.md, etc.)
+- Fixed a bug? Update KNOWN_ISSUES.md
+- Added a console command? Update CONSOLE_COMMANDS.md
+- Changed architecture? Update ARCHITECTURE.md
+- Added a creep role? Update README.md role list
+
 ---
 
 ## Common Screeps API Reference
