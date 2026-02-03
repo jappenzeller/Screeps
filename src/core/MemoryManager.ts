@@ -50,19 +50,9 @@ export class MemoryManager {
 
     logger.debug("MemoryManager", "Running full memory cleanup");
 
-    if (Memory.rooms) {
-      for (const roomName in Memory.rooms) {
-        const room = Game.rooms[roomName];
-        if (!room || !room.controller?.my) {
-          // Keep intel on rooms for scouting, but clear old data
-          const roomMem = Memory.rooms[roomName];
-          if (roomMem.lastScan && Game.time - roomMem.lastScan > 5000) {
-            logger.debug("MemoryManager", `Clearing stale room data: ${roomName}`);
-            delete Memory.rooms[roomName];
-          }
-        }
-      }
-    }
+    // NOTE: Memory.rooms cleanup for non-owned rooms has been removed.
+    // Intel data now lives in Memory.intel (managed by gatherRoomIntel).
+    // Memory.rooms is only used for owned room data (assignments, sourceContainers, etc.)
   }
 
   static recordStats(): void {

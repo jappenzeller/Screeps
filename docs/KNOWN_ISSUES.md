@@ -70,6 +70,40 @@
 
 ---
 
+### Duplicate Intel Storage (Memory.rooms vs Memory.intel)
+
+**Status:** Fixed (Phase 1 Migration)
+
+**Issue:** Room intel was stored in both `Memory.rooms[roomName]` and `Memory.intel[roomName]`, causing inconsistencies and confusion.
+
+**Root Cause:** Legacy code used `Memory.rooms` for all room data (owned + remote intel), while newer code used `Memory.intel` for scouted room data.
+
+**Fix Applied:**
+
+- All intel reads now use `Memory.intel` exclusively
+- `updateRoomIntel()` in remoteIntel.ts is now a no-op (intel gathered centrally)
+- `gatherRoomIntel()` in Scout.ts is the single source of truth
+- Added `hostileDetails` field to RoomIntel for defense decisions
+- `Memory.rooms` now only contains owned-room data (tasks, assignments, containerPlan)
+
+**Files:** Multiple - types.d.ts, Scout.ts, remoteIntel.ts, ColonyManager.ts, utilitySpawning.ts, AWSExporter.ts, Console.ts, RemoteDefender.ts, main.ts, EconomyTracker.ts, RemoteSquadManager.ts, ColonyState.ts
+
+---
+
+### Builder Stuck on Border Tile
+
+**Status:** Fixed
+
+**Issue:** Builder stuck between E46N37 and E47N37 on the border trying to reach road builds in E47N37.
+
+**Root Cause:** When a creep crosses a room border and is on the edge tile (x=0 or x=49) in the target room, `smartMoveTo()` didn't have special handling since the target room matched the creep's current room. This caused pathfinding issues at room edges.
+
+**Fix Applied:** Added border handling in `smartMoveTo()`: when a creep is stuck on a border tile for 3+ ticks (even if target is in same room), force step off the border before continuing pathfinding.
+
+**File:** `src/utils/movement.ts`
+
+---
+
 ## Limitations
 
 ### No Link/Terminal/Lab/Factory Support

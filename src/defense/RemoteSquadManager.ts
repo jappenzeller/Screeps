@@ -47,7 +47,7 @@ export class RemoteSquadManager {
    * Analyze threat in a remote room
    */
   analyzeThreat(roomName: string): ThreatAnalysis {
-    const intel = Memory.rooms?.[roomName];
+    const intel = Memory.intel && Memory.intel[roomName];
     const room = Game.rooms[roomName];
 
     let attackers = 0;
@@ -72,14 +72,14 @@ export class RemoteSquadManager {
           totalHPS += healParts * HEAL_POWER;
         }
       }
-    } else if ((intel as any)?.hostileDetails) {
-      // Fall back to memory intel
-      for (const hostile of (intel as any).hostileDetails as any[]) {
+    } else if (intel && intel.hostileDetails && intel.hostileDetails.length > 0) {
+      // Fall back to Memory.intel
+      for (const hostile of intel.hostileDetails) {
         if (hostile.hasCombat) attackers++;
       }
       // Rough estimate from memory
       totalDPS = attackers * 60; // Assume 2 ATTACK parts average
-      const hostileCount = intel?.hostiles || 0;
+      const hostileCount = intel.hostiles || 0;
       totalHPS = hostileCount > attackers ? (hostileCount - attackers) * 48 : 0; // Assume 4 HEAL parts
     }
 

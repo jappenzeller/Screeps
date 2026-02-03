@@ -210,10 +210,10 @@ function runRoom(room: Room): void {
         const remoteName = exits[dir as ExitKey];
         if (!remoteName) continue;
 
-        // Skip rooms we're not mining
-        const intel = Memory.rooms?.[remoteName];
-        if (!intel?.sources || intel.sources.length === 0) continue;
-        if (intel.hasKeepers) continue;
+        // Skip rooms we're not mining (read from Memory.intel)
+        const intel = Memory.intel && Memory.intel[remoteName];
+        if (!intel || !intel.sources || intel.sources.length === 0) continue;
+        if (intel.roomType === "sourceKeeper") continue;
 
         // Check for threats
         const threat = squadManager.analyzeThreat(remoteName);

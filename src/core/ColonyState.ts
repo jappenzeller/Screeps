@@ -267,11 +267,8 @@ export class ColonyStateManager {
       }
     }
 
-    // Update room memory for external monitoring
-    if (!Memory.rooms) Memory.rooms = {};
-    if (!Memory.rooms[room.name]) Memory.rooms[room.name] = {};
-    Memory.rooms[room.name].hostiles = hostiles.length;
-    Memory.rooms[room.name].lastScan = Game.time;
+    // NOTE: Hostile tracking is now done centrally in Memory.intel via gatherRoomIntel()
+    // No need to duplicate here
 
     return { hostiles, level, spawnUnderAttack, healers, ranged, melee };
   }

@@ -726,13 +726,13 @@ export class AWSExporter {
       const roomName = exits[dir as ExitKey];
       if (!roomName) continue;
 
-      const intel = Memory.rooms?.[roomName];
-      const lastScan = intel?.lastScan || 0;
+      const intel = Memory.intel && Memory.intel[roomName];
+      const lastScan = (intel && intel.lastScanned) ? intel.lastScanned : 0;
       const lastScanAge = Game.time - lastScan;
 
       // Check ownership
-      const owner = intel?.controller?.owner || null;
-      const reservation = intel?.controller?.reservation || null;
+      const owner = (intel && intel.owner) ? intel.owner : null;
+      const reservation = (intel && intel.reservation) ? intel.reservation : null;
 
       // Determine if valid remote target using same logic as ColonyManager
       const isValidRemoteTarget = validRemoteTargets.has(roomName);
@@ -740,12 +740,12 @@ export class AWSExporter {
       adjacent.push({
         roomName,
         direction: directionNames[dir] || dir,
-        sources: intel?.sources?.length || 0,
+        sources: (intel && intel.sources) ? intel.sources.length : 0,
         owner,
         reservation,
-        hostiles: intel?.hostiles || 0,
-        hasKeepers: intel?.hasKeepers || false,
-        hasInvaderCore: intel?.hasInvaderCore || false,
+        hostiles: (intel && intel.hostiles) ? intel.hostiles : 0,
+        hasKeepers: intel ? intel.roomType === "sourceKeeper" : false,
+        hasInvaderCore: (intel && intel.invaderCore) ? intel.invaderCore : false,
         lastScan,
         lastScanAge,
         isValidRemoteTarget,
@@ -790,7 +790,7 @@ export class AWSExporter {
     let totalReservers = 0;
 
     for (const roomName of allRemoteRooms) {
-      const intel = Memory.rooms?.[roomName];
+      const intel = Memory.intel && Memory.intel[roomName];
 
       // Get creeps assigned to this remote room
       const miners = allRemoteCreeps
@@ -799,7 +799,7 @@ export class AWSExporter {
           name: c.name,
           sourceId: c.memory.sourceId,
           ttl: c.ticksToLive || 0,
-          room: c.room?.name || "unknown",
+          room: (c.room && c.room.name) ? c.room.name : "unknown",
         }));
 
       const haulers = allRemoteCreeps
@@ -807,7 +807,7 @@ export class AWSExporter {
         .map((c) => ({
           name: c.name,
           ttl: c.ticksToLive || 0,
-          room: c.room?.name || "unknown",
+          room: (c.room && c.room.name) ? c.room.name : "unknown",
         }));
 
       const reserverCreep = allRemoteCreeps.find(
@@ -817,21 +817,18 @@ export class AWSExporter {
         ? {
             name: reserverCreep.name,
             ttl: reserverCreep.ticksToLive || 0,
-            room: reserverCreep.room?.name || "unknown",
+            room: (reserverCreep.room && reserverCreep.room.name) ? reserverCreep.room.name : "unknown",
           }
         : null;
 
       // Determine status
       let status: RemoteRoomExport["status"] = "ACTIVE";
 
-      if (!intel || !intel.lastScan) {
+      if (!intel || !intel.lastScanned) {
         status = "NO_INTEL";
-      } else if (intel.controller?.owner && intel.controller.owner !== myUsername) {
+      } else if (intel.owner && intel.owner !== myUsername) {
         status = "OWNED";
-      } else if (
-        intel.controller?.reservation &&
-        intel.controller.reservation.username !== myUsername
-      ) {
+      } else if (intel.reservation && intel.reservation.username !== myUsername) {
         status = "RESERVED_OTHER";
       } else if ((intel.hostiles || 0) > 0) {
         status = "HOSTILE";
@@ -846,11 +843,11 @@ export class AWSExporter {
       targetRooms.push({
         roomName,
         status,
-        sources: intel?.sources?.length || 0,
+        sources: (intel && intel.sources) ? intel.sources.length : 0,
         miners,
         haulers,
         reserver,
-        reservation: intel?.controller?.reservation || null,
+        reservation: (intel && intel.reservation) ? intel.reservation : null,
       });
     }
 
@@ -965,11 +962,11 @@ export class AWSExporter {
     // Build room visibility data
     for (const roomName of targetRooms) {
       const room = Game.rooms[roomName];
-      const intel = Memory.rooms?.[roomName];
-      const lastScan = intel?.lastScan || 0;
+      const intel = Memory.intel && Memory.intel[roomName];
+      const lastScan = (intel && intel.lastScanned) ? intel.lastScanned : 0;
 
       // Count creeps with vision in this room
-      const creepsWithVision = remoteCreeps.filter((c) => c.room?.name === roomName).length;
+      const creepsWithVision = remoteCreeps.filter((c) => c.room && c.room.name === roomName).length;
 
       // Get real-time hostile data if we have vision
       let hostileDetails: RoomVisibility["hostiles"]["details"] = [];
@@ -996,7 +993,7 @@ export class AWSExporter {
           count: realTimeHostileCount,
           details: hostileDetails,
         },
-        memoryHostiles: intel?.hostiles || 0,
+        memoryHostiles: (intel && intel.hostiles) ? intel.hostiles : 0,
         memoryLastScan: lastScan,
         memoryAge: Game.time - lastScan,
       });
@@ -1029,18 +1026,16 @@ export class AWSExporter {
     const maxDefenders = 2; // From spawnCreeps.ts
 
     for (const roomName of targetRooms) {
-      const intel = Memory.rooms?.[roomName];
+      const intel = Memory.intel && Memory.intel[roomName];
       const reasons: string[] = [];
       const blockers: string[] = [];
 
-      const hostileCount = intel?.hostiles || 0;
-      const hasInvaderCore = intel?.hasInvaderCore || false;
-      const hasSources = (intel?.sources?.length || 0) > 0;
-      const hasKeepers = intel?.hasKeepers || false;
-      const ownerOther = intel?.controller?.owner && intel.controller.owner !== myUsername;
-      const reservedOther =
-        intel?.controller?.reservation &&
-        intel.controller.reservation.username !== myUsername;
+      const hostileCount = (intel && intel.hostiles) ? intel.hostiles : 0;
+      const hasInvaderCore = (intel && intel.invaderCore) ? true : false;
+      const hasSources = (intel && intel.sources && intel.sources.length > 0) ? true : false;
+      const hasKeepers = intel ? intel.roomType === "sourceKeeper" : false;
+      const ownerOther = (intel && intel.owner && intel.owner !== myUsername) ? true : false;
+      const reservedOther = (intel && intel.reservation && intel.reservation.username !== myUsername) ? true : false;
 
       // Check what would trigger defender spawning
       if (hostileCount > 0) reasons.push(`${hostileCount} hostiles in memory`);

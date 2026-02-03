@@ -162,6 +162,15 @@ interface RoomIntel {
     hasTerminal: boolean;
   };
   invaderCore: boolean;
+  hostiles: number; // Count of hostile creeps last seen
+  lastHostileSeen: number; // Game.time when hostiles were last observed
+  hostileDetails?: {
+    id: string;
+    owner: string;
+    pos: { x: number; y: number };
+    bodyParts: number;
+    hasCombat: boolean;
+  }[];
 
   // Distance from home
   distanceFromHome: number;
@@ -292,11 +301,20 @@ interface ExpansionData {
   bootstrapping?: string; // Room currently being bootstrapped
 }
 
-// Extend Memory for advisor data, traffic, and intel
+// Colony configuration (explicit registry for per-colony settings)
+interface ColonyMemory {
+  /** Explicit list of remote mining target rooms */
+  remoteRooms: string[];
+  /** Game.time when remoteRooms was last auto-populated */
+  remoteRoomsLastSync: number;
+}
+
+// Extend Memory for advisor data, traffic, intel, and colonies
 interface Memory {
   advisor?: AdvisorData;
   traffic?: { [roomName: string]: TrafficMemory };
   intel?: { [roomName: string]: RoomIntel };
+  colonies?: { [roomName: string]: ColonyMemory };
   homeRoom?: string;
   debug?: DebugFlags;
   settings?: SettingsFlags;

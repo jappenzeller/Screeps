@@ -6,44 +6,13 @@ import { moveToRoom } from "./movement";
 
 /**
  * Update room intel for the room the creep is in.
- * Should be called at the start of every remote creep's run function.
+ * NOTE: This is now a no-op. Intel gathering is centralized in gatherRoomIntel()
+ * which runs at the start of each tick for all visible rooms in main.ts.
+ * This function is kept for backward compatibility with existing creep code.
  */
-export function updateRoomIntel(creep: Creep): void {
-  const room = creep.room;
-  if (!room) return;
-
-  // Initialize memory if needed
-  if (!Memory.rooms) Memory.rooms = {};
-  if (!Memory.rooms[room.name]) {
-    Memory.rooms[room.name] = {} as RoomMemory;
-  }
-
-  const intel = Memory.rooms[room.name];
-
-  // Update hostile count
-  const hostiles = room.find(FIND_HOSTILE_CREEPS);
-  intel.hostiles = hostiles.length;
-  intel.lastScan = Game.time;
-
-  // Store hostile details for defense decisions
-  if (hostiles.length > 0) {
-    (intel as any).hostileDetails = hostiles.map((h) => ({
-      id: h.id,
-      owner: h.owner.username,
-      pos: { x: h.pos.x, y: h.pos.y },
-      bodyParts: h.body.length,
-      hasCombat:
-        h.getActiveBodyparts(ATTACK) > 0 || h.getActiveBodyparts(RANGED_ATTACK) > 0,
-    }));
-  } else {
-    delete (intel as any).hostileDetails;
-  }
-
-  // Also check for invader cores
-  const invaderCores = room.find(FIND_HOSTILE_STRUCTURES, {
-    filter: (s) => s.structureType === STRUCTURE_INVADER_CORE,
-  });
-  intel.hasInvaderCore = invaderCores.length > 0;
+export function updateRoomIntel(_creep: Creep): void {
+  // Intel is now gathered centrally in main.ts via gatherRoomIntel()
+  // No action needed here
 }
 
 /**
@@ -136,8 +105,12 @@ export function getHostileCount(roomName: string): number {
     return room.find(FIND_HOSTILE_CREEPS).length;
   }
 
-  // Fall back to memory intel
-  return Memory.rooms?.[roomName]?.hostiles || 0;
+  // Fall back to Memory.intel
+  const intel = Memory.intel && Memory.intel[roomName];
+  if (intel) {
+    return intel.hostiles || 0;
+  }
+  return 0;
 }
 
 /**
@@ -154,13 +127,14 @@ export function hasDangerousHostiles(roomName: string): boolean {
     return dangerous.length > 0;
   }
 
-  // Fall back to memory intel - check hostileDetails if available
-  const intel = Memory.rooms?.[roomName];
+  // Fall back to Memory.intel
+  const intel = Memory.intel && Memory.intel[roomName];
   if (!intel) return false;
 
-  const details = (intel as any).hostileDetails;
-  if (details && Array.isArray(details)) {
-    return details.some((h: any) => h.hasCombat);
+  // Check hostileDetails if available
+  const details = intel.hostileDetails;
+  if (details && details.length > 0) {
+    return details.some((h) => h.hasCombat);
   }
 
   // If no details, assume any hostiles are dangerous

@@ -95,21 +95,49 @@ export function setupMockGameCreeps(state: TestColonyState): void {
   global.Memory = {
     rooms: {
       W1N1: {
-        lastScan: 999000,
+        // Owned room memory only - no remote intel
       },
+    },
+    intel: {
       W1N2: {
-        lastScan: 999000,
-        sources: ["remoteSource1", "remoteSource2"],
-        controller: {},
+        roomName: "W1N2",
+        lastScanned: 999000,
+        roomType: "normal",
+        owner: null,
+        ownerRcl: null,
+        reservation: null,
+        sources: [
+          { id: "remoteSource1", pos: { x: 10, y: 10 } },
+          { id: "remoteSource2", pos: { x: 30, y: 30 } },
+        ],
+        mineral: null,
+        terrain: { swampPercent: 0, wallPercent: 20, plainPercent: 80 },
+        exits: { top: null, right: null, bottom: null, left: null },
+        hostileStructures: { towers: 0, spawns: 0, hasTerminal: false },
         hostiles: state.remoteThreatsByRoom["W1N2"] || 0,
-        hasKeepers: false,
+        lastHostileSeen: 0,
+        invaderCore: false,
+        distanceFromHome: 1,
       },
       W2N1: {
-        lastScan: 999000,
-        sources: ["remoteSource3", "remoteSource4"],
-        controller: {},
+        roomName: "W2N1",
+        lastScanned: 999000,
+        roomType: "normal",
+        owner: null,
+        ownerRcl: null,
+        reservation: null,
+        sources: [
+          { id: "remoteSource3", pos: { x: 10, y: 10 } },
+          { id: "remoteSource4", pos: { x: 30, y: 30 } },
+        ],
+        mineral: null,
+        terrain: { swampPercent: 0, wallPercent: 20, plainPercent: 80 },
+        exits: { top: null, right: null, bottom: null, left: null },
+        hostileStructures: { towers: 0, spawns: 0, hasTerminal: false },
         hostiles: state.remoteThreatsByRoom["W2N1"] || 0,
-        hasKeepers: false,
+        lastHostileSeen: 0,
+        invaderCore: false,
+        distanceFromHome: 1,
       },
     },
   };

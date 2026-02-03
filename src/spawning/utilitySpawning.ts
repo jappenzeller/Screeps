@@ -267,8 +267,8 @@ function getColonyState(room: Room): ColonyState {
       }
     } else {
       // Can't see room, but assume some sites if we're mining there
-      const intel = Memory.rooms?.[remoteName];
-      if (intel?.lastScan && Game.time - intel.lastScan < 1000) {
+      const intel = Memory.intel && Memory.intel[remoteName];
+      if (intel && intel.lastScanned && Game.time - intel.lastScanned < 1000) {
         constructionSites += 2; // Assume container + roads needed
       }
     }
@@ -386,8 +386,8 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     // Count remote sources
     let remoteSources = 0;
     for (const roomName of remoteRooms) {
-      const intel = Memory.rooms?.[roomName];
-      remoteSources += intel?.sources?.length || 0;
+      const intel = Memory.intel && Memory.intel[roomName];
+      remoteSources += (intel && intel.sources) ? intel.sources.length : 0;
     }
 
     targets.REMOTE_MINER = remoteSources;
@@ -683,10 +683,10 @@ function remoteHaulerUtility(_deficit: number, state: ColonyState): number {
   let roomsWithMinersNoHaulers = 0;
 
   for (const roomName of state.remoteRooms) {
-    const roomMem = Memory.rooms?.[roomName];
+    const intel = Memory.intel && Memory.intel[roomName];
 
     // Skip rooms with hostiles - haulers would just flee
-    if (roomMem?.hostiles && roomMem.hostiles > 0) continue;
+    if (intel && intel.hostiles && intel.hostiles > 0) continue;
 
     // Count active miners in this room (including spawning)
     const roomMiners = Object.values(Game.creeps).filter(
@@ -748,7 +748,7 @@ function remoteHaulerUtility(_deficit: number, state: ColonyState): number {
  * Remote defender utility - hybrid ranged/heal defender for remote rooms
  *
  * Spawns when threats detected in remote rooms. Uses simple threat detection
- * based on Memory.rooms[roomName].hostiles. Utility 65 ensures defenders
+ * based on Memory.intel[roomName].hostiles. Utility 65 ensures defenders
  * spawn before reservers (25) but after critical economy roles.
  */
 function remoteDefenderUtility(state: ColonyState): number {
@@ -759,19 +759,19 @@ function remoteDefenderUtility(state: ColonyState): number {
   // Check for threats in remote rooms
   let threatenedRooms = 0;
   for (const remoteName of state.remoteRooms) {
-    const roomMem = Memory.rooms?.[remoteName];
-    if (!roomMem) continue;
+    const intel = Memory.intel && Memory.intel[remoteName];
+    if (!intel) continue;
 
     // Check scan age - don't spawn defenders for stale intel
-    const scanAge = Game.time - (roomMem.lastScan || 0);
+    const scanAge = Game.time - (intel.lastScanned || 0);
     if (scanAge > SCAN_AGE_THRESHOLD) continue;
 
     // Check for hostiles
-    const hostileCount = roomMem.hostiles || 0;
+    const hostileCount = intel.hostiles || 0;
     if (hostileCount === 0) continue;
 
     // Check for dangerous hostiles (with attack parts)
-    const hostileDetails = (roomMem as any).hostileDetails;
+    const hostileDetails = (intel as any).hostileDetails;
     let hasDangerous = false;
     if (hostileDetails && Array.isArray(hostileDetails)) {
       hasDangerous = hostileDetails.some((h: any) => h.hasCombat);
@@ -1232,27 +1232,27 @@ function getRemoteMiningTargets(homeRoom: string): string[] {
   if (!exits) return [];
 
   const targets: string[] = [];
-  const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+  const firstSpawn = Object.values(Game.spawns)[0];
+  const myUsername = firstSpawn && firstSpawn.owner ? firstSpawn.owner.username : null;
 
   for (const dir in exits) {
     const roomName = exits[dir as ExitKey];
     if (!roomName) continue;
 
-    const intel = Memory.rooms?.[roomName];
+    const intel = Memory.intel && Memory.intel[roomName];
     if (!intel) continue;
 
     // Skip rooms without sources
     if (!intel.sources || intel.sources.length === 0) continue;
 
     // Skip source keeper rooms
-    if (intel.hasKeepers) continue;
+    if (intel.roomType === "sourceKeeper") continue;
 
     // Skip owned rooms
-    if (intel.controller?.owner && intel.controller.owner !== myUsername) continue;
+    if (intel.owner && intel.owner !== myUsername) continue;
 
     // Skip rooms reserved by others
-    if (intel.controller?.reservation && intel.controller.reservation.username !== myUsername)
-      continue;
+    if (intel.reservation && intel.reservation.username !== myUsername) continue;
 
     targets.push(roomName);
   }
@@ -1271,8 +1271,8 @@ function getRemoteThreats(homeRoom: string): Record<string, number> {
     if (!roomName) continue;
 
     // Skip Source Keeper rooms - those hostiles are permanent
-    const intel = Memory.rooms?.[roomName];
-    if (intel?.hasKeepers) continue;
+    const intel = Memory.intel && Memory.intel[roomName];
+    if (intel && intel.roomType === "sourceKeeper") continue;
 
     // Use live vision if available, fall back to memory
     const hostileCount = getHostileCount(roomName);
@@ -1358,11 +1358,12 @@ function findRemoteRoomNeedingMiner(
   state: ColonyState
 ): { roomName: string; sourceId: string } | null {
   for (const roomName of state.remoteRooms) {
-    const intel = Memory.rooms?.[roomName];
-    if (!intel?.sources) continue;
+    const intel = Memory.intel && Memory.intel[roomName];
+    if (!intel || !intel.sources) continue;
 
-    // intel.sources is an array of source IDs (strings)
-    for (const sourceId of intel.sources) {
+    // Memory.intel sources are {id, pos} objects
+    for (const source of intel.sources) {
+      const sourceId = source.id;
       // Check if this source has a miner
       const hasMiner = Object.values(Game.creeps).some(
         (c) =>
@@ -1372,7 +1373,7 @@ function findRemoteRoomNeedingMiner(
       );
 
       if (!hasMiner) {
-        return { roomName, sourceId: sourceId as string };
+        return { roomName, sourceId: sourceId };
       }
     }
   }
@@ -1381,11 +1382,12 @@ function findRemoteRoomNeedingMiner(
 }
 
 function findUnminedSource(state: ColonyState, roomName: string): string | null {
-  const intel = Memory.rooms?.[roomName];
-  if (!intel?.sources) return null;
+  const intel = Memory.intel && Memory.intel[roomName];
+  if (!intel || !intel.sources) return null;
 
-  // intel.sources is an array of source IDs (strings)
-  for (const sourceId of intel.sources) {
+  // Memory.intel sources are {id, pos} objects
+  for (const source of intel.sources) {
+    const sourceId = source.id;
     const hasMiner = Object.values(Game.creeps).some(
       (c) =>
         c.memory.role === "REMOTE_MINER" &&
@@ -1394,7 +1396,7 @@ function findUnminedSource(state: ColonyState, roomName: string): string | null 
     );
 
     if (!hasMiner) {
-      return sourceId as string;
+      return sourceId;
     }
   }
 
@@ -1444,13 +1446,13 @@ function findThreatenedRemoteRoom(state: ColonyState): string | null {
   let maxNeeded = 0;
 
   for (const need of needs) {
-    const roomMem = Memory.rooms?.[need.roomName];
+    const intel = Memory.intel && Memory.intel[need.roomName];
 
     // Validate room still has active threats (not stale intel)
-    if (!roomMem) continue;
-    const scanAge = Game.time - (roomMem.lastScan || 0);
+    if (!intel) continue;
+    const scanAge = Game.time - (intel.lastScanned || 0);
     if (scanAge > SCAN_AGE_THRESHOLD) continue;
-    if ((roomMem.hostiles || 0) === 0) {
+    if ((intel.hostiles || 0) === 0) {
       // No threats - disband the stale squad
       squadManager.disbandSquad(need.roomName);
       continue;
@@ -1466,10 +1468,11 @@ function findThreatenedRemoteRoom(state: ColonyState): string | null {
 }
 
 function findRemoteRoomNeedingReserver(state: ColonyState): string | null {
-  const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+  const firstSpawn = Object.values(Game.spawns)[0];
+  const myUsername = firstSpawn && firstSpawn.owner ? firstSpawn.owner.username : null;
 
   for (const roomName of state.remoteRooms) {
-    const intel = Memory.rooms?.[roomName];
+    const intel = Memory.intel && Memory.intel[roomName];
     if (!intel) continue;
 
     // Check if we already have a reserver for this room
@@ -1490,8 +1493,8 @@ function findRemoteRoomNeedingReserver(state: ColonyState): string | null {
     if (!reserverDying) continue;
 
     // Reserver dying soon - check if reservation needs maintenance
-    const reservation = intel.controller?.reservation;
-    const elapsed = Game.time - (intel.lastScan || 0);
+    const reservation = intel.reservation;
+    const elapsed = Game.time - (intel.lastScanned || 0);
     const actualTicksToEnd = reservation ? reservation.ticksToEnd - elapsed : 0;
     const needsReservation =
       !reservation || actualTicksToEnd < 2000 || reservation.username !== myUsername;

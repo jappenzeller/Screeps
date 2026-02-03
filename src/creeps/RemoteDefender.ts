@@ -182,9 +182,11 @@ export function runRemoteDefender(creep: Creep): void {
   const homeRoom = creep.memory.room;
   let targetRoom = creep.memory.targetRoom;
 
-  // Check if target room still has threats
-  const targetMem = targetRoom ? Memory.rooms?.[targetRoom] : null;
-  const targetHasThreats = targetMem && targetMem.hostiles && targetMem.hostiles > 0;
+  // Check if target room still has threats (read from Memory.intel)
+  const targetIntel = targetRoom && Memory.intel && Memory.intel[targetRoom]
+    ? Memory.intel[targetRoom]
+    : null;
+  const targetHasThreats = targetIntel && targetIntel.hostiles && targetIntel.hostiles > 0;
 
   if (!targetHasThreats) {
     // Look for another room that needs defenders
@@ -241,10 +243,7 @@ export function runRemoteDefender(creep: Creep): void {
   }).length;
 
   if (remainingHostiles === 0 && remainingCores === 0) {
-    // Clear threat from memory
-    if (Memory.rooms?.[targetRoom]) {
-      Memory.rooms[targetRoom].hostiles = 0;
-    }
+    // NOTE: Intel will be updated automatically by gatherRoomIntel() next tick
     // Disband the squad for this room
     const homeRoomObj = Game.rooms[creep.memory.room];
     if (homeRoomObj) {
@@ -352,7 +351,7 @@ function getTargetPriority(hostile: Creep): number {
 
 /**
  * Find a remote room that needs defenders
- * Checks adjacent rooms for threats based on Memory.rooms intel
+ * Checks adjacent rooms for threats based on Memory.intel
  */
 function findRoomNeedingDefender(homeRoom: string): string | null {
   const exits = Game.map.describeExits(homeRoom);
@@ -364,22 +363,24 @@ function findRoomNeedingDefender(homeRoom: string): string | null {
     const roomName = exits[dir as ExitKey];
     if (!roomName) continue;
 
-    // Skip Source Keeper rooms
-    const intel = Memory.rooms?.[roomName];
+    // Read from Memory.intel
+    const intel = Memory.intel && Memory.intel[roomName];
     if (!intel) continue;
-    if (intel.hasKeepers) continue;
+
+    // Skip Source Keeper rooms
+    if (intel.roomType === "sourceKeeper") continue;
 
     // Check scan age - don't respond to stale intel
-    const scanAge = Game.time - (intel.lastScan || 0);
+    const scanAge = Game.time - (intel.lastScanned || 0);
     if (scanAge > SCAN_AGE_THRESHOLD) continue;
 
     const hostileCount = intel.hostiles || 0;
     if (hostileCount > 0) {
       // Check for dangerous hostiles
-      const hostileDetails = (intel as any).hostileDetails;
+      const hostileDetails = intel.hostileDetails;
       let hasDangerous = false;
-      if (hostileDetails && Array.isArray(hostileDetails)) {
-        hasDangerous = hostileDetails.some((h: any) => h.hasCombat);
+      if (hostileDetails && hostileDetails.length > 0) {
+        hasDangerous = hostileDetails.some((h) => h.hasCombat);
       } else {
         hasDangerous = hostileCount > 0;
       }

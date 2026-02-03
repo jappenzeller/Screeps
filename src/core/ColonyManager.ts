@@ -667,26 +667,27 @@ export class ColonyManager {
     const homeRoom = this.roomName;
     const exits = Game.map.describeExits(homeRoom);
 
-    if (!exits || !Memory.rooms) return targets;
+    if (!exits || !Memory.intel) return targets;
 
     // Get our username dynamically
-    const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+    const firstSpawn = Object.values(Game.spawns)[0];
+    const myUsername = firstSpawn && firstSpawn.owner ? firstSpawn.owner.username : null;
 
     for (const dir in exits) {
       const roomName = exits[dir as ExitKey];
       if (!roomName) continue;
 
-      const intel = Memory.rooms[roomName];
-      if (!intel || !intel.lastScan) continue;
+      const intel = Memory.intel[roomName];
+      if (!intel || !intel.lastScanned) continue;
 
       // Check if room is a valid remote mining target
-      const isOwnedByOther = intel.controller?.owner && intel.controller.owner !== myUsername;
+      const isOwnedByOther = intel.owner && intel.owner !== myUsername;
       const isReservedByOther =
-        intel.controller?.reservation &&
-        intel.controller.reservation.username !== myUsername;
+        intel.reservation &&
+        intel.reservation.username !== myUsername;
       const hasSources = intel.sources && intel.sources.length > 0;
-      const isSafe = !intel.hasKeepers && !intel.hasInvaderCore && (intel.hostiles || 0) === 0;
-      const recentScan = Game.time - intel.lastScan < 2000;
+      const isSafe = intel.roomType !== "sourceKeeper" && !intel.invaderCore && (intel.hostiles || 0) === 0;
+      const recentScan = Game.time - intel.lastScanned < 2000;
 
       if (!isOwnedByOther && !isReservedByOther && hasSources && isSafe && recentScan) {
         targets.push(roomName);
@@ -766,8 +767,8 @@ export class ColonyManager {
 
       // 1 remote miner per source in remote rooms
       for (const roomName of remoteTargets) {
-        const intel = Memory.rooms?.[roomName];
-        const sourcesInRoom = intel?.sources?.length || 0;
+        const intel = Memory.intel && Memory.intel[roomName];
+        const sourcesInRoom = intel && intel.sources ? intel.sources.length : 0;
         remoteMiners += sourcesInRoom;
       }
 
@@ -787,8 +788,8 @@ export class ColonyManager {
           const adjacentRoom = exits[dir as ExitKey];
           if (!adjacentRoom) continue;
 
-          const intel = Memory.rooms?.[adjacentRoom];
-          const lastScan = intel?.lastScan || 0;
+          const intel = Memory.intel && Memory.intel[adjacentRoom];
+          const lastScan = intel ? intel.lastScanned : 0;
 
           // Need scout if any adjacent room hasn't been scanned in 2000 ticks
           if (Game.time - lastScan > 2000) {

@@ -238,6 +238,13 @@ export function smartMoveTo(
 
   const stuckCount = creep.memory._stuckCount || 0;
 
+  // Handle border tiles in same room: step off border when stuck
+  // This prevents pathfinding issues at room edges
+  if (isOnBorder(creep) && stuckCount > 2) {
+    stepOffBorder(creep);
+    return OK;
+  }
+
   // After 5 ticks stuck: random shove to break deadlock
   if (stuckCount > 5) {
     const directions: DirectionConstant[] = [TOP, TOP_RIGHT, RIGHT, BOTTOM_RIGHT, BOTTOM, BOTTOM_LEFT, LEFT, TOP_LEFT];

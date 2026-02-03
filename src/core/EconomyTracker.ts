@@ -207,15 +207,15 @@ export class EconomyTracker {
       totalWorkParts += m.getActiveBodyparts(WORK);
     }
 
-    // Count remote sources from Memory.rooms
+    // Count remote sources from Memory.intel
     let remoteSources = 0;
     const exits = Game.map.describeExits(this.room.name);
     if (exits) {
       for (const dir in exits) {
         const roomName = exits[dir as ExitKey];
         if (roomName) {
-          const intel = Memory.rooms?.[roomName];
-          if (intel?.sources) {
+          const intel = Memory.intel && Memory.intel[roomName];
+          if (intel && intel.sources) {
             remoteSources += intel.sources.length;
           }
         }

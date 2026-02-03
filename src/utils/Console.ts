@@ -441,11 +441,11 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     console.log(`Targets: ${targets.length}`);
 
     for (const roomName of targets) {
-      const intel = Memory.rooms?.[roomName];
+      const intel = Memory.intel && Memory.intel[roomName];
       console.log(`\n${roomName}:`);
-      console.log(`  Sources: ${intel?.sources?.length || 0}`);
-      console.log(`  Last scan: ${Game.time - (intel?.lastScan || 0)} ticks ago`);
-      console.log(`  Hostiles: ${intel?.hostiles || 0}`);
+      console.log(`  Sources: ${(intel && intel.sources) ? intel.sources.length : 0}`);
+      console.log(`  Last scan: ${Game.time - ((intel && intel.lastScanned) ? intel.lastScanned : 0)} ticks ago`);
+      console.log(`  Hostiles: ${(intel && intel.hostiles) ? intel.hostiles : 0}`);
     }
 
     return "OK";
@@ -489,12 +489,12 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
 
     for (const roomName of targets) {
       const room = Game.rooms[roomName];
-      const intel = Memory.rooms?.[roomName];
-      const sourceCount = intel?.sources?.length || 0;
+      const intel = Memory.intel && Memory.intel[roomName];
+      const sourceCount = (intel && intel.sources) ? intel.sources.length : 0;
 
       console.log(`\n--- ${roomName} ---`);
       console.log(`  Sources: ${sourceCount}`);
-      console.log(`  Last scan: ${intel?.lastScan ? (Game.time - intel.lastScan) + " ticks ago" : "never"}`);
+      console.log(`  Last scan: ${(intel && intel.lastScanned) ? (Game.time - intel.lastScanned) + " ticks ago" : "never"}`);
 
       // Creep status
       const miners = remoteMinerCount[roomName] || 0;
@@ -545,24 +545,27 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       }
 
       // Controller reservation status
-      if (intel?.controller?.reservation) {
-        const res = intel.controller.reservation;
+      if (intel && intel.reservation) {
+        const res = intel.reservation;
         console.log(`  Reservation: ${res.username} (${res.ticksToEnd} ticks)`);
       } else {
         console.log(`  Reservation: NONE (need reserver)`);
       }
 
       // Threats
-      console.log(`  Hostiles: ${intel?.hostiles || 0}`);
-      if (intel?.hasKeepers) console.log(`  WARNING: Source keepers present`);
-      if (intel?.hasInvaderCore) console.log(`  WARNING: Invader core present`);
+      console.log(`  Hostiles: ${intel ? (intel.hostiles || 0) : 0}`);
+      if (intel && intel.roomType === "sourceKeeper") console.log(`  WARNING: Source keepers present`);
+      if (intel && intel.invaderCore) console.log(`  WARNING: Invader core present`);
     }
 
     // Summary
     console.log(`\n=== Summary ===`);
     const totalMiners = Object.values(remoteMinerCount).reduce((a, b) => a + b, 0);
     const totalHaulers = Object.values(remoteHaulerCount).reduce((a, b) => a + b, 0);
-    const neededMiners = targets.reduce((sum, r) => sum + (Memory.rooms?.[r]?.sources?.length || 0), 0);
+    const neededMiners = targets.reduce((sum, r) => {
+      const intel = Memory.intel && Memory.intel[r];
+      return sum + ((intel && intel.sources) ? intel.sources.length : 0);
+    }, 0);
     const neededHaulers = targets.length * 2;
 
     console.log(`Total Miners: ${totalMiners}/${neededMiners}`);

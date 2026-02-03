@@ -79,13 +79,42 @@ export function runScout(creep: Creep): void {
 export function gatherRoomIntel(room: Room, homeRoom: string): void {
   if (!Memory.intel) Memory.intel = {};
 
+  // Read existing intel to preserve lastHostileSeen across scans with no hostiles
+  const existing = Memory.intel[room.name];
+
+  // Count hostile creeps
+  const hostileCreeps = room.find(FIND_HOSTILE_CREEPS);
+  const hostileCount = hostileCreeps.length;
+
+  // Preserve lastHostileSeen: update if hostiles present, otherwise keep old value
+  let lastHostileSeen = 0;
+  if (hostileCount > 0) {
+    lastHostileSeen = Game.time;
+  } else if (existing && existing.lastHostileSeen) {
+    lastHostileSeen = existing.lastHostileSeen;
+  }
+
+  // Build hostile details for defense decisions
+  let hostileDetails: RoomIntel["hostileDetails"] = undefined;
+  if (hostileCount > 0) {
+    hostileDetails = hostileCreeps.map((h) => ({
+      id: h.id,
+      owner: h.owner.username,
+      pos: { x: h.pos.x, y: h.pos.y },
+      bodyParts: h.body.length,
+      hasCombat:
+        h.getActiveBodyparts(ATTACK) > 0 || h.getActiveBodyparts(RANGED_ATTACK) > 0,
+    }));
+  }
+
+  const exitData = Game.map.describeExits(room.name);
   const intel: RoomIntel = {
     roomName: room.name,
     lastScanned: Game.time,
     roomType: getRoomType(room),
-    owner: room.controller?.owner?.username || null,
-    ownerRcl: room.controller?.level || null,
-    reservation: room.controller?.reservation
+    owner: (room.controller && room.controller.owner) ? room.controller.owner.username : null,
+    ownerRcl: (room.controller && room.controller.level) ? room.controller.level : null,
+    reservation: (room.controller && room.controller.reservation)
       ? {
           username: room.controller.reservation.username,
           ticksToEnd: room.controller.reservation.ticksToEnd,
@@ -98,16 +127,19 @@ export function gatherRoomIntel(room: Room, homeRoom: string): void {
     mineral: getMineral(room),
     terrain: analyzeRoomTerrain(room.name),
     exits: {
-      top: Game.map.describeExits(room.name)?.[TOP] || null,
-      right: Game.map.describeExits(room.name)?.[RIGHT] || null,
-      bottom: Game.map.describeExits(room.name)?.[BOTTOM] || null,
-      left: Game.map.describeExits(room.name)?.[LEFT] || null,
+      top: (exitData && exitData[TOP]) ? exitData[TOP] : null,
+      right: (exitData && exitData[RIGHT]) ? exitData[RIGHT] : null,
+      bottom: (exitData && exitData[BOTTOM]) ? exitData[BOTTOM] : null,
+      left: (exitData && exitData[LEFT]) ? exitData[LEFT] : null,
     },
     hostileStructures: getHostileStructures(room),
     invaderCore:
       room.find(FIND_HOSTILE_STRUCTURES, {
         filter: (s) => s.structureType === STRUCTURE_INVADER_CORE,
       }).length > 0,
+    hostiles: hostileCount,
+    lastHostileSeen: lastHostileSeen,
+    hostileDetails: hostileDetails,
     distanceFromHome: Game.map.getRoomLinearDistance(room.name, homeRoom),
   };
 
