@@ -15,6 +15,25 @@ type BuilderState = "TRAVELING" | "COLLECTING" | "BUILDING";
 export function runBootstrapBuilder(creep: Creep): void {
   const mem = creep.memory as BootstrapBuilderMemory;
 
+  // === SELF-HARVEST CHECK ===
+  // Ensure there's always one self-harvester for this expansion
+  // This handles: (1) existing builders spawned before the fix, (2) selfHarvester died
+  if (!mem.selfHarvest && mem.targetRoom) {
+    const otherBuilders = Object.values(Game.creeps).filter(
+      (c) =>
+        c.name !== creep.name &&
+        c.memory.role === "BOOTSTRAP_BUILDER" &&
+        (c.memory as BootstrapBuilderMemory).targetRoom === mem.targetRoom
+    );
+    const hasSelfHarvester = otherBuilders.some(
+      (c) => (c.memory as BootstrapBuilderMemory).selfHarvest === true
+    );
+    if (!hasSelfHarvester) {
+      mem.selfHarvest = true;
+      console.log(`[Bootstrap] ${creep.name} becoming self-harvester for ${mem.targetRoom}`);
+    }
+  }
+
   // === REASSIGNMENT CHECK ===
   // If the expansion room now has a functional spawn, convert to local upgrader
   const targetRoom = mem.targetRoom;
