@@ -142,6 +142,22 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
 
+  # Intel table for persistent room intel storage
+  IntelTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-intel
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: roomName
+          AttributeType: S
+      KeySchema:
+        - AttributeName: roomName
+          KeyType: HASH
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
   # Knowledge table for learning/feedback loop
   KnowledgeTable:
     Type: AWS::DynamoDB::Table
@@ -368,6 +384,7 @@ Resources:
                 Resource:
                   - !GetAtt SnapshotsTable.Arn
                   - !GetAtt EventsTable.Arn
+                  - !GetAtt IntelTable.Arn
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
@@ -461,6 +478,7 @@ Resources:
                   - !Sub ${EventsTable.Arn}/index/*
                   - !GetAtt RecommendationsTable.Arn
                   - !Sub ${RecommendationsTable.Arn}/index/*
+                  - !GetAtt IntelTable.Arn
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
@@ -810,6 +828,7 @@ Resources:
         Variables:
           SNAPSHOTS_TABLE: !Ref SnapshotsTable
           EVENTS_TABLE: !Ref EventsTable
+          INTEL_TABLE: !Ref IntelTable
           SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
           SCREEPS_SHARD: !Ref ScreepsShard
           RETENTION_DAYS: !Ref RetentionDays
@@ -852,6 +871,7 @@ Resources:
           SNAPSHOTS_TABLE: !Ref SnapshotsTable
           EVENTS_TABLE: !Ref EventsTable
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+          INTEL_TABLE: !Ref IntelTable
           SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
           SCREEPS_SHARD: !Ref ScreepsShard
 
@@ -1273,3 +1293,7 @@ Outputs:
   ArchiveBucketName:
     Description: S3 archive bucket name
     Value: !Ref ArchiveBucket
+
+  IntelTableName:
+    Description: DynamoDB intel table name
+    Value: !Ref IntelTable

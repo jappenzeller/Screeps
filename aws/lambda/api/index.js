@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 
 const ddbClient = new DynamoDBClient({});
@@ -11,6 +11,7 @@ const EVENTS_TABLE = process.env.EVENTS_TABLE;
 const RECOMMENDATIONS_TABLE = process.env.RECOMMENDATIONS_TABLE;
 const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
 const OBSERVATIONS_TABLE = process.env.OBSERVATIONS_TABLE;
+const INTEL_TABLE = process.env.INTEL_TABLE;
 const SCREEPS_TOKEN_SECRET = process.env.SCREEPS_TOKEN_SECRET;
 const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
 
@@ -303,11 +304,35 @@ async function getDiagnostics(roomName) {
 // ==================== Intel Endpoints ====================
 
 /**
- * Get intel for a specific room from segment 90
+ * Get intel for a specific room from DynamoDB (with segment 90 fallback)
  */
 async function getIntel(roomName) {
-  const data = await fetchSegment90();
+  // Try DynamoDB first (persistent), fall back to segment 90 (live delta)
+  if (INTEL_TABLE) {
+    try {
+      const result = await docClient.send(
+        new GetCommand({
+          TableName: INTEL_TABLE,
+          Key: { roomName: roomName },
+        })
+      );
 
+      if (result.Item) {
+        return {
+          source: "dynamodb",
+          fetchedAt: Date.now(),
+          updatedAt: result.Item.updatedAt,
+          gameTick: result.Item.gameTick,
+          ...result.Item,
+        };
+      }
+    } catch (error) {
+      console.error(`Error reading intel from DynamoDB for ${roomName}:`, error);
+    }
+  }
+
+  // Fallback to segment 90
+  const data = await fetchSegment90();
   if (!data || !data.intel) {
     return { error: "No intel data available", roomName };
   }
@@ -321,8 +346,7 @@ async function getIntel(roomName) {
   }
 
   return {
-    live: true,
-    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    source: "segment90",
     fetchedAt: Date.now(),
     gameTick: data.gameTick,
     ...intel,
@@ -330,23 +354,57 @@ async function getIntel(roomName) {
 }
 
 /**
- * Get all intel within range of home room
+ * Get all intel within range of home room (from DynamoDB with segment 90 fallback)
  */
 async function getAllIntel(range, homeRoom) {
-  const data = await fetchSegment90();
+  let rooms = [];
+  let source = "segment90";
 
-  if (!data || !data.intel) {
-    return { error: "No intel data available" };
+  // Try DynamoDB first (persistent, complete)
+  if (INTEL_TABLE) {
+    try {
+      const result = await docClient.send(
+        new ScanCommand({
+          TableName: INTEL_TABLE,
+        })
+      );
+      rooms = result.Items || [];
+
+      // Handle pagination for large datasets
+      let lastKey = result.LastEvaluatedKey;
+      while (lastKey) {
+        const nextResult = await docClient.send(
+          new ScanCommand({
+            TableName: INTEL_TABLE,
+            ExclusiveStartKey: lastKey,
+          })
+        );
+        rooms = rooms.concat(nextResult.Items || []);
+        lastKey = nextResult.LastEvaluatedKey;
+      }
+      source = "dynamodb";
+    } catch (error) {
+      console.error("Error scanning intel from DynamoDB:", error);
+      // Fall through to segment 90 fallback
+      rooms = [];
+    }
   }
 
-  const intel = data.intel;
-  let filtered = Object.values(intel);
+  // Fallback to segment 90 if DynamoDB returned nothing
+  if (rooms.length === 0) {
+    const data = await fetchSegment90();
+    if (!data || !data.intel) {
+      return { error: "No intel data available" };
+    }
+    rooms = Object.values(data.intel);
+    source = "segment90";
+  }
 
   // Filter by range if specified
   if (range && homeRoom) {
     const home = parseRoomName(homeRoom);
     if (home) {
-      filtered = filtered.filter(room => {
+      rooms = rooms.filter(room => {
         const target = parseRoomName(room.roomName);
         if (!target) return false;
         const distance = Math.max(Math.abs(target.x - home.x), Math.abs(target.y - home.y));
@@ -356,30 +414,67 @@ async function getAllIntel(range, homeRoom) {
   }
 
   return {
-    live: true,
-    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    source: source,
     fetchedAt: Date.now(),
-    gameTick: data.gameTick,
-    homeRoom: homeRoom || data.homeRoom || "E46N37",
+    homeRoom: homeRoom || "E46N37",
     range: range || "all",
-    rooms: filtered,
-    roomCount: filtered.length,
+    rooms: rooms,
+    roomCount: rooms.length,
   };
 }
 
 /**
- * Get expansion candidates with scoring
+ * Get expansion candidates with scoring (from DynamoDB with segment 90 fallback)
  */
 async function getExpansionCandidates(homeRoom) {
-  const data = await fetchSegment90();
+  let intel = {};
+  let source = "segment90";
 
-  if (!data || !data.intel) {
-    return { error: "No intel data available" };
+  // Try DynamoDB first
+  if (INTEL_TABLE) {
+    try {
+      const result = await docClient.send(
+        new ScanCommand({
+          TableName: INTEL_TABLE,
+        })
+      );
+      let items = result.Items || [];
+
+      // Handle pagination
+      let lastKey = result.LastEvaluatedKey;
+      while (lastKey) {
+        const nextResult = await docClient.send(
+          new ScanCommand({
+            TableName: INTEL_TABLE,
+            ExclusiveStartKey: lastKey,
+          })
+        );
+        items = items.concat(nextResult.Items || []);
+        lastKey = nextResult.LastEvaluatedKey;
+      }
+
+      // Convert array to keyed object for scoring function compatibility
+      for (const item of items) {
+        intel[item.roomName] = item;
+      }
+      source = "dynamodb";
+    } catch (error) {
+      console.error("Error scanning intel from DynamoDB:", error);
+    }
   }
 
-  const intel = data.intel;
-  const home = homeRoom || data.homeRoom || "E46N37";
-  const myUsername = data.username || "Superstringman";
+  // Fallback to segment 90
+  if (Object.keys(intel).length === 0) {
+    const data = await fetchSegment90();
+    if (!data || !data.intel) {
+      return { error: "No intel data available" };
+    }
+    intel = data.intel;
+    source = "segment90";
+  }
+
+  const home = homeRoom || "E46N37";
+  const myUsername = "Superstringman";
 
   // Get existing colonies
   const existingColonies = Object.values(intel).filter(r =>
@@ -389,9 +484,9 @@ async function getExpansionCandidates(homeRoom) {
   // Score all candidate rooms
   const candidates = Object.values(intel)
     .filter(room => room.roomType === "normal")
-    .filter(room => !room.owner) // Not owned
+    .filter(room => !room.owner)
     .filter(room => room.sources && room.sources.length >= 1)
-    .filter(room => room.distanceFromHome >= 3) // Don't overlap current remotes
+    .filter(room => room.distanceFromHome >= 3)
     .map(room => ({
       ...room,
       expansionScore: calculateExpansionScore(room, intel, existingColonies, myUsername),
@@ -401,10 +496,8 @@ async function getExpansionCandidates(homeRoom) {
     .slice(0, 10);
 
   return {
-    live: true,
-    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    source: source,
     fetchedAt: Date.now(),
-    gameTick: data.gameTick,
     homeRoom: home,
     candidates,
     candidateCount: candidates.length,

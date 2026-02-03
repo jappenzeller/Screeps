@@ -11,6 +11,7 @@ const s3Client = new S3Client({});
 const SNAPSHOTS_TABLE = process.env.SNAPSHOTS_TABLE;
 const EVENTS_TABLE = process.env.EVENTS_TABLE;
 const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
+const INTEL_TABLE = process.env.INTEL_TABLE;
 const ANALYTICS_BUCKET = process.env.ANALYTICS_BUCKET;
 const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
 const RETENTION_DAYS = parseInt(process.env.RETENTION_DAYS || "7", 10);
@@ -127,6 +128,69 @@ async function storeEvents(events, roomName) {
   }
 
   console.log(`Stored ${events.length} events`);
+}
+
+async function storeIntel(intelData, gameTick) {
+  if (!intelData || !INTEL_TABLE) return 0;
+
+  const entries = Object.entries(intelData);
+  if (entries.length === 0) {
+    console.log("No intel entries to store");
+    return 0;
+  }
+
+  const updatedAt = new Date().toISOString();
+  let stored = 0;
+
+  // Use BatchWrite for efficiency (max 25 per batch)
+  for (let i = 0; i < entries.length; i += 25) {
+    const batch = entries.slice(i, i + 25);
+    const writeRequests = batch.map(([roomName, intel]) => ({
+      PutRequest: {
+        Item: {
+          roomName: roomName,
+          updatedAt: updatedAt,
+          gameTick: gameTick,
+          ...intel,
+        },
+      },
+    }));
+
+    try {
+      await docClient.send(
+        new BatchWriteCommand({
+          RequestItems: {
+            [INTEL_TABLE]: writeRequests,
+          },
+        })
+      );
+      stored += batch.length;
+    } catch (error) {
+      console.error(`Error storing intel batch starting at index ${i}:`, error);
+      // Fall back to individual PutItem for failed batch
+      for (const [roomName, intel] of batch) {
+        try {
+          await docClient.send(
+            new PutCommand({
+              TableName: INTEL_TABLE,
+              Item: {
+                roomName: roomName,
+                updatedAt: updatedAt,
+                gameTick: gameTick,
+                ...intel,
+              },
+            })
+          );
+          stored++;
+        } catch (putError) {
+          console.error(`Error storing intel for ${roomName}:`, putError);
+        }
+      }
+    }
+  }
+
+  console.log(`Stored ${stored}/${entries.length} intel entries`);
+  return stored;
 }
 
 async function writeToS3(snapshot) {
@@ -453,6 +517,9 @@ export async function handler(event) {
     // Store snapshots to DynamoDB
     await storeSnapshot(data);
 
+    // Store intel to persistent DynamoDB table
+    const intelStored = await storeIntel(data.intel, data.gameTick);
+
     // Store snapshots to S3 for analytics
     await writeToS3(data);
 
@@ -489,6 +556,7 @@ export async function handler(event) {
         message: "OK",
         tick: data.gameTick,
         colonies: data.colonies?.length || 0,
+        intelStored: intelStored,
         signalEvents: totalSignalEvents,
       }),
     };
