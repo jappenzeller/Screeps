@@ -55,7 +55,9 @@ export class ExpansionReadiness {
     }
 
     // Check for active expansion
-    const activeExpansions = Object.keys(Memory.empireExpansion?.active || {}).length;
+    var empExpansion = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
+    var empActive = empExpansion && empExpansion.active ? empExpansion.active : {};
+    const activeExpansions = Object.keys(empActive).length;
     if (activeExpansions >= this.config.maxSimultaneous) {
       blockers.push(`Already have ${activeExpansions} active expansion(s)`);
       return { ready: false, bestParent: null, blockers };
@@ -117,8 +119,10 @@ export class ExpansionReadiness {
     }
 
     // No active expansion from this room
-    const activeFromHere = Object.values(Memory.empireExpansion?.active || {}).some(
-      (e) => e.parentRoom === roomName
+    var empExpansion2 = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
+    var empActive2 = empExpansion2 && empExpansion2.active ? empExpansion2.active : {};
+    const activeFromHere = Object.values(empActive2).some(
+      function(e: any) { return e.parentRoom === roomName; }
     );
     const noActiveExpansion = !activeFromHere;
     if (!noActiveExpansion) {

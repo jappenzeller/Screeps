@@ -13,16 +13,62 @@ export function isOnBorder(creep: Creep): boolean {
 
 /**
  * Move creep toward center of room to get off a border tile.
+ * Tries cardinal direction first, then diagonals if blocked.
  */
 export function stepOffBorder(creep: Creep): boolean {
   const pos = creep.pos;
+  const terrain = creep.room.getTerrain();
 
-  if (pos.x === 0) { creep.move(RIGHT); return true; }
-  if (pos.x === 49) { creep.move(LEFT); return true; }
-  if (pos.y === 0) { creep.move(BOTTOM); return true; }
-  if (pos.y === 49) { creep.move(TOP); return true; }
+  // Define primary and fallback directions for each border
+  var directions: DirectionConstant[] = [];
 
-  return false;
+  if (pos.x === 0) {
+    directions = [RIGHT, TOP_RIGHT, BOTTOM_RIGHT];
+  } else if (pos.x === 49) {
+    directions = [LEFT, TOP_LEFT, BOTTOM_LEFT];
+  } else if (pos.y === 0) {
+    directions = [BOTTOM, BOTTOM_LEFT, BOTTOM_RIGHT];
+  } else if (pos.y === 49) {
+    directions = [TOP, TOP_LEFT, TOP_RIGHT];
+  } else {
+    return false; // Not on border
+  }
+
+  // Try each direction until one works
+  for (var i = 0; i < directions.length; i++) {
+    var dir = directions[i];
+    var newX = pos.x;
+    var newY = pos.y;
+
+    // Calculate target position based on direction
+    if (dir === TOP || dir === TOP_LEFT || dir === TOP_RIGHT) newY--;
+    if (dir === BOTTOM || dir === BOTTOM_LEFT || dir === BOTTOM_RIGHT) newY++;
+    if (dir === LEFT || dir === TOP_LEFT || dir === BOTTOM_LEFT) newX--;
+    if (dir === RIGHT || dir === TOP_RIGHT || dir === BOTTOM_RIGHT) newX++;
+
+    // Check bounds
+    if (newX < 0 || newX > 49 || newY < 0 || newY > 49) continue;
+
+    // Check terrain
+    if (terrain.get(newX, newY) === TERRAIN_MASK_WALL) continue;
+
+    // Check for blocking creeps
+    var look = creep.room.lookAt(newX, newY);
+    var blocked = false;
+    for (var j = 0; j < look.length; j++) {
+      if (look[j].type === LOOK_CREEPS) {
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) continue;
+
+    // Found a valid direction - move there
+    creep.move(dir);
+    return true;
+  }
+
+  return false; // All directions blocked
 }
 
 /**
@@ -241,12 +287,14 @@ export function smartMoveTo(
   // Handle border tiles in same room: step off border when stuck
   // This prevents pathfinding issues at room edges
   if (isOnBorder(creep) && stuckCount > 2) {
-    stepOffBorder(creep);
-    return OK;
+    if (stepOffBorder(creep)) {
+      return OK; // Successfully moved off border
+    }
+    // If stepOffBorder failed (all directions blocked), fall through to random shove
   }
 
-  // After 5 ticks stuck: random shove to break deadlock
-  if (stuckCount > 5) {
+  // After 5 ticks stuck (or stepOffBorder failed on border): random shove to break deadlock
+  if (stuckCount > 5 || (isOnBorder(creep) && stuckCount > 3)) {
     const directions: DirectionConstant[] = [TOP, TOP_RIGHT, RIGHT, BOTTOM_RIGHT, BOTTOM, BOTTOM_LEFT, LEFT, TOP_LEFT];
     const randomDir = directions[Math.floor(Math.random() * directions.length)];
     creep.move(randomDir);

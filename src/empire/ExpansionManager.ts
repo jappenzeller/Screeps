@@ -27,7 +27,7 @@ export class ExpansionManager {
    * Main run loop - call every tick
    */
   run(): void {
-    const expansions = Memory.empireExpansion!.active;
+    const expansions = Memory.empire!.expansion!.active;
 
     for (const roomName in expansions) {
       const state = expansions[roomName];
@@ -45,7 +45,7 @@ export class ExpansionManager {
    */
   startExpansion(targetRoom: string, parentRoom: string): boolean {
     // Validate: only one active at a time
-    const activeCount = Object.keys(Memory.empireExpansion!.active).length;
+    const activeCount = Object.keys(Memory.empire!.expansion!.active).length;
     if (activeCount >= this.config.maxSimultaneous) {
       console.log(
         `[Expansion] Cannot start: ${activeCount} active (max ${this.config.maxSimultaneous})`
@@ -86,7 +86,7 @@ export class ExpansionManager {
 
     const initialState: ExpansionStateType = alreadyClaimed ? "BOOTSTRAPPING" : "CLAIMING";
 
-    Memory.empireExpansion!.active[targetRoom] = {
+    Memory.empire!.expansion!.active[targetRoom] = {
       roomName: targetRoom,
       parentRoom,
       state: initialState,
@@ -113,8 +113,8 @@ export class ExpansionManager {
   ): Array<{ role: string; memory: Partial<CreepMemory>; priority: number }> {
     const requests: Array<{ role: string; memory: Partial<CreepMemory>; priority: number }> = [];
 
-    for (const roomName in Memory.empireExpansion!.active) {
-      const state = Memory.empireExpansion!.active[roomName];
+    for (const roomName in Memory.empire!.expansion!.active) {
+      const state = Memory.empire!.expansion!.active[roomName];
       if (state.parentRoom !== parentRoom) continue;
 
       // CRITICAL: Sync creeps before counting to avoid over-spawning
@@ -183,7 +183,7 @@ export class ExpansionManager {
    * Register a spawned creep with expansion system
    */
   registerCreep(creepName: string, role: string, targetRoom: string): void {
-    const state = Memory.empireExpansion!.active[targetRoom];
+    const state = Memory.empire!.expansion!.active[targetRoom];
     if (!state) return;
 
     if (role === "CLAIMER") {
@@ -201,12 +201,12 @@ export class ExpansionManager {
    * Cancel an expansion in progress
    */
   cancelExpansion(targetRoom: string): boolean {
-    const state = Memory.empireExpansion!.active[targetRoom];
+    const state = Memory.empire!.expansion!.active[targetRoom];
     if (!state) {
       // Check queue
-      const queueIndex = Memory.empireExpansion!.queue.findIndex((q) => q.target === targetRoom);
+      const queueIndex = Memory.empire!.expansion!.queue.findIndex((q) => q.target === targetRoom);
       if (queueIndex >= 0) {
-        Memory.empireExpansion!.queue.splice(queueIndex, 1);
+        Memory.empire!.expansion!.queue.splice(queueIndex, 1);
         console.log(`[Expansion] Removed ${targetRoom} from queue`);
         return true;
       }
@@ -223,7 +223,7 @@ export class ExpansionManager {
       Game.creeps[state.claimer].suicide();
     }
 
-    delete Memory.empireExpansion!.active[targetRoom];
+    delete Memory.empire!.expansion!.active[targetRoom];
     console.log(`[Expansion] Cancelled ${targetRoom}`);
     return true;
   }
@@ -387,7 +387,7 @@ export class ExpansionManager {
   }
 
   private completeExpansion(state: EmpireExpansionState): void {
-    Memory.empireExpansion!.history[state.roomName] = {
+    Memory.empire!.expansion!.history[state.roomName] = {
       completedAt: Game.time,
       success: true,
       duration: Game.time - state.startedAt,
@@ -396,7 +396,7 @@ export class ExpansionManager {
     eventBus.emit("EXPANSION_COMPLETE", state.roomName);
     console.log(`[Expansion] ${state.roomName} COMPLETE (${Game.time - state.startedAt} ticks)`);
 
-    delete Memory.empireExpansion!.active[state.roomName];
+    delete Memory.empire!.expansion!.active[state.roomName];
   }
 
   private handleFailure(state: EmpireExpansionState): void {
@@ -415,7 +415,7 @@ export class ExpansionManager {
         this.transitionTo(state, "CLAIMING");
       }
     } else {
-      Memory.empireExpansion!.history[state.roomName] = {
+      Memory.empire!.expansion!.history[state.roomName] = {
         completedAt: Game.time,
         success: false,
         reason: state.lastFailure || "Max attempts",
@@ -425,7 +425,7 @@ export class ExpansionManager {
       eventBus.emit("EXPANSION_FAILED", state.roomName, { reason: state.lastFailure });
       console.log(`[Expansion] ${state.roomName} ABANDONED: ${state.lastFailure}`);
 
-      delete Memory.empireExpansion!.active[state.roomName];
+      delete Memory.empire!.expansion!.active[state.roomName];
     }
   }
 
@@ -483,9 +483,9 @@ export class ExpansionManager {
   }
 
   private processQueue(): void {
-    if (Object.keys(Memory.empireExpansion!.active).length > 0) return;
+    if (Object.keys(Memory.empire!.expansion!.active).length > 0) return;
 
-    const next = Memory.empireExpansion!.queue.shift();
+    const next = Memory.empire!.expansion!.queue.shift();
     if (next) {
       this.startExpansion(next.target, next.parent);
     }
@@ -512,7 +512,7 @@ export class ExpansionManager {
     if (!this.config.autoExpand) return;
 
     // Skip if already expanding
-    const activeCount = Object.keys(Memory.empireExpansion!.active).length;
+    const activeCount = Object.keys(Memory.empire!.expansion!.active).length;
     if (activeCount >= this.config.maxSimultaneous) return;
 
     // Check empire readiness
@@ -568,13 +568,14 @@ export class ExpansionManager {
 
   static status(): string {
     // Read FRESH from Memory each call - no caching
-    const active = Memory.empireExpansion?.active || {};
-    const queue = Memory.empireExpansion?.queue || [];
-    const history = Memory.empireExpansion?.history || {};
+    var exp = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
+    var active = exp ? exp.active : {};
+    var queue = exp ? exp.queue : [];
+    var history = exp ? exp.history : {};
 
-    const lines: string[] = [
+    var lines: string[] = [
       "=== Empire Expansion Status ===",
-      `(Memory.empireExpansion.active keys: ${Object.keys(active).join(", ") || "none"})`,
+      "(Memory.empire.expansion.active keys: " + (Object.keys(active).join(", ") || "none") + ")",
     ];
 
     // Active expansions
@@ -639,25 +640,23 @@ export const expansion = {
   cancel: (target: string) => new ExpansionManager().cancelExpansion(target),
   queue: (target: string, parent: string) => {
     initializeEmpireMemory();
-    Memory.empireExpansion!.queue.push({ target, parent });
-    console.log(`[Expansion] Queued ${target} (from ${parent})`);
+    Memory.empire!.expansion!.queue.push({ target, parent });
+    console.log("[Expansion] Queued " + target + " (from " + parent + ")");
     return "OK";
   },
   // Clear all expansion data (use when stuck)
   clear: () => {
-    if (Memory.empireExpansion) {
-      const activeRooms = Object.keys(Memory.empireExpansion.active);
-      Memory.empireExpansion.active = {};
-      Memory.empireExpansion.queue = [];
-      console.log(`[Expansion] Cleared ${activeRooms.length} active expansions: ${activeRooms.join(", ")}`);
+    if (Memory.empire && Memory.empire.expansion) {
+      var activeRooms = Object.keys(Memory.empire.expansion.active);
+      Memory.empire.expansion.active = {};
+      Memory.empire.expansion.queue = [];
+      console.log("[Expansion] Cleared " + activeRooms.length + " active expansions: " + activeRooms.join(", "));
     }
     return "OK";
   },
   // Debug: show raw memory
   debug: () => {
-    console.log("Memory.empireExpansion:", JSON.stringify(Memory.empireExpansion, null, 2));
-    console.log("Memory.expansion:", JSON.stringify(Memory.expansion, null, 2));
-    console.log("Memory.bootstrap:", JSON.stringify(Memory.bootstrap, null, 2));
+    console.log("Memory.empire:", JSON.stringify(Memory.empire, null, 2));
     return "OK";
   },
   // Show expansion candidates
@@ -709,12 +708,14 @@ export const expansion = {
   auto: (enable?: boolean) => {
     initializeEmpireMemory();
     if (enable === undefined) {
-      const current = Memory.empire?.config?.autoExpand ?? true;
-      return `Auto-expand is ${current ? "ENABLED" : "DISABLED"}`;
+      var current = Memory.empire && Memory.empire.config && Memory.empire.config.autoExpand !== undefined
+        ? Memory.empire.config.autoExpand
+        : true;
+      return "Auto-expand is " + (current ? "ENABLED" : "DISABLED");
     }
 
     Memory.empire!.config = Memory.empire!.config || {};
     Memory.empire!.config.autoExpand = enable;
-    return `Auto-expand ${enable ? "ENABLED" : "DISABLED"}`;
+    return "Auto-expand " + (enable ? "ENABLED" : "DISABLED");
   },
 };

@@ -29,7 +29,6 @@ import { drawRoomVisuals } from "./visuals/creepVisuals";
 import { CommandExecutor } from "./core/CommandExecutor";
 import { EconomyTracker } from "./core/EconomyTracker";
 import { PositionLogger } from "./logging/PositionLogger";
-import { BootstrapManager } from "./expansion/BootstrapManager";
 import { ExpansionManager, eventBus, initializeEmpireMemory } from "./empire";
 import { getMilestones, getMilestonePhase } from "./core/ColonyMilestones";
 
@@ -78,11 +77,7 @@ export function loop(): void {
     runRoom(room);
   }
 
-  // Run bootstrap manager (empire-wide expansion coordination)
-  const bootstrapManager = new BootstrapManager();
-  bootstrapManager.run();
-
-  // Run empire expansion manager (new architecture)
+  // Run empire expansion manager
   const expansionManager = new ExpansionManager();
   expansionManager.run();
 

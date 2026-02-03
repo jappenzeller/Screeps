@@ -1130,11 +1130,12 @@ export class AWSExporter {
    * Get empire and expansion status for API export
    */
   private static getEmpireStatus(): EmpireExport | null {
-    if (!Memory.empire && !Memory.empireExpansion) {
+    if (!Memory.empire) {
       return null;
     }
 
-    const active = Memory.empireExpansion?.active || {};
+    var exp = Memory.empire.expansion;
+    var active = exp ? exp.active : {};
     const activeExpansions: EmpireExpansionExport[] = [];
 
     for (const roomName in active) {
@@ -1188,15 +1189,15 @@ export class AWSExporter {
     const expansionOverview = this.getExpansionOverview(activeExpansions);
 
     return {
-      state: Memory.empire?.state || "UNKNOWN",
-      stateChangedAt: Memory.empire?.stateChangedAt,
-      priorities: Memory.empire?.priorities || {},
+      state: Memory.empire ? Memory.empire.state : "UNKNOWN",
+      stateChangedAt: Memory.empire ? Memory.empire.stateChangedAt : undefined,
+      priorities: Memory.empire && Memory.empire.priorities ? Memory.empire.priorities : {},
       expansion: {
         active: activeExpansions,
         activeCount: activeExpansions.length,
-        queue: Memory.empireExpansion?.queue || [],
-        queueCount: Memory.empireExpansion?.queue?.length || 0,
-        history: Memory.empireExpansion?.history || {},
+        queue: exp ? exp.queue : [],
+        queueCount: exp && exp.queue ? exp.queue.length : 0,
+        history: exp ? exp.history : {},
       },
       expansionOverview,
       gcl: {
@@ -1223,7 +1224,9 @@ export class AWSExporter {
     const { ready: canExpand, bestParent, blockers: empireBlockers } = readiness.canExpand();
 
     // Get config
-    const autoExpand = Memory.empire?.config?.autoExpand ?? true;
+    var autoExpand = Memory.empire && Memory.empire.config && Memory.empire.config.autoExpand !== undefined
+      ? Memory.empire.config.autoExpand
+      : true;
 
     // Get ranked candidates (top 10)
     const candidates: ExpansionCandidateExport[] = evaluator.rankCandidates(10).map((score: RoomScore) => ({
@@ -1256,6 +1259,7 @@ export class AWSExporter {
       distanceToTarget: p.distanceToTarget,
     }));
 
+    var exp = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
     return {
       canExpand,
       bestParent,
@@ -1263,12 +1267,12 @@ export class AWSExporter {
       autoExpand,
       active: activeExpansions,
       activeCount: activeExpansions.length,
-      queue: Memory.empireExpansion?.queue || [],
-      queueCount: Memory.empireExpansion?.queue?.length || 0,
+      queue: exp ? exp.queue : [],
+      queueCount: exp && exp.queue ? exp.queue.length : 0,
       candidates,
       candidateCount: candidates.length,
       parentReadiness,
-      history: Memory.empireExpansion?.history || {},
+      history: exp ? exp.history : {},
     };
   }
 

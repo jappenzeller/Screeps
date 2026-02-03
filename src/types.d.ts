@@ -199,71 +199,6 @@ interface SettingsFlags {
   logPositions?: boolean;
 }
 
-// Bootstrap state machine types
-type BootstrapStateType =
-  | "IDLE"
-  | "CLAIMING"
-  | "PLACING_SPAWN"
-  | "BUILDING_SPAWN"
-  | "RAMPING"
-  | "COMPLETE"
-  | "FAILED";
-
-// Bootstrap state for active expansion
-interface BootstrapState {
-  targetRoom: string;
-  parentRoom: string;
-  state: BootstrapStateType;
-  stateChangedAt: number;
-  startedAt: number;
-
-  // Tracking
-  attempts: number;
-  claimer: string | null;
-  spawnSitePos: { x: number; y: number } | null;
-  spawnSiteId: string | null;
-  assignedBuilders: string[];
-  assignedHaulers: string[];
-
-  // Progress
-  spawnProgress: number;
-  energyDelivered: number;
-
-  // Failure tracking
-  lastFailure: string | null;
-  failureCount: number;
-}
-
-// Bootstrap configuration
-interface BootstrapConfig {
-  maxAttempts: number;
-  claimerTimeout: number;
-  spawnBuildTimeout: number;
-  minParentEnergy: number;
-  minParentRCL: number;
-  builderCount: number;
-  haulerCount: number;
-}
-
-// Bootstrap history entry
-interface BootstrapHistory {
-  targetRoom: string;
-  parentRoom: string;
-  startedAt: number;
-  completedAt: number | null;
-  finalState: BootstrapStateType;
-  totalTicks: number;
-  energySpent: number;
-}
-
-// Bootstrap memory structure
-interface BootstrapMemory {
-  active: BootstrapState | null;
-  queue: string[];
-  history: BootstrapHistory[];
-  config: BootstrapConfig;
-}
-
 // Bootstrap builder creep memory
 interface BootstrapBuilderMemory extends CreepMemory {
   role: "BOOTSTRAP_BUILDER";
@@ -289,18 +224,6 @@ interface BootstrapHaulerMemory extends CreepMemory {
   bootstrapState: "LOADING" | "TRAVELING_TO_TARGET" | "DELIVERING" | "RETURNING";
 }
 
-// Expansion tracking for claiming new rooms
-interface ExpansionData {
-  targetRoom?: string;
-  status?: "claiming" | "building_spawn" | "operational";
-  lastClaimed?: string;
-  claimedAt?: number;
-  spawnSiteId?: string;
-  // New structure for claimed rooms
-  claimed?: Record<string, { claimedAt: number; claimedBy: string }>;
-  bootstrapping?: string; // Room currently being bootstrapped
-}
-
 // Colony configuration (explicit registry for per-colony settings)
 interface ColonyMemory {
   /** Explicit list of remote mining target rooms */
@@ -318,8 +241,6 @@ interface Memory {
   homeRoom?: string;
   debug?: DebugFlags;
   settings?: SettingsFlags;
-  expansion?: ExpansionData;
-  bootstrap?: BootstrapMemory;
 }
 
 // Global console declaration for Screeps

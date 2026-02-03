@@ -47,20 +47,17 @@ export function runClaimer(creep: Creep): void {
   } else if (result === ERR_GCL_NOT_ENOUGH) {
     console.log(`${creep.name}: GCL too low to claim ${targetRoom}`);
   } else if (result === OK) {
-    console.log(`🎉 CLAIMED ${targetRoom}!`);
+    console.log(`CLAIMED ${targetRoom}!`);
 
-    // Record in memory
-    Memory.expansion = Memory.expansion || {};
-    Memory.expansion.claimed = Memory.expansion.claimed || {};
-    Memory.expansion.claimed[targetRoom] = {
-      claimedAt: Game.time,
-      claimedBy: creep.name,
-    };
-
-    // Clear target so we don't spawn another claimer
-    delete Memory.expansion.targetRoom;
-
-    // Set next phase
-    Memory.expansion.bootstrapping = targetRoom;
+    // Update expansion state in Memory.empire.expansion
+    if (Memory.empire && Memory.empire.expansion && Memory.empire.expansion.active) {
+      var expansionState = Memory.empire.expansion.active[targetRoom];
+      if (expansionState) {
+        expansionState.state = "BOOTSTRAPPING";
+        expansionState.stateChangedAt = Game.time;
+        expansionState.claimer = null; // Claimer done
+        console.log("[Claimer] Transitioned " + targetRoom + " to BOOTSTRAPPING state");
+      }
+    }
   }
 }

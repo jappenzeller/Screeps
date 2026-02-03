@@ -56,12 +56,14 @@ declare global {
         economy: number;
         tech: number;
       };
+      expansion?: {
+        active: Record<string, EmpireExpansionState>;
+        queue: Array<{ target: string; parent: string }>;
+        history: Record<string, EmpireExpansionHistory>;
+      };
     };
-    empireExpansion?: {
-      active: Record<string, EmpireExpansionState>;
-      queue: Array<{ target: string; parent: string }>;
-      history: Record<string, EmpireExpansionHistory>;
-    };
+    // NOTE: empireExpansion, expansion, and bootstrap are DEPRECATED
+    // They may exist temporarily during migration but will be cleaned up
   }
 }
 
@@ -79,16 +81,71 @@ export function initializeEmpireMemory(): void {
         economy: 70,
         tech: 20,
       },
+      expansion: {
+        active: {},
+        queue: [],
+        history: {},
+      },
     };
     console.log("[Empire] Initialized empire memory");
   }
 
-  if (!Memory.empireExpansion) {
-    Memory.empireExpansion = {
+  // Ensure expansion sub-object exists
+  if (!Memory.empire.expansion) {
+    Memory.empire.expansion = {
       active: {},
       queue: [],
       history: {},
     };
-    console.log("[Empire] Initialized expansion memory");
+  }
+
+  // === ONE-TIME MIGRATION ===
+  // Migrate Memory.empireExpansion → Memory.empire.expansion
+  var oldExpansion = (Memory as any).empireExpansion;
+  if (oldExpansion) {
+    var exp = Memory.empire.expansion;
+
+    // Merge active expansions
+    if (oldExpansion.active) {
+      for (var room in oldExpansion.active) {
+        if (!exp.active[room]) {
+          exp.active[room] = oldExpansion.active[room];
+          console.log("[Empire] Migrated active expansion: " + room);
+        }
+      }
+    }
+
+    // Merge queue (avoid duplicates)
+    if (oldExpansion.queue) {
+      for (var i = 0; i < oldExpansion.queue.length; i++) {
+        var entry = oldExpansion.queue[i];
+        var alreadyQueued = exp.queue.some(function(q: any) { return q.target === entry.target; });
+        if (!alreadyQueued) {
+          exp.queue.push(entry);
+        }
+      }
+    }
+
+    // Merge history
+    if (oldExpansion.history) {
+      for (var histRoom in oldExpansion.history) {
+        if (!exp.history[histRoom]) {
+          exp.history[histRoom] = oldExpansion.history[histRoom];
+        }
+      }
+    }
+
+    delete (Memory as any).empireExpansion;
+    console.log("[Empire] Migrated Memory.empireExpansion -> Memory.empire.expansion");
+  }
+
+  // Clean up old expansion systems
+  if ((Memory as any).expansion) {
+    console.log("[Empire] Deleted legacy Memory.expansion");
+    delete (Memory as any).expansion;
+  }
+  if ((Memory as any).bootstrap) {
+    console.log("[Empire] Deleted legacy Memory.bootstrap");
+    delete (Memory as any).bootstrap;
   }
 }
