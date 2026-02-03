@@ -193,31 +193,38 @@ function findBestExit(creep: Creep, exitDir: ExitConstant): RoomPosition | null 
 }
 
 /**
- * When blocked at border, try moving to adjacent exit tile
+ * When blocked at border, find and move to nearest unblocked exit tile
  */
 function tryAdjacentExit(creep: Creep, exitDir: ExitConstant): void {
   const pos = creep.pos;
-  let dx = 0, dy = 0;
+  const exits = creep.room.find(exitDir);
 
-  // Determine which axis is the border
-  if (exitDir === FIND_EXIT_LEFT || exitDir === FIND_EXIT_RIGHT) {
-    // On left/right border - try moving up or down
-    dy = Math.random() > 0.5 ? 1 : -1;
-  } else {
-    // On top/bottom border - try moving left or right
-    dx = Math.random() > 0.5 ? 1 : -1;
+  if (exits.length === 0) return;
+
+  // Find exit tiles that aren't blocked by creeps
+  const freeExits = exits.filter(function (exitPos) {
+    const creeps = exitPos.lookFor(LOOK_CREEPS);
+    return creeps.length === 0 || creeps[0].id === creep.id;
+  });
+
+  const candidates = freeExits.length > 0 ? freeExits : exits;
+
+  // Find closest unblocked exit tile
+  var closest: RoomPosition | null = null;
+  var closestDist = Infinity;
+
+  for (var i = 0; i < candidates.length; i++) {
+    var exit = candidates[i];
+    var dist = pos.getRangeTo(exit);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closest = exit;
+    }
   }
 
-  const newX = pos.x + dx;
-  const newY = pos.y + dy;
-
-  // Check bounds and terrain
-  if (newX >= 0 && newX <= 49 && newY >= 0 && newY <= 49) {
-    const terrain = creep.room.getTerrain();
-    if (terrain.get(newX, newY) !== TERRAIN_MASK_WALL) {
-      const direction = getDirection(dx, dy);
-      creep.move(direction);
-    }
+  if (closest && closestDist > 0) {
+    // Move toward the closest unblocked exit tile
+    creep.moveTo(closest, { reusePath: 3 });
   }
 }
 
