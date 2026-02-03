@@ -18,6 +18,38 @@ const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
 // Cache for Screeps token
 let cachedToken = null;
 
+// ==================== Response Metadata Helpers ====================
+
+/**
+ * Wrap response with standard metadata fields.
+ * @param {object} data - The response payload
+ * @param {string} source - Data source: "segment90", "dynamodb", "screeps-api"
+ * @param {number|null} dataTimestamp - When the underlying data was last updated (epoch ms)
+ * @returns {object} Wrapped response
+ */
+function withMeta(data, source, dataTimestamp) {
+  return {
+    source: source,
+    freshness: dataTimestamp ? Math.round((Date.now() - dataTimestamp) / 1000) : null,
+    fetchedAt: Date.now(),
+    ...data,
+  };
+}
+
+/**
+ * Mark a response as deprecated, pointing to the new route.
+ * @param {object} data - The response payload
+ * @param {string} newRoute - The replacement route path
+ * @returns {object} Response with deprecation notice
+ */
+function withDeprecation(data, newRoute) {
+  return {
+    ...data,
+    _deprecated: true,
+    _migratedTo: newRoute,
+  };
+}
+
 // ==================== Screeps API Helpers ====================
 
 /**
@@ -596,6 +628,165 @@ function calculateExpansionScore(room, allIntel, existingColonies, myUsername) {
   }
 
   return Math.max(0, Math.round(score));
+}
+
+// ==================== Colony Endpoints (v2) ====================
+
+/**
+ * GET /colonies — list all colonies with summary data
+ */
+async function getColonies() {
+  const data = await fetchSegment90();
+  if (!data) return { error: "No data in segment 90" };
+
+  const colonies = (data.colonies || []).map(function(c) {
+    return {
+      roomName: c.roomName,
+      rcl: c.rcl,
+      rclProgress: c.rclProgress,
+      rclProgressTotal: c.rclProgressTotal,
+      energy: c.energy,
+      creepCount: c.creeps && c.creeps.total ? c.creeps.total : 0,
+      creepsByRole: c.creeps && c.creeps.byRole ? c.creeps.byRole : {},
+      threats: c.threats,
+      constructionSites: c.structures && c.structures.constructionSites ? c.structures.constructionSites : 0,
+      remoteRooms: c.remoteRooms || [],
+    };
+  });
+
+  return withMeta({
+    gameTick: data.gameTick,
+    colonies: colonies,
+    colonyCount: colonies.length,
+    global: data.global,
+  }, "segment90", data.timestamp);
+}
+
+/**
+ * GET /colonies/{roomName} — full colony detail (merged live + diagnostics)
+ */
+async function getColony(roomName) {
+  const data = await fetchSegment90();
+  if (!data) return { error: "No data in segment 90" };
+
+  const colony = (data.colonies || []).find(function(c) { return c.roomName === roomName; });
+  if (!colony) {
+    return {
+      error: "Colony " + roomName + " not found",
+      availableRooms: (data.colonies || []).map(function(c) { return c.roomName; }),
+    };
+  }
+
+  // Merge diagnostics into colony response
+  var diagnostics = data.diagnostics && data.diagnostics[roomName] ? data.diagnostics[roomName] : null;
+
+  return withMeta({
+    gameTick: data.gameTick,
+    ...colony,
+    diagnostics: diagnostics,
+    global: data.global,
+  }, "segment90", data.timestamp);
+}
+
+/**
+ * GET /colonies/{roomName}/creeps — creep roster with details
+ */
+async function getColonyCreeps(roomName) {
+  const data = await fetchSegment90();
+  if (!data) return { error: "No data in segment 90" };
+
+  const colony = (data.colonies || []).find(function(c) { return c.roomName === roomName; });
+  if (!colony) return { error: "Colony " + roomName + " not found" };
+
+  return withMeta({
+    gameTick: data.gameTick,
+    roomName: roomName,
+    total: colony.creeps && colony.creeps.total ? colony.creeps.total : 0,
+    byRole: colony.creeps && colony.creeps.byRole ? colony.creeps.byRole : {},
+    details: colony.creeps && colony.creeps.details ? colony.creeps.details : [],
+  }, "segment90", data.timestamp);
+}
+
+/**
+ * GET /colonies/{roomName}/economy — energy flow and economic metrics
+ */
+async function getColonyEconomy(roomName) {
+  const data = await fetchSegment90();
+  if (!data) return { error: "No data in segment 90" };
+
+  const colony = (data.colonies || []).find(function(c) { return c.roomName === roomName; });
+  if (!colony) return { error: "Colony " + roomName + " not found" };
+
+  return withMeta({
+    gameTick: data.gameTick,
+    roomName: roomName,
+    energy: colony.energy,
+    economy: colony.economy || null,
+    mineral: colony.mineral || null,
+  }, "segment90", data.timestamp);
+}
+
+/**
+ * GET /colonies/{roomName}/remotes — remote mining status
+ */
+async function getColonyRemotes(roomName) {
+  const data = await fetchSegment90();
+  if (!data) return { error: "No data in segment 90" };
+
+  const colony = (data.colonies || []).find(function(c) { return c.roomName === roomName; });
+  if (!colony) return { error: "Colony " + roomName + " not found" };
+
+  return withMeta({
+    gameTick: data.gameTick,
+    roomName: roomName,
+    remoteRooms: colony.remoteRooms || [],
+    remoteMining: colony.remoteMining || null,
+    remoteDefense: colony.remoteDefense || null,
+    adjacentRooms: colony.adjacentRooms || [],
+  }, "segment90", data.timestamp);
+}
+
+/**
+ * GET /intel/enemies — rooms with hostile owners
+ */
+async function getEnemyIntel() {
+  if (!INTEL_TABLE) return { error: "Intel table not configured" };
+
+  var items = [];
+  try {
+    var result = await docClient.send(new ScanCommand({ TableName: INTEL_TABLE }));
+    items = result.Items || [];
+    var lastKey = result.LastEvaluatedKey;
+    while (lastKey) {
+      var nextResult = await docClient.send(
+        new ScanCommand({ TableName: INTEL_TABLE, ExclusiveStartKey: lastKey })
+      );
+      items = items.concat(nextResult.Items || []);
+      lastKey = nextResult.LastEvaluatedKey;
+    }
+  } catch (error) {
+    console.error("Error scanning intel for enemies:", error);
+    return { error: "Failed to scan intel table" };
+  }
+
+  var myUsername = "Superstringman";
+  var enemies = items.filter(function(r) {
+    return r.owner && r.owner !== myUsername;
+  });
+
+  // Group by owner for summary
+  var byOwner = {};
+  for (var i = 0; i < enemies.length; i++) {
+    var owner = enemies[i].owner;
+    if (!byOwner[owner]) byOwner[owner] = [];
+    byOwner[owner].push(enemies[i].roomName);
+  }
+
+  return withMeta({
+    rooms: enemies,
+    roomCount: enemies.length,
+    byOwner: byOwner,
+  }, "dynamodb");
 }
 
 // ==================== Empire Endpoints ====================
@@ -1203,75 +1394,74 @@ export async function handler(event) {
 
     let result;
 
-    if (path === 'GET /summary/{roomName}') {
-      result = await getSummary(params.roomName);
+    // ==================== v2 Routes ====================
+
+    // Colony endpoints (v2)
+    if (path === 'GET /colonies') {
+      result = await getColonies();
     }
-    else if (path === 'GET /recommendations/{roomName}') {
-      result = await getRecommendations(params.roomName);
+    else if (path === 'GET /colonies/{roomName}/creeps') {
+      result = await getColonyCreeps(params.roomName);
     }
-    else if (path === 'GET /metrics/{roomName}') {
-      const hours = parseInt(query.hours) || 24;
-      result = await getMetricHistory(params.roomName, hours);
+    else if (path === 'GET /colonies/{roomName}/economy') {
+      result = await getColonyEconomy(params.roomName);
     }
-    else if (path === 'POST /feedback/{recommendationId}') {
-      result = await submitFeedback(params.recommendationId, body);
+    else if (path === 'GET /colonies/{roomName}/remotes') {
+      result = await getColonyRemotes(params.roomName);
     }
-    // Live data endpoints (real-time segment 90 read)
-    else if (path === 'GET /live/{roomName}') {
-      result = await getLiveData(params.roomName);
+    else if (path === 'GET /colonies/{roomName}') {
+      result = await getColony(params.roomName);
     }
-    else if (path === 'GET /live') {
-      result = await getLiveData('all');
+
+    // Intel endpoints (v2 additions)
+    else if (path === 'GET /intel/enemies') {
+      result = await getEnemyIntel();
     }
-    // Room data endpoint (real-time room objects + terrain)
-    else if (path === 'GET /room/{roomName}') {
-      result = await getRoomData(params.roomName);
-    }
-    // Diagnostics endpoint (creep and structure state for debugging)
-    else if (path === 'GET /diagnostics/{roomName}') {
-      result = await getDiagnostics(params.roomName);
-    }
-    // Signal layer endpoints
-    else if (path === 'GET /signals/{roomName}') {
-      const hours = parseInt(query.hours) || 24;
-      result = await getSignals(params.roomName, hours);
-    }
-    else if (path === 'GET /signals/{roomName}/events') {
-      const hours = parseInt(query.hours) || 24;
-      result = await getSignalEvents(params.roomName, hours);
-    }
-    // Observation layer endpoints
-    else if (path === 'GET /observations/{roomName}') {
-      const limit = parseInt(query.limit) || 10;
-      result = await getObservations(params.roomName, limit);
-    }
-    else if (path === 'GET /observations/{roomName}/patterns') {
-      result = await getPatterns(params.roomName);
-    }
-    else if (path === 'GET /observations/{roomName}/search') {
-      const q = query.q || '';
-      result = await searchObservations(params.roomName, q);
-    }
-    // Intel endpoints (room scouting data)
-    else if (path === 'GET /intel/{roomName}') {
-      result = await getIntel(params.roomName);
-    }
-    else if (path === 'GET /intel') {
-      const range = query.range ? parseInt(query.range) : null;
-      const homeRoom = query.home || null;
-      result = await getAllIntel(range, homeRoom);
-    }
-    else if (path === 'GET /intel/expansion-candidates') {
+    else if (path === 'GET /intel/candidates') {
       const homeRoom = query.home || null;
       result = await getExpansionCandidates(homeRoom);
     }
-    // Console command endpoint (POST with JSON body) - queue for segment execution
-    else if (path === 'POST /command') {
+
+    // Analysis endpoints (v2 regrouping)
+    else if (path === 'GET /analysis/{roomName}/recommendations') {
+      result = await getRecommendations(params.roomName);
+    }
+    else if (path === 'GET /analysis/{roomName}/signals/events') {
+      const hours = parseInt(query.hours) || 24;
+      result = await getSignalEvents(params.roomName, hours);
+    }
+    else if (path === 'GET /analysis/{roomName}/signals') {
+      const hours = parseInt(query.hours) || 24;
+      result = await getSignals(params.roomName, hours);
+    }
+    else if (path === 'GET /analysis/{roomName}/observations') {
+      const limit = parseInt(query.limit) || 10;
+      result = await getObservations(params.roomName, limit);
+    }
+    else if (path === 'GET /analysis/{roomName}/patterns') {
+      result = await getPatterns(params.roomName);
+    }
+    else if (path === 'POST /analysis/{roomName}/feedback') {
+      const recommendationId = body.recommendationId;
+      if (!recommendationId) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'Missing recommendationId in request body' }),
+        };
+      }
+      result = await submitFeedback(recommendationId, body);
+    }
+
+    // Debug endpoints (v2 regrouping)
+    else if (path === 'GET /debug/positions') {
+      result = await fetchSegment92();
+    }
+    else if (path === 'POST /debug/command') {
       const { command, shard } = body;
       result = await queueCommand(command, shard || SCREEPS_SHARD);
     }
-    // Console command endpoint (GET with base64 encoded cmd in query) - queue for segment execution
-    else if (path === 'GET /command') {
+    else if (path === 'GET /debug/command') {
       const encoded = query.cmd;
       if (!encoded) {
         return {
@@ -1284,33 +1474,136 @@ export async function handler(event) {
       const shard = query.shard || SCREEPS_SHARD;
       result = await queueCommand(command, shard);
     }
-    // Command result endpoint - fetch result from segment 91
-    else if (path === 'GET /command/result') {
+    else if (path === 'GET /debug/command/result') {
       const shard = query.shard || SCREEPS_SHARD;
       const requestId = query.requestId || null;
       result = await getCommandResult(shard, requestId);
     }
-    // Position log endpoint - fetch data from segment 92 for heatmap rendering
-    else if (path === 'GET /positions') {
-      result = await fetchSegment92();
+
+    // ==================== Existing v1 Routes (kept, no change) ====================
+
+    // Intel (already v2-style from Phase 5, no deprecation needed)
+    else if (path === 'GET /intel/{roomName}') {
+      result = await getIntel(params.roomName);
     }
-    // Empire endpoints
+    else if (path === 'GET /intel') {
+      const range = query.range ? parseInt(query.range) : null;
+      const homeRoom = query.home || null;
+      result = await getAllIntel(range, homeRoom);
+    }
+
+    // Empire (already well-organized, no deprecation needed)
     else if (path === 'GET /empire') {
       result = await getEmpireStatus();
     }
-    else if (path === 'GET /empire/expansion') {
-      result = await getExpansionStatus();
-    }
     else if (path === 'GET /empire/expansion/{roomName}') {
       result = await getExpansionStatus(params.roomName);
+    }
+    else if (path === 'GET /empire/expansion') {
+      result = await getExpansionStatus();
     }
     else if (path === 'POST /empire/expansion') {
       const { action, roomName, parentRoom } = body;
       result = await queueExpansionCommand(action, roomName, parentRoom);
     }
-    // Expansion overview endpoint (comprehensive with candidates + readiness)
+
+    // Metrics (stays as-is, good namespace)
+    else if (path === 'GET /metrics/{roomName}') {
+      const hours = parseInt(query.hours) || 24;
+      result = await getMetricHistory(params.roomName, hours);
+    }
+
+    // ==================== Deprecated v1 Routes ====================
+
+    else if (path === 'GET /summary/{roomName}') {
+      result = await getSummary(params.roomName);
+      result = withDeprecation(result, '/colonies/' + params.roomName);
+    }
+    else if (path === 'GET /recommendations/{roomName}') {
+      result = await getRecommendations(params.roomName);
+      result = withDeprecation(result, '/analysis/' + params.roomName + '/recommendations');
+    }
+    else if (path === 'POST /feedback/{recommendationId}') {
+      result = await submitFeedback(params.recommendationId, body);
+      result = withDeprecation(result, '/analysis/{roomName}/feedback');
+    }
+    else if (path === 'GET /live/{roomName}') {
+      result = await getLiveData(params.roomName);
+      result = withDeprecation(result, '/colonies/' + params.roomName);
+    }
+    else if (path === 'GET /live') {
+      result = await getLiveData('all');
+      result = withDeprecation(result, '/colonies');
+    }
+    else if (path === 'GET /room/{roomName}') {
+      result = await getRoomData(params.roomName);
+      result = withDeprecation(result, '(dropped - use /colonies/{roomName} instead)');
+    }
+    else if (path === 'GET /diagnostics/{roomName}') {
+      result = await getDiagnostics(params.roomName);
+      result = withDeprecation(result, '/colonies/' + params.roomName);
+    }
+    else if (path === 'GET /signals/{roomName}') {
+      const hours = parseInt(query.hours) || 24;
+      result = await getSignals(params.roomName, hours);
+      result = withDeprecation(result, '/analysis/' + params.roomName + '/signals');
+    }
+    else if (path === 'GET /signals/{roomName}/events') {
+      const hours = parseInt(query.hours) || 24;
+      result = await getSignalEvents(params.roomName, hours);
+      result = withDeprecation(result, '/analysis/' + params.roomName + '/signals/events');
+    }
+    else if (path === 'GET /observations/{roomName}') {
+      const limit = parseInt(query.limit) || 10;
+      result = await getObservations(params.roomName, limit);
+      result = withDeprecation(result, '/analysis/' + params.roomName + '/observations');
+    }
+    else if (path === 'GET /observations/{roomName}/patterns') {
+      result = await getPatterns(params.roomName);
+      result = withDeprecation(result, '/analysis/' + params.roomName + '/patterns');
+    }
+    else if (path === 'GET /observations/{roomName}/search') {
+      const q = query.q || '';
+      result = await searchObservations(params.roomName, q);
+      result = withDeprecation(result, '(dropped)');
+    }
+    else if (path === 'GET /intel/expansion-candidates') {
+      const homeRoom = query.home || null;
+      result = await getExpansionCandidates(homeRoom);
+      result = withDeprecation(result, '/intel/candidates');
+    }
+    else if (path === 'POST /command') {
+      const { command, shard } = body;
+      result = await queueCommand(command, shard || SCREEPS_SHARD);
+      result = withDeprecation(result, '/debug/command');
+    }
+    else if (path === 'GET /command') {
+      const encoded = query.cmd;
+      if (!encoded) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'Missing cmd parameter' }),
+        };
+      }
+      const command = Buffer.from(encoded, 'base64').toString('utf-8');
+      const shard = query.shard || SCREEPS_SHARD;
+      result = await queueCommand(command, shard);
+      result = withDeprecation(result, '/debug/command');
+    }
+    else if (path === 'GET /command/result') {
+      const shard = query.shard || SCREEPS_SHARD;
+      const requestId = query.requestId || null;
+      result = await getCommandResult(shard, requestId);
+      result = withDeprecation(result, '/debug/command/result');
+    }
+    else if (path === 'GET /positions') {
+      result = await fetchSegment92();
+      result = withDeprecation(result, '/debug/positions');
+    }
     else if (path === 'GET /expansion') {
       result = await getExpansionOverview();
+      result = withDeprecation(result, '/empire/expansion');
     }
     else {
       return {

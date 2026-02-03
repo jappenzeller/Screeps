@@ -1200,6 +1200,129 @@ Resources:
       RouteKey: GET /room/{roomName}
       Target: !Sub integrations/${ApiIntegration}
 
+  # ==================== v2 Colony Routes ====================
+  RouteColonies:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /colonies
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteColonyRoom:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /colonies/{roomName}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteColonyCreeps:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /colonies/{roomName}/creeps
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteColonyEconomy:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /colonies/{roomName}/economy
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteColonyRemotes:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /colonies/{roomName}/remotes
+      Target: !Sub integrations/${ApiIntegration}
+
+  # ==================== v2 Intel Routes ====================
+  RouteIntelEnemies:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /intel/enemies
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteIntelCandidates:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /intel/candidates
+      Target: !Sub integrations/${ApiIntegration}
+
+  # ==================== v2 Analysis Routes ====================
+  RouteAnalysisRecommendations:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /analysis/{roomName}/recommendations
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteAnalysisSignals:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /analysis/{roomName}/signals
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteAnalysisSignalEvents:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /analysis/{roomName}/signals/events
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteAnalysisObservations:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /analysis/{roomName}/observations
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteAnalysisPatterns:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /analysis/{roomName}/patterns
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteAnalysisFeedback:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /analysis/{roomName}/feedback
+      Target: !Sub integrations/${ApiIntegration}
+
+  # ==================== v2 Debug Routes ====================
+  RouteDebugPositions:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /debug/positions
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteDebugCommandPost:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /debug/command
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteDebugCommandGet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /debug/command
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteDebugCommandResult:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /debug/command/result
+      Target: !Sub integrations/${ApiIntegration}
+
   ApiInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
