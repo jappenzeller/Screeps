@@ -1228,31 +1228,33 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
 // ============================================
 
 function getRemoteMiningTargets(homeRoom: string): string[] {
+  // Read from colony registry — single source of truth
+  if (Memory.colonies && Memory.colonies[homeRoom]) {
+    return Memory.colonies[homeRoom].remoteRooms;
+  }
+
+  // Fallback: derive from exits + intel (pre-initialization or missing colony)
   const exits = Game.map.describeExits(homeRoom);
   if (!exits) return [];
 
-  const targets: string[] = [];
+  const intel = Memory.intel || {};
   const firstSpawn = Object.values(Game.spawns)[0];
-  const myUsername = firstSpawn && firstSpawn.owner ? firstSpawn.owner.username : null;
+  const myUsername = firstSpawn && firstSpawn.owner
+    ? firstSpawn.owner.username
+    : "";
+  const targets: string[] = [];
 
   for (const dir in exits) {
     const roomName = exits[dir as ExitKey];
     if (!roomName) continue;
 
-    const intel = Memory.intel && Memory.intel[roomName];
-    if (!intel) continue;
+    const ri = intel[roomName];
+    if (!ri || !ri.lastScanned) continue;
 
-    // Skip rooms without sources
-    if (!intel.sources || intel.sources.length === 0) continue;
-
-    // Skip source keeper rooms
-    if (intel.roomType === "sourceKeeper") continue;
-
-    // Skip owned rooms
-    if (intel.owner && intel.owner !== myUsername) continue;
-
-    // Skip rooms reserved by others
-    if (intel.reservation && intel.reservation.username !== myUsername) continue;
+    if (!ri.sources || ri.sources.length === 0) continue;
+    if (ri.roomType === "sourceKeeper") continue;
+    if (ri.owner && ri.owner !== myUsername) continue;
+    if (ri.reservation && ri.reservation.username !== myUsername) continue;
 
     targets.push(roomName);
   }

@@ -90,6 +90,32 @@
 
 ---
 
+### Remote Mining Targets Scattered Logic (Memory.colonies Registry)
+
+**Status:** Fixed (Phase 2 Migration)
+
+**Issue:** Remote mining target derivation was duplicated across ColonyManager.ts and utilitySpawning.ts, with logic re-run every tick.
+
+**Root Cause:** No central registry for per-colony configuration. Remote targets derived on-the-fly from exits + intel every time, wasting CPU and making manual overrides impossible.
+
+**Fix Applied:**
+
+- Added `Memory.colonies[roomName]` registry with `ColonyMemory` interface
+- `remoteRooms: string[]` - explicit list of remote mining targets
+- `remoteRoomsLastSync: number` - timestamp of last auto-derivation
+- Auto-initialized on first run from exits + intel filter
+- Re-syncs every 500 ticks (logs additions/removals)
+- Console commands for manual control:
+  - `remotes()` - list all colonies' remote rooms
+  - `addRemote(home, remote)` - add remote room
+  - `removeRemote(home, remote)` - remove remote room
+  - `syncRemotes(home?)` - force re-derivation
+- Abandoned colony cleanup in MemoryManager
+
+**Files:** types.d.ts, ColonyManager.ts, utilitySpawning.ts, Console.ts, AWSExporter.ts, MemoryManager.ts
+
+---
+
 ### Builder Stuck on Border Tile
 
 **Status:** Fixed
@@ -202,7 +228,11 @@ haulers()    // Hauler status
 
 ### Remote Mining Issues
 ```javascript
-remote()       // Overall status
-remoteAudit()  // Infrastructure check
-intel("room")  // Room data
+remote()              // Overall status
+remoteAudit()         // Infrastructure check
+intel("room")         // Room data
+remotes()             // List remote rooms for all colonies
+addRemote(home, room) // Add remote room to colony
+removeRemote(home, room) // Remove remote room
+syncRemotes(home?)    // Force re-derive remote targets
 ```

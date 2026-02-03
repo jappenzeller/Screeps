@@ -189,6 +189,7 @@ interface ColonyExport {
   remoteDefense: RemoteDefenseStatus;
   mineral: MineralExport;
   economy: ColonyEconomyMetrics;
+  remoteRooms: string[];
 }
 
 interface DefenseExport {
@@ -672,6 +673,9 @@ export class AWSExporter {
         remoteDefense: this.getRemoteDefenseStatus(roomName),
         mineral: this.getMineralStatus(room, roomName),
         economy: new EconomyTracker(room).getMetrics(),
+        remoteRooms: Memory.colonies && Memory.colonies[roomName]
+          ? Memory.colonies[roomName].remoteRooms
+          : [],
       });
     }
 

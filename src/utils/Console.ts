@@ -58,6 +58,11 @@ tasks("W1N1")    - Show tasks for specific room
 creepStates()    - Show current creep state assignments
 remote()         - Remote mining status and targets
 remoteAudit()    - Detailed remote infrastructure audit
+remotes()        - List remote rooms from colony registry
+remotes("W1N1")  - List remotes for specific colony
+addRemote(h, r)  - Add remote room r to colony h
+removeRemote(h, r) - Remove remote room r from colony h
+syncRemotes()    - Force re-derive remote rooms from intel
 threats()        - Show hostile creeps and threat levels
 safemode()       - Show safe mode status and threat assessment
 safemode("W1N1") - Safe mode status for specific room
@@ -572,6 +577,97 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     console.log(`Total Haulers: ${totalHaulers}/${neededHaulers}`);
     console.log(`Target Rooms: ${targets.length}`);
 
+    return "OK";
+  };
+
+  // Remote room management - list remotes
+  global.remotes = (roomName?: string) => {
+    var targetRoom = roomName || Object.keys(Game.rooms).find(function(r) {
+      return Game.rooms[r].controller && Game.rooms[r].controller.my;
+    });
+    if (!targetRoom) {
+      console.log("No owned room found");
+      return "Error";
+    }
+
+    if (!Memory.colonies || !Memory.colonies[targetRoom]) {
+      console.log("Colony not initialized for " + targetRoom);
+      return "Error";
+    }
+
+    var colony = Memory.colonies[targetRoom];
+    console.log("=== Remote Rooms for " + targetRoom + " ===");
+    console.log("Last sync: " + (Game.time - colony.remoteRoomsLastSync) + " ticks ago");
+
+    for (var i = 0; i < colony.remoteRooms.length; i++) {
+      var remote = colony.remoteRooms[i];
+      var ri = Memory.intel && Memory.intel[remote];
+      var sources = ri && ri.sources ? ri.sources.length : 0;
+      var hostiles = ri ? (ri.hostiles || 0) : "?";
+      var lastScan = ri ? (Game.time - ri.lastScanned) + " ticks ago" : "never";
+      console.log("  " + remote + ": " + sources + " sources, " + hostiles + " hostiles, scanned " + lastScan);
+    }
+
+    return colony.remoteRooms.length + " remotes";
+  };
+
+  // Add a remote room manually
+  global.addRemote = (homeRoom: string, remoteRoom: string) => {
+    if (!homeRoom || !remoteRoom) {
+      console.log("Usage: addRemote('E46N37', 'E45N37')");
+      return "Error";
+    }
+    if (!Memory.colonies || !Memory.colonies[homeRoom]) {
+      console.log("Colony not initialized for " + homeRoom);
+      return "Error";
+    }
+    var colony = Memory.colonies[homeRoom];
+    if (colony.remoteRooms.indexOf(remoteRoom) !== -1) {
+      console.log(remoteRoom + " already in remote list");
+      return "Already exists";
+    }
+    colony.remoteRooms.push(remoteRoom);
+    console.log("Added " + remoteRoom + " to " + homeRoom + " remotes");
+    return "OK";
+  };
+
+  // Remove a remote room manually
+  global.removeRemote = (homeRoom: string, remoteRoom: string) => {
+    if (!homeRoom || !remoteRoom) {
+      console.log("Usage: removeRemote('E46N37', 'E45N37')");
+      return "Error";
+    }
+    if (!Memory.colonies || !Memory.colonies[homeRoom]) {
+      console.log("Colony not initialized for " + homeRoom);
+      return "Error";
+    }
+    var colony = Memory.colonies[homeRoom];
+    var idx = colony.remoteRooms.indexOf(remoteRoom);
+    if (idx === -1) {
+      console.log(remoteRoom + " not in remote list");
+      return "Not found";
+    }
+    colony.remoteRooms.splice(idx, 1);
+    console.log("Removed " + remoteRoom + " from " + homeRoom + " remotes");
+    return "OK";
+  };
+
+  // Force re-sync remote rooms from intel
+  global.syncRemotes = (roomName?: string) => {
+    var targetRoom = roomName || Object.keys(Game.rooms).find(function(r) {
+      return Game.rooms[r].controller && Game.rooms[r].controller.my;
+    });
+    if (!targetRoom) {
+      console.log("No owned room found");
+      return "Error";
+    }
+    if (Memory.colonies && Memory.colonies[targetRoom]) {
+      // Delete and reinitialize to force sync
+      delete Memory.colonies[targetRoom];
+      var manager = ColonyManager.getInstance(targetRoom);
+      manager.initializeColonyMemory();
+      console.log("Re-synced remotes for " + targetRoom);
+    }
     return "OK";
   };
 

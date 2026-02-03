@@ -53,6 +53,19 @@ export class MemoryManager {
     // NOTE: Memory.rooms cleanup for non-owned rooms has been removed.
     // Intel data now lives in Memory.intel (managed by gatherRoomIntel).
     // Memory.rooms is only used for owned room data (assignments, sourceContainers, etc.)
+
+    // Clean up colony data for rooms we no longer own
+    if (Memory.colonies) {
+      for (var colonyRoom in Memory.colonies) {
+        var room = Game.rooms[colonyRoom];
+        // Only delete if we have visibility AND it's no longer ours
+        // (if no visibility, we can't confirm we lost it)
+        if (room && room.controller && !room.controller.my) {
+          logger.warn("MemoryManager", "Removing colony data for lost room: " + colonyRoom);
+          delete Memory.colonies[colonyRoom];
+        }
+      }
+    }
   }
 
   static recordStats(): void {

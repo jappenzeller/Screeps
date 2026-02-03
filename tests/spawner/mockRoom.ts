@@ -140,6 +140,12 @@ export function setupMockGameCreeps(state: TestColonyState): void {
         distanceFromHome: 1,
       },
     },
+    colonies: {
+      W1N1: {
+        remoteRooms: ["W1N2", "W2N1"],
+        remoteRoomsLastSync: 999000,
+      },
+    },
   };
 
   // Mock Screeps constants

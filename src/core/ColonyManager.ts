@@ -90,6 +90,14 @@ export class ColonyManager {
    * Main run method - call every tick to manage tasks
    */
   run(): void {
+    // Initialize colony memory (first run or after reset)
+    this.initializeColonyMemory();
+
+    // Periodic re-sync of remote rooms (every 500 ticks)
+    if (Game.time % 500 === 0) {
+      this.syncRemoteRooms();
+    }
+
     // Refresh tasks every 10 ticks or when task list is empty
     if (Game.time % 10 === 0 || this.getTasks().length === 0) {
       this.refreshTasks();
@@ -660,41 +668,116 @@ export class ColonyManager {
   }
 
   /**
-   * Get list of valid remote mining room targets
+   * Initialize Memory.colonies[roomName] if it doesn't exist.
+   * Auto-populates remoteRooms from exits + Memory.intel on first run.
    */
-  getRemoteMiningTargets(): string[] {
-    const targets: string[] = [];
+  initializeColonyMemory(): void {
+    if (!Memory.colonies) {
+      Memory.colonies = {};
+    }
+
+    if (!Memory.colonies[this.roomName]) {
+      // First-time initialization: derive remote rooms from intel
+      const derived = this.deriveRemoteTargets();
+      Memory.colonies[this.roomName] = {
+        remoteRooms: derived,
+        remoteRoomsLastSync: Game.time,
+      };
+      console.log("[Colony] Initialized " + this.roomName + " with " + derived.length + " remote rooms: " + derived.join(", "));
+    }
+  }
+
+  /**
+   * Re-derive remote rooms and update Memory.colonies.
+   * Logs changes for visibility.
+   */
+  private syncRemoteRooms(): void {
+    if (!Memory.colonies || !Memory.colonies[this.roomName]) return;
+
+    const current = Memory.colonies[this.roomName].remoteRooms;
+    const derived = this.deriveRemoteTargets();
+
+    // Find additions and removals
+    const added: string[] = [];
+    const removed: string[] = [];
+
+    for (const room of derived) {
+      if (current.indexOf(room) === -1) {
+        added.push(room);
+      }
+    }
+    for (const room of current) {
+      if (derived.indexOf(room) === -1) {
+        removed.push(room);
+      }
+    }
+
+    if (added.length > 0 || removed.length > 0) {
+      Memory.colonies[this.roomName].remoteRooms = derived;
+      Memory.colonies[this.roomName].remoteRoomsLastSync = Game.time;
+
+      if (added.length > 0) {
+        console.log("[Colony] " + this.roomName + " added remotes: " + added.join(", "));
+      }
+      if (removed.length > 0) {
+        console.log("[Colony] " + this.roomName + " removed remotes: " + removed.join(", "));
+      }
+    }
+  }
+
+  /**
+   * Derive valid remote mining targets from exits + Memory.intel.
+   * Used for initial population and periodic re-sync.
+   */
+  private deriveRemoteTargets(): string[] {
     const homeRoom = this.roomName;
     const exits = Game.map.describeExits(homeRoom);
+    if (!exits) return [];
 
-    if (!exits || !Memory.intel) return targets;
-
-    // Get our username dynamically
+    const intel = Memory.intel || {};
     const firstSpawn = Object.values(Game.spawns)[0];
-    const myUsername = firstSpawn && firstSpawn.owner ? firstSpawn.owner.username : null;
+    const myUsername = firstSpawn && firstSpawn.owner
+      ? firstSpawn.owner.username
+      : "";
+
+    const targets: string[] = [];
 
     for (const dir in exits) {
       const roomName = exits[dir as ExitKey];
       if (!roomName) continue;
 
-      const intel = Memory.intel[roomName];
-      if (!intel || !intel.lastScanned) continue;
+      const ri = intel[roomName];
+      if (!ri || !ri.lastScanned) continue;
 
-      // Check if room is a valid remote mining target
-      const isOwnedByOther = intel.owner && intel.owner !== myUsername;
-      const isReservedByOther =
-        intel.reservation &&
-        intel.reservation.username !== myUsername;
-      const hasSources = intel.sources && intel.sources.length > 0;
-      const isSafe = intel.roomType !== "sourceKeeper" && !intel.invaderCore && (intel.hostiles || 0) === 0;
-      const recentScan = Game.time - intel.lastScanned < 2000;
+      // Skip rooms without sources
+      if (!ri.sources || ri.sources.length === 0) continue;
 
-      if (!isOwnedByOther && !isReservedByOther && hasSources && isSafe && recentScan) {
-        targets.push(roomName);
-      }
+      // Skip source keeper rooms
+      if (ri.roomType === "sourceKeeper") continue;
+
+      // Skip owned rooms
+      if (ri.owner && ri.owner !== myUsername) continue;
+
+      // Skip rooms reserved by others
+      if (ri.reservation && ri.reservation.username !== myUsername) continue;
+
+      targets.push(roomName);
     }
 
     return targets;
+  }
+
+  /**
+   * Get remote mining target rooms.
+   * Reads from Memory.colonies — the single source of truth.
+   * Falls back to derivation if colonies not yet initialized.
+   */
+  getRemoteMiningTargets(): string[] {
+    if (Memory.colonies && Memory.colonies[this.roomName]) {
+      return Memory.colonies[this.roomName].remoteRooms;
+    }
+    // Fallback: derive (should not happen after initializeColonyMemory)
+    return this.deriveRemoteTargets();
   }
 
   /**
