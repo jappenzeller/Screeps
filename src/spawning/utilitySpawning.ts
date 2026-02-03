@@ -1148,17 +1148,17 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
           bootstrapState: "TRAVELING_TO_TARGET",
         } as unknown as Partial<CreepMemory>;
       }
-      // Check new ExpansionManager
-      const empActive = Memory.empireExpansion?.active || {};
-      const expansion = Object.values(empActive).find(
-        (e) => e.parentRoom === state.room.name
-      );
-      if (expansion) {
+      // Check new ExpansionManager - use spawn request memory to get selfHarvest flag
+      const expansionManager = new ExpansionManager();
+      const builderRequests = expansionManager
+        .getSpawnRequests(state.room.name)
+        .filter((r) => r.role === "BOOTSTRAP_BUILDER");
+      if (builderRequests.length > 0) {
+        // Use memory from first request - includes selfHarvest flag
+        const req = builderRequests[0];
         return {
           ...base,
-          role: "BOOTSTRAP_BUILDER",
-          parentRoom: expansion.parentRoom,
-          targetRoom: expansion.roomName,
+          ...req.memory,
           bootstrapState: "TRAVELING_TO_TARGET",
         } as unknown as Partial<CreepMemory>;
       }

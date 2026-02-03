@@ -56,6 +56,20 @@
 
 ---
 
+### Bootstrap Builder Missing selfHarvest Flag
+
+**Status:** Fixed
+
+**Issue:** Bootstrap builders for new colonies weren't getting the `selfHarvest` flag, so they couldn't harvest their own energy and had to wait for haulers.
+
+**Root Cause:** `getCreepMemory()` in utilitySpawning.ts constructed its own memory object instead of using the spawn request from `ExpansionManager.getSpawnRequests()` which includes the `selfHarvest` flag.
+
+**Fix Applied:** Changed `getCreepMemory()` for BOOTSTRAP_BUILDER to use the memory from `ExpansionManager.getSpawnRequests()` which correctly determines which builder should self-harvest.
+
+**File:** `src/spawning/utilitySpawning.ts`
+
+---
+
 ## Limitations
 
 ### No Link/Terminal/Lab/Factory Support

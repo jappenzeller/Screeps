@@ -30,3 +30,6 @@ aws/terraform/*.tfstate
 aws/terraform/*.tfstate.*
 aws/terraform/terraform.tfvars
 aws/terraform/builds/
+
+# Lambda deployment packages
+*.zip
