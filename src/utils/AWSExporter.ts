@@ -440,7 +440,7 @@ export class AWSExporter {
     const diagnostics: Record<string, DiagnosticsExport> = {};
     for (const roomName in Game.rooms) {
       const room = Game.rooms[roomName];
-      if (room.controller?.my) {
+      if (room.controller && room.controller.my) {
         const diag = this.getDiagnostics(roomName);
         if (diag) diagnostics[roomName] = diag;
       }
@@ -451,24 +451,86 @@ export class AWSExporter {
 
     // Get home room (first owned room)
     const homeRoom = Object.keys(Game.rooms).find(
-      (name) => Game.rooms[name].controller?.my
+      (name) => Game.rooms[name].controller && Game.rooms[name].controller.my
     ) || "E46N37";
 
-    const data: AWSExportData = {
+    // Filter intel by scan age - only export recently scanned rooms
+    const INTEL_TTL = 1500; // ~75 minutes, well above Lambda's 5-min poll
+    const filteredIntel: Record<string, RoomIntel> = {};
+    const allIntel = Memory.intel || {};
+    for (const roomName in allIntel) {
+      const intel = allIntel[roomName];
+      if (!intel || !intel.lastScanned) continue;
+      const age = Game.time - intel.lastScanned;
+      if (age <= INTEL_TTL) {
+        filteredIntel[roomName] = intel;
+      }
+    }
+
+    const colonies = this.getColonies();
+
+    const payload: AWSExportData = {
       timestamp: Date.now(),
       gameTick: Game.time,
       shard: Game.shard?.name || "unknown",
       username,
       homeRoom,
-      colonies: this.getColonies(),
+      colonies,
       global: this.getGlobalStats(),
       diagnostics,
-      intel: Memory.intel || {},
+      intel: filteredIntel,
       empire: this.getEmpireStatus(),
     };
 
+    // Serialize and check size
+    let json = JSON.stringify(payload);
+
+    // Screeps segment limit is 100KB - gracefully degrade if over budget
+    if (json.length > 95000) {
+      // First: drop diagnostics (can be fetched on-demand via commands)
+      payload.diagnostics = {};
+      json = JSON.stringify(payload);
+      console.log("[AWSExporter] Over budget, dropped diagnostics. Size: " + json.length);
+    }
+
+    if (json.length > 95000) {
+      // Second: reduce intel to only remote rooms and owned rooms
+      const essentialRooms: Record<string, RoomIntel> = {};
+      for (const name in payload.intel) {
+        const room = Game.rooms[name];
+        if (room && room.controller && room.controller.my) {
+          essentialRooms[name] = payload.intel[name];
+        }
+        // Include active remote mining targets
+        for (const col of payload.colonies) {
+          if (col.remoteMining && col.remoteMining.targetRooms) {
+            for (const rt of col.remoteMining.targetRooms) {
+              if (rt.roomName === name && payload.intel[name]) {
+                essentialRooms[name] = payload.intel[name];
+              }
+            }
+          }
+        }
+      }
+      payload.intel = essentialRooms;
+      json = JSON.stringify(payload);
+      console.log("[AWSExporter] Still over budget, reduced intel. Size: " + json.length);
+    }
+
+    if (json.length > 100000) {
+      console.log("[AWSExporter] CRITICAL: Payload still " + json.length + " bytes, truncating intel");
+      payload.intel = {};
+      json = JSON.stringify(payload);
+    }
+
+    // Log size periodically
+    if (Game.time % 100 === 0) {
+      console.log("[AWSExporter] Segment 90 size: " + json.length + " bytes (" +
+        Math.round(json.length / 1000) + "KB / 100KB)");
+    }
+
     // Write to segment
-    RawMemory.segments[AWS_SEGMENT] = JSON.stringify(data);
+    RawMemory.segments[AWS_SEGMENT] = json;
   }
 
   private static getColonies(): ColonyExport[] {
@@ -487,6 +549,17 @@ export class AWSExporter {
         const role = creep.memory.role || "UNKNOWN";
         byRole[role] = (byRole[role] || 0) + 1;
 
+        // Export curated memory subset - drop _move, _lastPos, _stuckCount noise
+        const curatedMemory: Record<string, unknown> = {
+          state: creep.memory.state,
+          targetContainer: creep.memory.targetContainer,
+          targetRoom: creep.memory.targetRoom,
+          sourceId: creep.memory.sourceId,
+          taskId: creep.memory.taskId,
+          role: creep.memory.role,
+          room: creep.memory.room,
+        };
+
         creepDetails.push({
           name: creep.name,
           role: role,
@@ -499,7 +572,7 @@ export class AWSExporter {
           workParts: creep.getActiveBodyparts(WORK),
           carryParts: creep.getActiveBodyparts(CARRY),
           moveParts: creep.getActiveBodyparts(MOVE),
-          memory: { ...creep.memory },
+          memory: curatedMemory,
         });
       }
 

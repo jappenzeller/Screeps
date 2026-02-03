@@ -510,6 +510,29 @@ function haulerUtility(deficit: number, state: ColonyState): number {
 function upgraderUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
 
+  // Gate: Don't spawn upgraders if no energy is reachable at controller
+  const controller = state.room.controller;
+  if (controller) {
+    const controllerContainer = controller.pos.findInRange(FIND_STRUCTURES, 3, {
+      filter: (s) => s.structureType === STRUCTURE_CONTAINER,
+    })[0] as StructureContainer | undefined;
+
+    const controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 3, {
+      filter: (s) => s.structureType === STRUCTURE_LINK,
+    })[0] as StructureLink | undefined;
+
+    const storage = state.room.storage;
+
+    const hasEnergyAtController =
+      (controllerContainer && controllerContainer.store[RESOURCE_ENERGY] > 0) ||
+      (controllerLink && controllerLink.store[RESOURCE_ENERGY] > 0) ||
+      (storage && storage.store[RESOURCE_ENERGY] > 1000);
+
+    if (!hasEnergyAtController) {
+      return 0; // No point spawning upgrader with no energy to use
+    }
+  }
+
   const base = CONFIG.SPAWNING.BASE_UTILITY.UPGRADER;
   const energy = getEnergyState(state.room);
 
@@ -665,25 +688,23 @@ function remoteHaulerUtility(_deficit: number, state: ColonyState): number {
     // Skip rooms with hostiles - haulers would just flee
     if (roomMem?.hostiles && roomMem.hostiles > 0) continue;
 
-    // Count active miners in this room
+    // Count active miners in this room (including spawning)
     const roomMiners = Object.values(Game.creeps).filter(
       (c) =>
         c.memory.role === "REMOTE_MINER" &&
         c.memory.targetRoom === roomName &&
-        c.ticksToLive &&
-        c.ticksToLive > 50
+        (!c.ticksToLive || c.ticksToLive > 50)
     ).length;
 
     if (roomMiners === 0) continue;
     totalActiveMiners += roomMiners;
 
-    // Count haulers assigned to this room
+    // Count haulers assigned to this room (including spawning)
     const roomHaulers = Object.values(Game.creeps).filter(
       (c) =>
         c.memory.role === "REMOTE_HAULER" &&
         c.memory.targetRoom === roomName &&
-        c.ticksToLive &&
-        c.ticksToLive > 100
+        (!c.ticksToLive || c.ticksToLive > 100)
     ).length;
 
     if (roomHaulers === 0) {
@@ -693,13 +714,12 @@ function remoteHaulerUtility(_deficit: number, state: ColonyState): number {
 
   if (totalActiveMiners === 0) return 0;
 
-  // Count all existing remote haulers for this colony
+  // Count all existing remote haulers for this colony (including spawning)
   const existingHaulers = Object.values(Game.creeps).filter(
     (c) =>
       c.memory.role === "REMOTE_HAULER" &&
       c.memory.room === state.room.name &&
-      c.ticksToLive &&
-      c.ticksToLive > 100
+      (!c.ticksToLive || c.ticksToLive > 100)
   ).length;
 
   const haulersNeeded = Math.ceil(totalActiveMiners * 1.5);
@@ -767,13 +787,13 @@ function remoteDefenderUtility(state: ColonyState): number {
 
   if (threatenedRooms === 0) return 0;
 
-  // Count existing defenders
+  // Count existing defenders (including spawning)
+  // !c.ticksToLive catches spawning creeps (TTL undefined = still building)
   const existingDefenders = Object.values(Game.creeps).filter(
     (c) =>
       c.memory.role === "REMOTE_DEFENDER" &&
       c.memory.room === state.room.name &&
-      c.ticksToLive &&
-      c.ticksToLive > 100
+      (!c.ticksToLive || c.ticksToLive > 100)
   ).length;
 
   // Need 1 defender per threatened room
@@ -810,23 +830,22 @@ function reserverUtility(_deficit: number, state: ColonyState): number {
     const remoteRoom = Game.rooms[roomName];
     const reservation = remoteRoom?.controller?.reservation;
     if (!reservation || reservation.ticksToEnd < 2000 || reservation.username !== myUsername) {
-      // Only if we have miners there (worth protecting)
+      // Only if we have miners there (worth protecting) - including spawning
       const hasMiners = Object.values(Game.creeps).some(
         (c) =>
           c.memory.role === "REMOTE_MINER" &&
           c.memory.targetRoom === roomName &&
-          c.ticksToLive &&
-          c.ticksToLive > 100
+          (!c.ticksToLive || c.ticksToLive > 100)
       );
       if (hasMiners) {
-        // Check if we already have a reserver assigned with enough TTL
-        // 200 ticks gives buffer for spawn + travel of replacement
+        // Check if we already have a reserver assigned (including spawning)
+        // !c.ticksToLive catches spawning creeps (TTL undefined = still building = healthy)
+        // c.ticksToLive > 200 catches live creeps with enough life left
         const hasReserver = Object.values(Game.creeps).some(
           (c) =>
             c.memory.role === "RESERVER" &&
             c.memory.targetRoom === roomName &&
-            c.ticksToLive &&
-            c.ticksToLive > 200
+            (!c.ticksToLive || c.ticksToLive > 200)
         );
         if (!hasReserver) {
           needsReservation = true;

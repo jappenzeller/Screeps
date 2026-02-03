@@ -209,8 +209,8 @@ function getDirection(dx: number, dy: number): DirectionConstant {
 }
 
 /**
- * Simple moveTo wrapper with high reusePath.
- * Uses Screeps' built-in pathfinder with stuck detection.
+ * Smart moveTo wrapper with stuck detection and dynamic ignoreCreeps.
+ * Uses Screeps' built-in pathfinder with sensible defaults.
  */
 export function smartMoveTo(
   creep: Creep,
@@ -227,9 +227,42 @@ export function smartMoveTo(
     }
   }
 
-  // Simple moveTo with high reusePath to minimize recalculation
-  return creep.moveTo(targetPos, {
-    reusePath: 50,
+  // Stuck detection: track position
+  const currentPos = creep.pos.x + "," + creep.pos.y;
+  if (creep.memory._lastPos === currentPos) {
+    creep.memory._stuckCount = (creep.memory._stuckCount || 0) + 1;
+  } else {
+    creep.memory._stuckCount = 0;
+  }
+  creep.memory._lastPos = currentPos;
+
+  const stuckCount = creep.memory._stuckCount || 0;
+
+  // After 5 ticks stuck: random shove to break deadlock
+  if (stuckCount > 5) {
+    const directions: DirectionConstant[] = [TOP, TOP_RIGHT, RIGHT, BOTTOM_RIGHT, BOTTOM, BOTTOM_LEFT, LEFT, TOP_LEFT];
+    const randomDir = directions[Math.floor(Math.random() * directions.length)];
+    creep.move(randomDir);
+    creep.memory._stuckCount = 0;
+    return OK;
+  }
+
+  // Build move options
+  const range = creep.pos.getRangeTo(targetPos);
+  const moveOpts: MoveToOpts = {
+    reusePath: 10, // Lower default for more responsive pathing
     ...opts,
-  });
+  };
+
+  // After 3 ticks stuck: recalculate ignoring creeps
+  if (stuckCount > 2) {
+    moveOpts.reusePath = 0; // Force recalculation
+    moveOpts.ignoreCreeps = true;
+  }
+  // Short-range ignoreCreeps: when target is 3 tiles or less, path through creeps
+  else if (range <= 3) {
+    moveOpts.ignoreCreeps = true;
+  }
+
+  return creep.moveTo(targetPos, moveOpts);
 }

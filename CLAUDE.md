@@ -7,13 +7,28 @@ You are developing a Screeps bot - an AI for a real-time strategy MMO where you 
 This is a TypeScript Screeps bot targeting the official MMO server (shard0). The codebase uses Rollup for bundling and deploys via the Screeps API. There is also an AWS monitoring stack (Fargate + Lambda) for external alerting.
 
 ### Current State
-- Functional RCL 1-4 economy with task-based creeps
+
+- Functional RCL 1-8 economy with utility-based spawning
 - ColonyManager as single source of truth for colony coordination
 - Phase-aware task priorities (BOOTSTRAP, DEVELOPING, STABLE, EMERGENCY)
-- Simple structure placement and spawning
-- Basic tower defense
-- No link/terminal/lab/factory management
-- No combat beyond basic melee defender
+- 15 creep roles including remote mining and expansion
+- Utility-based spawning that adapts to colony needs
+- Basic link support, tower defense
+- Remote mining with reservers, defenders
+- Expansion system for claiming new rooms
+- AWS monitoring with AI recommendations
+- No terminal/lab/factory management
+
+### Documentation
+
+See `docs/README.md` for comprehensive documentation:
+
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Core systems
+- [SPAWNING.md](docs/SPAWNING.md) - Utility spawning
+- [ECONOMY.md](docs/ECONOMY.md) - Energy flow
+- [REMOTE_MINING.md](docs/REMOTE_MINING.md) - Remote operations
+- [EXPANSION.md](docs/EXPANSION.md) - Room claiming
+- [CONSOLE_COMMANDS.md](docs/CONSOLE_COMMANDS.md) - Debug commands
 
 ### Core Systems
 
@@ -346,30 +361,30 @@ When adding a new system:
 
 ---
 
-## Current Codebase Issues to Fix
+## Current Codebase Issues
 
-1. **Harvester static miner** - No handling for full container; creep just idles
+See [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) for detailed issue tracking.
 
-2. **RemoteMiner** - No distance limiting on target room selection
+**Limitations:**
 
-3. **Reserver/Claimer** - Listed in roles.ts but not implemented
-
-4. **No link support** - Missing entirely
-
-5. **AWS task-definition.json** - Hardcoded Screeps token, should use Secrets Manager
+- No terminal/lab/factory support (RCL 6-8 features)
+- Source keeper rooms not supported (too costly)
+- Limited combat beyond basic defenders
 
 ## Console Commands
 
-- `colony()` - Shows ColonyManager status for all owned rooms (phase, workforce, tasks)
-- `colony("W1N1")` - Shows status for specific room
-- `status()` - Quick overview of all colonies
-- `tasks()` - Shows current task assignments
-- `creeps()` - List all creeps
+See [docs/CONSOLE_COMMANDS.md](docs/CONSOLE_COMMANDS.md) for full list.
+
+**Quick Reference:**
+
+- `status()` - Overview of all colonies
+- `colony()` / `colony("W1N1")` - ColonyManager status
+- `creeps()` / `creeps("ROLE")` - List creeps
+- `tasks()` - Current task assignments
 - `cpu()` - CPU and bucket status
-- `construction()` - Show construction status and priorities
-- `awsExport()` - Show AWS memory segment export status
-- `advisor()` - Show AI Advisor API endpoints
-- `fetchAdvisor("W1N1")` - Show cached AI recommendations
+- `spawn("ROLE")` - Force spawn
+- `remote()` - Remote mining status
+- `expansion.status()` - Expansion state
 
 ---
 
@@ -380,10 +395,8 @@ External AI-powered analysis system that monitors colony performance and provide
 ### API Endpoint
 
 ```text
-https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com
+https://dossn1w7n5.execute-api.us-east-1.amazonaws.com
 ```
-
-(Replace with actual endpoint after terraform apply)
 
 ### Endpoints
 
@@ -394,18 +407,25 @@ https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com
 
 ### How It Works
 
-1. Bot exports stats to `RawMemory.segments[90]` every 100 ticks
+1. Bot exports stats to `RawMemory.segments[90]` every 20 ticks
 2. Data collector Lambda fetches segment every 5 minutes
 3. Analysis engine runs Claude AI hourly to generate recommendations
 4. Recommendations stored in DynamoDB with 30-day retention
 
 ### Deployment
 
+**Note for Claude**: DO NOT use Terraform. AWS deployments use AWS CLI only.
+
 ```bash
-cd aws/terraform
-export TF_VAR_screeps_token="your-token"
-export TF_VAR_anthropic_api_key="your-key"
-terraform init && terraform apply
+# 1. Build Lambda zip
+cd aws/lambda && powershell -Command "Compress-Archive -Path api/* -DestinationPath api.zip -Force"
+
+# 2. Deploy Lambda function code
+aws lambda update-function-code --function-name screeps-api-prod --zip-file fileb://aws/lambda/api.zip
+
+# 3. Add new API Gateway routes (if needed)
+# API ID: dossn1w7n5, Integration ID: 650eqca
+aws apigatewayv2 create-route --api-id dossn1w7n5 --route-key "GET /new-route" --target "integrations/650eqca"
 ```
 
 ### Estimated Cost
