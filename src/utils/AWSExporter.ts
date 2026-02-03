@@ -11,6 +11,9 @@ import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/E
 
 const AWS_SEGMENT = 90;
 
+// Module-level cache for delta tracking (survives within tick, resets on global reset)
+let lastExportTick: number = 0;
+
 interface ExpansionCandidateExport {
   roomName: string;
   totalScore: number;
@@ -114,6 +117,7 @@ interface AWSExportData {
   diagnostics: Record<string, DiagnosticsExport>;
   intel: Record<string, RoomIntel>;
   empire: EmpireExport | null;
+  exportMeta?: ExportMeta;
 }
 
 interface CreepDetail {
@@ -437,6 +441,12 @@ export class AWSExporter {
     // Request segment for next tick
     RawMemory.setActiveSegments([AWS_SEGMENT]);
 
+    // Read persisted lastExportTick from Memory.settings
+    if (!Memory.settings) Memory.settings = {} as SettingsFlags;
+    if (Memory.settings.lastExportTick) {
+      lastExportTick = Memory.settings.lastExportTick;
+    }
+
     // Collect diagnostics for all owned rooms
     const diagnostics: Record<string, DiagnosticsExport> = {};
     for (const roomName in Game.rooms) {
@@ -455,20 +465,21 @@ export class AWSExporter {
       (name) => Game.rooms[name].controller && Game.rooms[name].controller.my
     ) || "E46N37";
 
-    // Filter intel by scan age - only export recently scanned rooms
-    const INTEL_TTL = 1500; // ~75 minutes, well above Lambda's 5-min poll
-    const filteredIntel: Record<string, RoomIntel> = {};
+    // Delta-based: only export intel scanned since last export
+    const deltaIntel: Record<string, RoomIntel> = {};
+    let deltaCount = 0;
     const allIntel = Memory.intel || {};
     for (const roomName in allIntel) {
       const intel = allIntel[roomName];
       if (!intel || !intel.lastScanned) continue;
-      const age = Game.time - intel.lastScanned;
-      if (age <= INTEL_TTL) {
-        filteredIntel[roomName] = intel;
+      if (intel.lastScanned > lastExportTick) {
+        deltaIntel[roomName] = intel;
+        deltaCount++;
       }
     }
 
     const colonies = this.getColonies();
+    const totalIntelCount = Object.keys(allIntel).length;
 
     const payload: AWSExportData = {
       timestamp: Date.now(),
@@ -479,8 +490,13 @@ export class AWSExporter {
       colonies,
       global: this.getGlobalStats(),
       diagnostics,
-      intel: filteredIntel,
+      intel: deltaIntel,
       empire: this.getEmpireStatus(),
+      exportMeta: {
+        lastExportTick: lastExportTick,
+        deltaIntelCount: deltaCount,
+        totalIntelCount: totalIntelCount,
+      },
     };
 
     // Serialize and check size
@@ -495,27 +511,39 @@ export class AWSExporter {
     }
 
     if (json.length > 95000) {
-      // Second: reduce intel to only remote rooms and owned rooms
-      const essentialRooms: Record<string, RoomIntel> = {};
-      for (const name in payload.intel) {
-        const room = Game.rooms[name];
-        if (room && room.controller && room.controller.my) {
-          essentialRooms[name] = payload.intel[name];
-        }
-        // Include active remote mining targets
-        for (const col of payload.colonies) {
-          if (col.remoteMining && col.remoteMining.targetRooms) {
-            for (const rt of col.remoteMining.targetRooms) {
-              if (rt.roomName === name && payload.intel[name]) {
-                essentialRooms[name] = payload.intel[name];
-              }
-            }
-          }
+      // Second: reduce delta intel to only operationally critical rooms
+      const essentialIntel: Record<string, RoomIntel> = {};
+      const essentialRooms = new Set<string>();
+
+      // Owned rooms - always keep
+      for (var i = 0; i < payload.colonies.length; i++) {
+        essentialRooms.add(payload.colonies[i].roomName);
+      }
+
+      // Active remote targets - always keep
+      for (var j = 0; j < payload.colonies.length; j++) {
+        var remotes = payload.colonies[j].remoteRooms || [];
+        for (var k = 0; k < remotes.length; k++) {
+          essentialRooms.add(remotes[k]);
         }
       }
-      payload.intel = essentialRooms;
+
+      // Active expansion targets - always keep
+      if (payload.empire && payload.empire.expansion && payload.empire.expansion.active) {
+        var active = payload.empire.expansion.active;
+        for (var m = 0; m < active.length; m++) {
+          essentialRooms.add(active[m].roomName);
+        }
+      }
+
+      for (var name in payload.intel) {
+        if (essentialRooms.has(name)) {
+          essentialIntel[name] = payload.intel[name];
+        }
+      }
+      payload.intel = essentialIntel;
       json = JSON.stringify(payload);
-      console.log("[AWSExporter] Still over budget, reduced intel. Size: " + json.length);
+      console.log("[AWSExporter] Over budget, reduced intel to essential. Size: " + json.length);
     }
 
     if (json.length > 100000) {
@@ -524,14 +552,19 @@ export class AWSExporter {
       json = JSON.stringify(payload);
     }
 
-    // Log size periodically
+    // Log size periodically with delta info
     if (Game.time % 100 === 0) {
-      console.log("[AWSExporter] Segment 90 size: " + json.length + " bytes (" +
-        Math.round(json.length / 1000) + "KB / 100KB)");
+      console.log("[AWSExporter] Segment 90: " + json.length + " bytes (" +
+        Math.round(json.length / 1000) + "KB), delta intel: " + deltaCount +
+        "/" + totalIntelCount + " rooms");
     }
 
     // Write to segment
     RawMemory.segments[AWS_SEGMENT] = json;
+
+    // Persist lastExportTick after successful write
+    Memory.settings.lastExportTick = Game.time;
+    lastExportTick = Game.time;
   }
 
   private static getColonies(): ColonyExport[] {

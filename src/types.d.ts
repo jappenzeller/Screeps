@@ -197,6 +197,14 @@ interface DebugFlags {
 interface SettingsFlags {
   showVisuals?: boolean;
   logPositions?: boolean;
+  lastExportTick?: number; // Last successful AWS export tick for delta tracking
+}
+
+// Export metadata for AWS Lambda visibility
+interface ExportMeta {
+  lastExportTick: number;
+  deltaIntelCount: number;
+  totalIntelCount: number;
 }
 
 // Bootstrap builder creep memory
