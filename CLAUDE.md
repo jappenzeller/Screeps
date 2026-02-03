@@ -414,18 +414,18 @@ https://dossn1w7n5.execute-api.us-east-1.amazonaws.com
 
 ### Deployment
 
-**Note for Claude**: DO NOT use Terraform. AWS deployments use AWS CLI only.
+**Infrastructure**: CloudFormation (`aws/cloudformation/template.yaml`)
+**Lambda deployment**: AWS CLI
 
 ```bash
 # 1. Build Lambda zip
 cd aws/lambda && powershell -Command "Compress-Archive -Path api/* -DestinationPath api.zip -Force"
 
 # 2. Deploy Lambda function code
-aws lambda update-function-code --function-name screeps-api-prod --zip-file fileb://aws/lambda/api.zip
+aws lambda update-function-code --function-name screeps-advisor-api --zip-file fileb://aws/lambda/api.zip
 
-# 3. Add new API Gateway routes (if needed)
-# API ID: dossn1w7n5, Integration ID: 650eqca
-aws apigatewayv2 create-route --api-id dossn1w7n5 --route-key "GET /new-route" --target "integrations/650eqca"
+# 3. Update CloudFormation stack (if infrastructure changes needed)
+aws cloudformation deploy --template-file aws/cloudformation/template.yaml --stack-name screeps-advisor-prod --capabilities CAPABILITY_IAM
 ```
 
 ### Estimated Cost

@@ -24,6 +24,7 @@ import {
 import { roleCountUtility, getEffectiveCount } from "./utilities/populationUtility";
 import { getBootstrapBuilderBody } from "../creeps/BootstrapBuilder";
 import { getBootstrapHaulerBody } from "../creeps/BootstrapHauler";
+import { getBootstrapWorkerBody } from "../creeps/BootstrapWorker";
 import { ExpansionManager } from "../empire";
 
 // TTL thresholds for proactive replacement spawning
@@ -46,7 +47,8 @@ type SpawnRole =
   | "MINERAL_HARVESTER"
   | "CLAIMER"
   | "BOOTSTRAP_BUILDER"
-  | "BOOTSTRAP_HAULER";
+  | "BOOTSTRAP_HAULER"
+  | "BOOTSTRAP_WORKER";
 
 const ALL_ROLES: SpawnRole[] = [
   "HARVESTER",
@@ -64,6 +66,7 @@ const ALL_ROLES: SpawnRole[] = [
   "CLAIMER",
   "BOOTSTRAP_BUILDER",
   "BOOTSTRAP_HAULER",
+  "BOOTSTRAP_WORKER",
 ];
 
 export interface SpawnCandidate {
@@ -323,10 +326,50 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     }
   }
 
-  // Hauler target: only spawn haulers after source containers exist
-  let haulerTarget = sources;
+  // Hauler target: throughput-aware calculation
+  // Early colony gate: no containers = haulers have nothing to pick up
+  let haulerTarget = sources; // default fallback
   if (isEarlyColony && !m.hasSourceContainers) {
-    haulerTarget = 0; // No containers = haulers have nothing to pick up
+    haulerTarget = 0;
+  } else {
+    // Throughput-aware hauler target
+    // Estimate hauler carry capacity from energy cap
+    // Hauler body pattern: CARRY, CARRY, MOVE (150 per unit)
+    const haulerUnitCost = BODYPART_COST[CARRY] * 2 + BODYPART_COST[MOVE]; // 150
+    const haulerUnits = Math.floor(room.energyCapacityAvailable / haulerUnitCost);
+    const estimatedCarry = Math.min(haulerUnits * 2, 32) * 50; // cap at 32 CARRY (50 body part limit with MOVE)
+
+    if (estimatedCarry > 0) {
+      // Estimate average haul distance from source containers to spawn
+      const spawn = room.find(FIND_MY_SPAWNS)[0];
+      const sourceContainers = room.find(FIND_STRUCTURES, {
+        filter: function(s: AnyStructure) {
+          return s.structureType === STRUCTURE_CONTAINER &&
+            s.pos.findInRange(FIND_SOURCES, 1).length > 0;
+        },
+      }) as StructureContainer[];
+
+      let avgDistance = 20; // conservative default
+      if (spawn && sourceContainers.length > 0) {
+        let totalDist = 0;
+        for (const container of sourceContainers) {
+          // Use linear distance as cheap estimate (actual path is longer)
+          // Multiply by 1.3 to approximate pathing overhead
+          const linear = spawn.pos.getRangeTo(container);
+          totalDist += Math.ceil(linear * 1.3);
+        }
+        avgDistance = Math.ceil(totalDist / sourceContainers.length);
+      }
+
+      // Round trip + load/unload overhead
+      const roundTrip = avgDistance * 2 + 4;
+      // Throughput per hauler in energy/tick
+      const haulerThroughput = estimatedCarry / roundTrip;
+      // Total source output
+      const totalSourceOutput = sources * 10;
+      // Haulers needed to keep up
+      haulerTarget = Math.max(sources, Math.ceil(totalSourceOutput / haulerThroughput));
+    }
   }
 
   // Upgrader target: milestone-gated
@@ -441,6 +484,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return bootstrapBuilderUtility(state);
     case "BOOTSTRAP_HAULER":
       return bootstrapHaulerUtility(state);
+    case "BOOTSTRAP_WORKER":
+      return bootstrapWorkerUtility(state);
     default:
       return 0;
   }
@@ -505,12 +550,60 @@ function haulerUtility(deficit: number, state: ColonyState): number {
 /**
  * Upgrader utility - uses modular utility system
  * Considers storage level, sustainability, energy rate, and population
+ *
+ * RCL 1-3 override: Upgraders are suppressed until economy is stable
  */
 function upgraderUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
 
-  // Gate: Don't spawn upgraders if no energy is reachable at controller
   const controller = state.room.controller;
+
+  // === RCL 1-3 YOUNG COLONY GATE ===
+  // Upgraders are a luxury - only spawn if economy is truly stable
+  if (state.rcl <= 3) {
+    // Emergency upgrade: controller about to downgrade
+    if (controller && controller.ticksToDowngrade && controller.ticksToDowngrade < 5000) {
+      // Allow emergency upgrader with utility 80
+      return 80;
+    }
+
+    // Gate: need at least 1 harvester per source
+    var harvesters = state.counts.HARVESTER || 0;
+    var sources = state.room.find(FIND_SOURCES).length;
+    if (harvesters < sources) {
+      return 0; // Economy not running - no upgraders
+    }
+
+    // Gate: need at least 1 hauler
+    if ((state.counts.HAULER || 0) === 0) {
+      return 0; // Can't move energy - no upgraders
+    }
+
+    // Gate: economy must be positive (more income than consumption)
+    // At young colonies, income should exceed current creep consumption
+    if (state.energyIncome < 4) {
+      return 0; // Not enough income to sustain upgrading
+    }
+
+    // Gate: must have energy at controller OR spawn energy is consistently available
+    var hasContainer = false;
+    if (controller) {
+      var nearby = controller.pos.findInRange(FIND_STRUCTURES, 3, {
+        filter: function(s) { return s.structureType === STRUCTURE_CONTAINER; }
+      });
+      hasContainer = nearby.length > 0 && (nearby[0] as StructureContainer).store[RESOURCE_ENERGY] > 100;
+    }
+    var spawnHealthy = state.energyAvailable >= state.energyCapacity * 0.8;
+
+    if (!hasContainer && !spawnHealthy) {
+      return 0; // No energy delivery system to controller
+    }
+
+    // Young colony upgrader: low utility, max 1
+    return (state.counts.UPGRADER || 0) === 0 ? 30 : 0;
+  }
+
+  // Gate: Don't spawn upgraders if no energy is reachable at controller
   if (controller) {
     const controllerContainer = controller.pos.findInRange(FIND_STRUCTURES, 3, {
       filter: (s) => s.structureType === STRUCTURE_CONTAINER,
@@ -569,6 +662,8 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
 /**
  * Builder utility - uses modular utility system
  * Accounts for remote room construction sites and storage levels
+ *
+ * RCL 1-3 override: Builders only spawn when economy can support them
  */
 function builderUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
@@ -576,6 +671,31 @@ function builderUtility(deficit: number, state: ColonyState): number {
   // Use pre-calculated site count from state (includes home + remote + assumed)
   const totalSites = state.constructionSites;
   if (totalSites === 0) return 0;
+
+  // === RCL 1-3 YOUNG COLONY GATE ===
+  if (state.rcl <= 3) {
+    // Gate: need at least 1 harvester
+    if ((state.counts.HARVESTER || 0) === 0) {
+      return 0; // No income - no building
+    }
+
+    // Gate: need at least 1 hauler
+    if ((state.counts.HAULER || 0) === 0) {
+      return 0; // Can't move energy - no building
+    }
+
+    // Gate: must have some energy income
+    if (state.energyIncome < 4) {
+      return 0; // Not enough income
+    }
+
+    // Young colony builder: moderate utility, max 1-2
+    var currentBuilders = state.counts.BUILDER || 0;
+    if (currentBuilders >= 2) return 0;
+
+    // First builder gets utility 50, second gets 25
+    return currentBuilders === 0 ? 50 : 25;
+  }
 
   const base = CONFIG.SPAWNING.BASE_UTILITY.BUILDER;
   const energy = getEnergyState(state.room);
@@ -620,12 +740,20 @@ function builderUtility(deficit: number, state: ColonyState): number {
 
 /**
  * Defender utility - 0 without threat, scales with threat level
+ *
+ * RCL 1-3: max 1 defender
+ * RCL 4-5: max 2 defenders
+ * RCL 6+: no cap (towers handle most threats)
  */
 function defenderUtility(_deficit: number, state: ColonyState): number {
   // No threat = no utility, regardless of deficit
   if (state.homeThreats === 0) return 0;
 
   const current = state.counts.DEFENDER || 0;
+
+  // Cap defenders based on RCL
+  if (state.rcl <= 3 && current >= 1) return 0;
+  if (state.rcl <= 5 && current >= 2) return 0;
 
   // Utility scales with threat count
   let utility = state.homeThreats * 50;
@@ -1001,6 +1129,63 @@ function bootstrapHaulerUtility(state: ColonyState): number {
   return 75;
 }
 
+/**
+ * Bootstrap worker utility - spawns when a colony needs emergency help
+ * Triggers when:
+ * - Colony has spawn but < 3 creeps with WORK parts
+ * - Colony has no energy income (no miners/harvesters active)
+ * - Controller ticksToDowngrade < 10000
+ */
+function bootstrapWorkerUtility(state: ColonyState): number {
+  // Check for colonies needing help
+  var empExpansion = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
+  if (!empExpansion) return 0;
+
+  var empActive = empExpansion.active || {};
+  var activeKeys = Object.keys(empActive);
+
+  for (var i = 0; i < activeKeys.length; i++) {
+    var expansion = empActive[activeKeys[i]];
+    if (expansion.parentRoom !== state.room.name) continue;
+
+    // Check if this expansion needs bootstrap workers
+    var targetRoom = Game.rooms[expansion.roomName];
+    if (!targetRoom) continue;
+
+    var spawns = targetRoom.find(FIND_MY_SPAWNS);
+    if (spawns.length === 0) continue; // No spawn yet, use builder/hauler
+
+    // Count WORK parts in target room
+    var workParts = 0;
+    var targetCreeps = targetRoom.find(FIND_MY_CREEPS);
+    for (var j = 0; j < targetCreeps.length; j++) {
+      workParts += targetCreeps[j].getActiveBodyparts(WORK);
+    }
+
+    // Count existing bootstrap workers heading to this room
+    var existingWorkers = Object.values(Game.creeps).filter(function(c) {
+      return c.memory.role === "BOOTSTRAP_WORKER" &&
+        (c.memory as any).targetRoom === expansion.roomName;
+    }).length;
+
+    // Need workers if: < 3 WORK parts and < 4 workers assigned
+    var needsWorkers = workParts < 3 && existingWorkers < 4;
+
+    // Also check controller emergency
+    var controller = targetRoom.controller;
+    if (controller && controller.my && controller.ticksToDowngrade && controller.ticksToDowngrade < 10000) {
+      needsWorkers = true;
+    }
+
+    if (needsWorkers) {
+      // High priority - colony survival
+      return 60;
+    }
+  }
+
+  return 0;
+}
+
 // ============================================
 // Body Building Functions
 // ============================================
@@ -1045,6 +1230,9 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   }
   if (role === "BOOTSTRAP_HAULER") {
     return getBootstrapHaulerBody(energy);
+  }
+  if (role === "BOOTSTRAP_WORKER") {
+    return getBootstrapWorkerBody(energy);
   }
 
   // Can't afford this role's minimum body
@@ -1161,6 +1349,38 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
           ...base,
           targetRoom: claimTarget.roomName,
         };
+      }
+      return base;
+    }
+
+    case "BOOTSTRAP_WORKER": {
+      // Find expansion needing bootstrap workers
+      var empExpansion3 = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
+      var empActive3 = empExpansion3 ? empExpansion3.active : {};
+      var workerTarget = null;
+      var activeKeys3 = Object.keys(empActive3);
+      for (var k = 0; k < activeKeys3.length; k++) {
+        var exp3 = empActive3[activeKeys3[k]];
+        if (exp3.parentRoom === state.room.name) {
+          // Check if this expansion needs workers
+          var targetRoom = Game.rooms[exp3.roomName];
+          if (targetRoom) {
+            var spawns = targetRoom.find(FIND_MY_SPAWNS);
+            if (spawns.length > 0) {
+              workerTarget = exp3;
+              break;
+            }
+          }
+        }
+      }
+      if (workerTarget) {
+        return {
+          ...base,
+          role: "BOOTSTRAP_WORKER",
+          parentRoom: workerTarget.parentRoom,
+          targetRoom: workerTarget.roomName,
+          state: "MOVING",
+        } as unknown as Partial<CreepMemory>;
       }
       return base;
     }

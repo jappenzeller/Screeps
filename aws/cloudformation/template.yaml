@@ -280,6 +280,20 @@ Resources:
         - Id: outcome-evaluator
           Arn: !GetAtt OutcomeEvaluatorFunction.Arn
 
+  # ==================== S3 Analytics Bucket (for Athena/QuickSight) ====================
+  AnalyticsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ProjectName}-analytics-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldData
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
   # ==================== S3 Archiving ====================
   ArchiveBucket:
     Type: AWS::S3::Bucket
@@ -381,6 +395,7 @@ Resources:
                 Action:
                   - dynamodb:PutItem
                   - dynamodb:BatchWriteItem
+                  - dynamodb:Query
                 Resource:
                   - !GetAtt SnapshotsTable.Arn
                   - !GetAtt EventsTable.Arn
@@ -390,6 +405,12 @@ Resources:
                   - secretsmanager:GetSecretValue
                 Resource:
                   - !Ref ScreepsTokenSecret
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource:
+                  - !Sub ${AnalyticsBucket.Arn}/*
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -832,6 +853,7 @@ Resources:
           SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
           SCREEPS_SHARD: !Ref ScreepsShard
           RETENTION_DAYS: !Ref RetentionDays
+          ANALYTICS_BUCKET: !Ref AnalyticsBucket
 
   AnalysisEngineFunction:
     Type: AWS::Lambda::Function
@@ -1151,53 +1173,11 @@ Resources:
       IntegrationUri: !GetAtt ApiFunction.Arn
       PayloadFormatVersion: '2.0'
 
-  RouteSummary:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: GET /summary/{roomName}
-      Target: !Sub integrations/${ApiIntegration}
-
-  RouteRecommendations:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: GET /recommendations/{roomName}
-      Target: !Sub integrations/${ApiIntegration}
-
   RouteMetrics:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: GET /metrics/{roomName}
-      Target: !Sub integrations/${ApiIntegration}
-
-  RouteFeedback:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: POST /feedback/{recommendationId}
-      Target: !Sub integrations/${ApiIntegration}
-
-  RouteLiveRoom:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: GET /live/{roomName}
-      Target: !Sub integrations/${ApiIntegration}
-
-  RouteLiveAll:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: GET /live
-      Target: !Sub integrations/${ApiIntegration}
-
-  RouteRoomData:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: GET /room/{roomName}
       Target: !Sub integrations/${ApiIntegration}
 
   # ==================== v2 Colony Routes ====================
@@ -1370,6 +1350,224 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt AnalysisSchedule.Arn
 
+  # ==================== Athena/Glue for QuickSight ====================
+  AthenaResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ProjectName}-athena-results-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireQueryResults
+            Status: Enabled
+            ExpirationInDays: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AthenaWorkgroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub ${ProjectName}-workgroup
+      State: ENABLED
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub s3://${AthenaResultsBucket}/query-results/
+        EnforceWorkGroupConfiguration: true
+        PublishCloudWatchMetricsEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub ${ProjectName}_db
+        Description: Screeps analytics database for QuickSight
+
+  GlueSnapshotsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: snapshots
+        Description: Colony snapshots for QuickSight analytics
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+          projection.enabled: 'true'
+          projection.dt.type: date
+          projection.dt.range: '2024-01-01,NOW'
+          projection.dt.format: yyyy-MM-dd
+          projection.hour.type: integer
+          projection.hour.range: '0,23'
+          projection.hour.digits: '2'
+          storage.location.template: !Sub s3://${AnalyticsBucket}/snapshots/dt=${!dt}/hour=${!hour}/
+        StorageDescriptor:
+          Location: !Sub s3://${AnalyticsBucket}/snapshots/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+          Columns:
+            - Name: timestamp
+              Type: string
+            - Name: timestampms
+              Type: bigint
+            - Name: gametick
+              Type: bigint
+            - Name: shard
+              Type: string
+            - Name: roomname
+              Type: string
+            - Name: rcl
+              Type: int
+            - Name: rclprogress
+              Type: bigint
+            - Name: rclprogresstotal
+              Type: bigint
+            - Name: energyavailable
+              Type: int
+            - Name: energycapacity
+              Type: int
+            - Name: energystored
+              Type: int
+            - Name: totalcreeps
+              Type: int
+            - Name: harvester
+              Type: int
+            - Name: hauler
+              Type: int
+            - Name: upgrader
+              Type: int
+            - Name: builder
+              Type: int
+            - Name: defender
+              Type: int
+            - Name: remoteminer
+              Type: int
+            - Name: remotehauler
+              Type: int
+            - Name: reserver
+              Type: int
+            - Name: hostilecount
+              Type: int
+            - Name: hostiledps
+              Type: int
+            - Name: constructionsites
+              Type: int
+            - Name: damagedstructures
+              Type: int
+            - Name: cpuused
+              Type: double
+            - Name: cpulimit
+              Type: int
+            - Name: cpubucket
+              Type: int
+            - Name: gcllevel
+              Type: int
+            - Name: gclprogress
+              Type: bigint
+            - Name: gclprogresstotal
+              Type: bigint
+        PartitionKeys:
+          - Name: dt
+            Type: string
+          - Name: hour
+            Type: string
+
+  GlueSignalsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: signals
+        Description: Signal metrics and events for QuickSight analytics
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+          projection.enabled: 'true'
+          projection.dt.type: date
+          projection.dt.range: '2024-01-01,NOW'
+          projection.dt.format: yyyy-MM-dd
+          projection.hour.type: integer
+          projection.hour.range: '0,23'
+          projection.hour.digits: '2'
+          storage.location.template: !Sub s3://${AnalyticsBucket}/signals/dt=${!dt}/hour=${!hour}/
+        StorageDescriptor:
+          Location: !Sub s3://${AnalyticsBucket}/signals/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+          Columns:
+            - Name: timestamp
+              Type: string
+            - Name: timestampms
+              Type: bigint
+            - Name: gametick
+              Type: bigint
+            - Name: roomname
+              Type: string
+            - Name: energystored
+              Type: int
+            - Name: energyavailable
+              Type: int
+            - Name: energycapacity
+              Type: int
+            - Name: rclprogress
+              Type: bigint
+            - Name: rcllevel
+              Type: int
+            - Name: gclprogress
+              Type: bigint
+            - Name: creeptotal
+              Type: int
+            - Name: cpuused
+              Type: double
+            - Name: cpubucket
+              Type: int
+            - Name: remoteminercount
+              Type: int
+            - Name: remotehaulercount
+              Type: int
+            - Name: reservercount
+              Type: int
+            - Name: hostilecount
+              Type: int
+            - Name: towerenergy
+              Type: int
+            - Name: energydelta
+              Type: int
+            - Name: rclprogressrate
+              Type: bigint
+            - Name: creepdelta
+              Type: int
+            - Name: cpudelta
+              Type: double
+            - Name: eventcount
+              Type: int
+            - Name: hasthresholdevent
+              Type: int
+            - Name: hasanomalyevent
+              Type: int
+            - Name: hastrendevent
+              Type: int
+            - Name: criticalevents
+              Type: int
+            - Name: warningevents
+              Type: int
+            - Name: alertevents
+              Type: int
+        PartitionKeys:
+          - Name: dt
+            Type: string
+          - Name: hour
+            Type: string
+
 Outputs:
   ApiEndpoint:
     Description: API Gateway endpoint URL
@@ -1420,3 +1618,15 @@ Outputs:
   IntelTableName:
     Description: DynamoDB intel table name
     Value: !Ref IntelTable
+
+  AnalyticsBucketName:
+    Description: S3 analytics bucket for QuickSight/Athena
+    Value: !Ref AnalyticsBucket
+
+  AthenaWorkgroupName:
+    Description: Athena workgroup name
+    Value: !Ref AthenaWorkgroup
+
+  GlueDatabaseName:
+    Description: Glue database name for Athena
+    Value: !Ref GlueDatabase

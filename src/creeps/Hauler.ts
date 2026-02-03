@@ -99,8 +99,24 @@ function shouldRenew(creep: Creep): "critical" | "opportunistic" | false {
     return "critical";
   }
 
-  // Opportunistic: ONLY if we're already adjacent to spawn (don't travel for it)
-  const opportunisticThreshold = Math.max(200, spawnTime * 5);
+  // Opportunistic: renew if we're already adjacent to spawn (don't travel for it)
+  // Use higher threshold so haulers start renewing earlier
+  var opportunisticThreshold = Math.max(500, spawnTime * 8);
+
+  // If already renewing (mid-session), keep going until we hit the target TTL
+  // This prevents the "renew 1 tick, leave, come back" cycle
+  var renewTarget = Math.min(1400, opportunisticThreshold + 200);
+  if (creep.memory.renewing && ttl < renewTarget) {
+    if (creep.pos.isNearTo(spawn) && !spawn.spawning) {
+      return "opportunistic";
+    }
+    // If we drifted away from spawn mid-renewal, clear the flag
+    if (!creep.pos.isNearTo(spawn)) {
+      delete creep.memory.renewing;
+      creep.memory._renewTicks = 0;
+    }
+  }
+
   if (ttl <= opportunisticThreshold) {
     if (creep.pos.isNearTo(spawn) && !spawn.spawning) {
       return "opportunistic";
@@ -202,6 +218,8 @@ function tryRenew(creep: Creep, mode: "critical" | "opportunistic"): boolean {
   // Opportunistic mode - ONLY if already adjacent (no movement)
   if (spawn.spawning || spawn.room.energyAvailable < 50) {
     delete creep.memory.renewing;
+    delete creep.memory._renewWaitStart;
+    creep.memory._renewTicks = 0;
     return false;
   }
 
@@ -211,11 +229,23 @@ function tryRenew(creep: Creep, mode: "critical" | "opportunistic"): boolean {
       if (!creep.memory._renewTicks) creep.memory._renewTicks = 0;
       creep.memory._renewTicks++;
       creep.memory._lastRenewTick = Game.time;
-      creep.say("RENEW");
+
+      // Cap opportunistic renewal to prevent blocking spawn too long
+      if (creep.memory._renewTicks >= 20) {
+        delete creep.memory.renewing;
+        delete creep.memory._renewWaitStart;
+        creep.memory._renewTicks = 0;
+        creep.say("RNW DONE");
+        return false; // Release spawn
+      }
+
+      creep.say("RNW " + (creep.ticksToLive || 0));
 
       // Check if fully renewed (TTL > 1400), clear flag
       if ((creep.ticksToLive || 0) > 1400) {
         delete creep.memory.renewing;
+        delete creep.memory._renewWaitStart;
+        creep.memory._renewTicks = 0;
       }
       return true;
     }
@@ -223,6 +253,8 @@ function tryRenew(creep: Creep, mode: "critical" | "opportunistic"): boolean {
 
   // Not adjacent or renewal failed - give up (opportunistic doesn't move)
   delete creep.memory.renewing;
+  delete creep.memory._renewWaitStart;
+  creep.memory._renewTicks = 0;
   return false;
 }
 

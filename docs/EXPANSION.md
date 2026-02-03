@@ -2,11 +2,11 @@
 
 ## Overview
 
-The bot supports claiming and developing new rooms through two systems:
-1. **BootstrapManager** - Original room claiming (manual/queue-based)
-2. **ExpansionManager** - Empire-wide automated expansion
+The bot supports claiming and developing new rooms through the unified **ExpansionManager** system.
+Expansion state is stored in `Memory.empire.expansion` and managed by `EmpireMemory.ts`.
 
-Both spawn special creeps from a parent room to claim and build in the target room.
+The parent room spawns specialized creeps (Claimer, BootstrapBuilder, BootstrapHauler) to
+claim the controller and construct the initial spawn in the target room.
 
 ## Expansion Process
 
@@ -105,44 +105,42 @@ COMPLETE
 
 ## Memory Structure
 
-### Bootstrap Memory
-```typescript
-Memory.bootstrap = {
-  active: {
-    targetRoom: "W1N2",
-    parentRoom: "W1N1",
-    state: "BUILDING_SPAWN",
-    startedAt: 123456,
-    spawnProgress: 75,
-    claimer: "claimer_123",
-    builders: ["bootstrap_1", "bootstrap_2"],
-    haulers: ["bshauler_1"]
-  },
-  queue: ["W2N1", "W3N1"],  // Rooms waiting to expand
-  config: {
-    maxBuilders: 3,
-    maxHaulers: 2,
-    timeout: 5000            // Ticks before giving up
-  }
-}
-```
+All expansion state lives in `Memory.empire.expansion`:
 
-### Empire Expansion Memory
 ```typescript
-Memory.empireExpansion = {
-  state: "EXPANDING",        // IDLE | EXPANDING
-  autoExpand: true,          // Auto-select targets
+Memory.empire.expansion = {
   active: {
     "W1N2": {
-      state: "BUILDING_SPAWN",
+      roomName: "W1N2",
       parentRoom: "W1N1",
+      state: "CLAIMING" | "BOOTSTRAPPING" | "BUILDING_SPAWN" | "RAMPING" | "INTEGRATING",
+      stateChangedAt: 123456,
       startedAt: 123456,
-      spawnLocation: {x: 25, y: 25},
-      workers: ["builder_1", "hauler_1"]
+      totalTicks: 500,
+      attempts: 1,
+      claimer: "claimer_123" | null,
+      spawnSitePos: { x: 25, y: 25 },
+      spawnProgress: 75
+    }
+  },
+  queue: [
+    { target: "W2N1", parent: "W1N1" }
+  ],
+  history: {
+    "W3N1": {
+      outcome: "SUCCESS" | "FAILED" | "CANCELLED",
+      parentRoom: "W1N1",
+      startedAt: 100000,
+      completedAt: 105000,
+      totalTicks: 5000,
+      failureReason: null
     }
   }
 }
 ```
+
+Legacy `Memory.bootstrap`, `Memory.expansion`, and `Memory.empireExpansion`
+are auto-migrated on first tick and deleted. See `EmpireMemory.ts`.
 
 ## Spawn Placement (SpawnPlacementCalculator)
 

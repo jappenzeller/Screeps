@@ -92,8 +92,13 @@ export class RenewalManager {
     // Don't renew if already near max (leave some buffer)
     if (ttl >= 1400) return 0;
 
-    // Skip haulers - they're cheap and mobile, renewal causes traffic jams
-    if (creep.memory.role === "HAULER") return 0;
+    // Only skip cheap haulers - expensive ones are worth renewing
+    if (creep.memory.role === "HAULER") {
+      var haulerCost = this.getCreepCost(creep);
+      if (haulerCost < 800) return 0; // Cheap hauler, not worth it
+      // Expensive hauler — allow renewal but with a lower score multiplier
+      // to deprioritize vs harvesters/upgraders (applied later)
+    }
 
     const bodyParts = creep.body.length;
     const creepCost = this.getCreepCost(creep);

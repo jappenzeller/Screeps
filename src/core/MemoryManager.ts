@@ -21,8 +21,6 @@ declare global {
   interface RoomMemory {
     sources?: Id<Source>[];
     sourceContainers?: Record<Id<Source>, Id<StructureContainer>>;
-    hostiles?: number;
-    lastScan?: number;
   }
 }
 

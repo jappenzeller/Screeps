@@ -109,58 +109,65 @@ Segment 90 has 100KB limit. Graceful degradation:
 
 **Base URL:** `https://dossn1w7n5.execute-api.us-east-1.amazonaws.com`
 
-### Live Data
+### Colonies (real-time from segment 90)
 ```
-GET /live/{roomName}
-GET /live
+GET /colonies                         — All colonies summary
+GET /colonies/{roomName}              — Full colony (live + diagnostics merged)
+GET /colonies/{roomName}/creeps       — Creep roster
+GET /colonies/{roomName}/economy      — Energy flow, rates
+GET /colonies/{roomName}/remotes      — Remote mining status
 ```
-Real-time data from segment 90 (~200-500ms latency).
 
-### Colony Summary
+### Intel (persistent DynamoDB)
 ```
-GET /summary/{roomName}
+GET /intel                            — All rooms
+GET /intel/{roomName}                 — Single room
+GET /intel/enemies                    — Rooms with hostile owners
+GET /intel/candidates?home=E46N37     — Expansion candidates (scored)
 ```
-Cached snapshot from DynamoDB (updated every 5 min).
 
-Returns:
-- RCL progress
-- Energy levels
-- Creep counts
-- Threat status
-- CPU usage
-- Recommendations count
+### Empire (real-time from segment 90)
+```
+GET /empire                           — State, priorities
+GET /empire/expansion                 — Active + queue + candidates
+GET /empire/expansion/{roomName}      — Specific expansion
+POST /empire/expansion                — Trigger action { action, roomName, parentRoom }
+```
 
-### Recommendations
+### Analysis (DynamoDB)
 ```
-GET /recommendations/{roomName}
+GET /analysis/{roomName}/recommendations  — AI recommendations
+GET /analysis/{roomName}/signals          — Signals
+GET /analysis/{roomName}/signals/events   — Signal events
+GET /analysis/{roomName}/observations     — Observations
+GET /analysis/{roomName}/patterns         — Patterns
+POST /analysis/{roomName}/feedback        — Recommendation feedback
 ```
-AI-generated recommendations with:
-- Priority level
-- Category (economy, spawning, defense, etc.)
-- Description
-- Supporting evidence
 
-### Metric History
+### Debug
 ```
-GET /metrics/{roomName}?hours=24
+GET /debug/positions                  — Heatmap (segment 92)
+POST /debug/command                   — Queue console command
+GET /debug/command?cmd={base64}       — Queue command (GET)
+GET /debug/command/result             — Get command result
 ```
-Time-series data for colony metrics.
 
-### Expansion Data
+### Metrics (DynamoDB snapshots)
 ```
-GET /expansion
+GET /metrics/{roomName}?hours=24      — Metric history
 ```
-Empire expansion overview with candidates and readiness.
 
-### Feedback
-```
-POST /feedback/{recommendationId}
+### Response Metadata
+
+Every response includes:
+```json
 {
-  "helpful": boolean,
-  "notes": string
+  "source": "segment90" | "dynamodb" | "screeps-api",
+  "freshness": 45,
+  "fetchedAt": 1706900000000,
+  ...data
 }
 ```
-Submit feedback on recommendation quality.
 
 ## Lambda Functions
 
@@ -195,9 +202,17 @@ Attributes: roomName, priority, category, description, createdAt
 TTL: 30 days
 ```
 
+### screeps-intel
+```
+Primary Key: roomName (S)
+No TTL — rooms persist indefinitely
+Fields: lastScan, roomType, owner, ownerRcl, sources, mineral, terrain, exits, distanceFromHome, expansionScore
+```
+
 ## Deployment
 
-**Note:** Uses AWS CLI, NOT Terraform.
+**Infrastructure:** CloudFormation (`aws/cloudformation/template.yaml`)
+**Lambda deployment:** AWS CLI
 
 ### Build Lambda
 ```bash
@@ -208,7 +223,7 @@ powershell -Command "Compress-Archive -Path api/* -DestinationPath api.zip -Forc
 ### Deploy Lambda
 ```bash
 aws lambda update-function-code \
-  --function-name screeps-api-prod \
+  --function-name screeps-advisor-api \
   --zip-file fileb://aws/lambda/api.zip
 ```
 

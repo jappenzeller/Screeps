@@ -36,20 +36,6 @@ function withMeta(data, source, dataTimestamp) {
   };
 }
 
-/**
- * Mark a response as deprecated, pointing to the new route.
- * @param {object} data - The response payload
- * @param {string} newRoute - The replacement route path
- * @returns {object} Response with deprecation notice
- */
-function withDeprecation(data, newRoute) {
-  return {
-    ...data,
-    _deprecated: true,
-    _migratedTo: newRoute,
-  };
-}
-
 // ==================== Screeps API Helpers ====================
 
 /**
@@ -69,137 +55,6 @@ async function getScreepsToken() {
   );
   cachedToken = response.SecretString;
   return cachedToken;
-}
-
-/**
- * Fetch room objects from Screeps API
- */
-async function fetchRoomObjects(roomName) {
-  const token = await getScreepsToken();
-
-  const response = await fetch(
-    `https://screeps.com/api/game/room-objects?room=${roomName}&shard=${SCREEPS_SHARD}`,
-    {
-      headers: {
-        "X-Token": token,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Screeps API error: ${response.status}`);
-  }
-
-  return response.json();
-}
-
-/**
- * Fetch room terrain from Screeps API
- */
-async function fetchRoomTerrain(roomName) {
-  const token = await getScreepsToken();
-
-  const response = await fetch(
-    `https://screeps.com/api/game/room-terrain?room=${roomName}&shard=${SCREEPS_SHARD}&encoded=true`,
-    {
-      headers: {
-        "X-Token": token,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Screeps API error: ${response.status}`);
-  }
-
-  return response.json();
-}
-
-/**
- * Get comprehensive room data (objects organized by type + terrain)
- */
-async function getRoomData(roomName) {
-  // Fetch objects and terrain in parallel
-  const [objectsResult, terrainResult] = await Promise.all([
-    fetchRoomObjects(roomName),
-    fetchRoomTerrain(roomName),
-  ]);
-
-  if (!objectsResult.ok) {
-    throw new Error("Failed to fetch room objects");
-  }
-
-  const objects = objectsResult.objects || [];
-
-  // Structure types from Screeps API
-  const structureTypes = new Set([
-    "spawn", "extension", "road", "constructedWall", "rampart", "keeper_lair",
-    "portal", "controller", "link", "storage", "tower", "observer", "power_bank",
-    "power_spawn", "extractor", "lab", "terminal", "container", "nuker", "factory",
-    "invader_core",
-  ]);
-
-  const organized = {
-    room: roomName,
-    shard: SCREEPS_SHARD,
-    timestamp: new Date().toISOString(),
-    terrain: terrainResult.terrain?.[0]?.terrain || null,
-    objects: {
-      structures: {},
-      creeps: [],
-      constructionSites: [],
-      sources: [],
-      minerals: [],
-      droppedResources: [],
-      tombstones: [],
-      ruins: [],
-      other: [],
-    },
-    counts: {
-      totalObjects: objects.length,
-      structures: 0,
-      creeps: 0,
-      constructionSites: 0,
-      sources: 0,
-      minerals: 0,
-    },
-  };
-
-  for (const obj of objects) {
-    const type = obj.type;
-
-    if (structureTypes.has(type)) {
-      if (!organized.objects.structures[type]) {
-        organized.objects.structures[type] = [];
-      }
-      organized.objects.structures[type].push(obj);
-      organized.counts.structures++;
-    } else if (type === "creep") {
-      organized.objects.creeps.push(obj);
-      organized.counts.creeps++;
-    } else if (type === "constructionSite") {
-      organized.objects.constructionSites.push(obj);
-      organized.counts.constructionSites++;
-    } else if (type === "source") {
-      organized.objects.sources.push(obj);
-      organized.counts.sources++;
-    } else if (type === "mineral") {
-      organized.objects.minerals.push(obj);
-      organized.counts.minerals++;
-    } else if (type === "energy" || type === "resource") {
-      organized.objects.droppedResources.push(obj);
-    } else if (type === "tombstone") {
-      organized.objects.tombstones.push(obj);
-    } else if (type === "ruin") {
-      organized.objects.ruins.push(obj);
-    } else {
-      organized.objects.other.push(obj);
-    }
-  }
-
-  return organized;
 }
 
 /**
@@ -252,85 +107,6 @@ async function fetchSegment92() {
   if (!data.data) return { room: null, startTick: 0, entries: [] };
 
   return typeof data.data === "string" ? JSON.parse(data.data) : data.data;
-}
-
-/**
- * Get live data from segment 90
- */
-async function getLiveData(roomName) {
-  const data = await fetchSegment90();
-
-  if (!data) {
-    return { error: "No data in segment 90", roomName };
-  }
-
-  // If roomName specified, filter to that colony
-  if (roomName && roomName !== "all") {
-    const colony = data.colonies?.find(c => c.roomName === roomName);
-    if (!colony) {
-      return {
-        error: `Room ${roomName} not found`,
-        availableRooms: data.colonies?.map(c => c.roomName) || [],
-      };
-    }
-
-    return {
-      live: true,
-      requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-      fetchedAt: Date.now(),
-      gameTick: data.gameTick,
-      timestamp: data.timestamp,
-      shard: data.shard,
-      colony,
-      global: data.global,
-    };
-  }
-
-  // Return everything
-  return {
-    live: true,
-    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-    fetchedAt: Date.now(),
-    ...data,
-  };
-}
-
-/**
- * Get diagnostics for a specific room from segment 90
- */
-async function getDiagnostics(roomName) {
-  const data = await fetchSegment90();
-
-  if (!data) {
-    return { error: "No data in segment 90", roomName };
-  }
-
-  if (!data.diagnostics) {
-    return {
-      error: "No diagnostics data available",
-      hint: "Ensure bot is exporting diagnostics to segment 90 via AWSExporter",
-      availableKeys: Object.keys(data),
-      roomName,
-    };
-  }
-
-  const diagnostics = data.diagnostics[roomName];
-  if (!diagnostics) {
-    return {
-      error: `Diagnostics for room ${roomName} not found`,
-      availableRooms: Object.keys(data.diagnostics),
-    };
-  }
-
-  return {
-    live: true,
-    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-    fetchedAt: Date.now(),
-    gameTick: data.gameTick,
-    timestamp: data.timestamp,
-    shard: data.shard,
-    ...diagnostics,
-  };
 }
 
 // ==================== Intel Endpoints ====================
@@ -877,48 +653,6 @@ async function getExpansionStatus(roomName = null) {
 }
 
 /**
- * Get full expansion overview including candidates and parent readiness
- * This is the comprehensive expansion endpoint for the Empire Administrator
- */
-async function getExpansionOverview() {
-  const data = await fetchSegment90();
-
-  if (!data) {
-    return { error: "No data in segment 90" };
-  }
-
-  if (!data.empire || !data.empire.expansionOverview) {
-    // Fall back to basic expansion data if overview not available
-    if (data.empire?.expansion) {
-      return {
-        live: true,
-        requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-        fetchedAt: Date.now(),
-        gameTick: data.gameTick,
-        timestamp: data.timestamp,
-        shard: data.shard,
-        hint: "expansionOverview not available, showing basic expansion data. Update bot code.",
-        ...data.empire.expansion,
-      };
-    }
-    return {
-      error: "No expansion data available",
-      hint: "Ensure bot is exporting expansion data via AWSExporter",
-    };
-  }
-
-  return {
-    live: true,
-    requestId: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-    fetchedAt: Date.now(),
-    gameTick: data.gameTick,
-    timestamp: data.timestamp,
-    shard: data.shard,
-    ...data.empire.expansionOverview,
-  };
-}
-
-/**
  * Queue an expansion command via memory segment 91
  */
 async function queueExpansionCommand(action, roomName, parentRoom = null) {
@@ -956,42 +690,6 @@ async function queueExpansionCommand(action, roomName, parentRoom = null) {
 }
 
 // ==================== DynamoDB Route Handlers ====================
-
-// Route handlers
-async function getSummary(roomName) {
-  const since = Date.now() - (60 * 60 * 1000); // Last hour
-
-  const snapshots = await docClient.send(new QueryCommand({
-    TableName: SNAPSHOTS_TABLE,
-    KeyConditionExpression: 'roomName = :room AND #ts > :since',
-    ExpressionAttributeNames: { '#ts': 'timestamp' },
-    ExpressionAttributeValues: { ':room': roomName, ':since': since },
-    ScanIndexForward: false,
-    Limit: 1,
-  }));
-
-  const recommendations = await docClient.send(new QueryCommand({
-    TableName: RECOMMENDATIONS_TABLE,
-    IndexName: 'room-index',
-    KeyConditionExpression: 'roomName = :room',
-    ExpressionAttributeValues: { ':room': roomName },
-    ScanIndexForward: false,
-    Limit: 10,
-  }));
-
-  const latest = snapshots.Items?.[0];
-  const now = Date.now();
-  const pending = recommendations.Items?.filter(r =>
-    r.status === 'pending' && (!r.expiresAt || r.expiresAt > now)
-  ) || [];
-
-  return {
-    roomName,
-    snapshot: latest || null,
-    recommendations: pending,
-    recommendationCount: pending.length,
-  };
-}
 
 async function getRecommendations(roomName) {
   const response = await docClient.send(new QueryCommand({
@@ -1217,46 +915,6 @@ async function getPatterns(roomName) {
     roomName,
     patterns: Array.from(patternMap.values()).sort((a, b) => b.occurrences - a.occurrences),
     patternCount: patternMap.size,
-  };
-}
-
-async function searchObservations(roomName, query) {
-  if (!OBSERVATIONS_TABLE) {
-    return { error: "Observations table not configured" };
-  }
-
-  const response = await docClient.send(new QueryCommand({
-    TableName: OBSERVATIONS_TABLE,
-    KeyConditionExpression: 'roomName = :room',
-    ExpressionAttributeValues: { ':room': roomName },
-    ScanIndexForward: false,
-    Limit: 50,
-  }));
-
-  const queryLower = query.toLowerCase();
-  const matches = [];
-
-  for (const obs of response.Items || []) {
-    for (const observation of obs.observations || []) {
-      if (
-        observation.summary?.toLowerCase().includes(queryLower) ||
-        observation.details?.toLowerCase().includes(queryLower) ||
-        observation.relatedEntities?.some(e => e.toLowerCase().includes(queryLower))
-      ) {
-        matches.push({
-          timestamp: obs.timestamp,
-          gameTick: obs.snapshotTick,
-          ...observation,
-        });
-      }
-    }
-  }
-
-  return {
-    roomName,
-    query,
-    matches,
-    matchCount: matches.length,
   };
 }
 
@@ -1513,98 +1171,6 @@ export async function handler(event) {
       result = await getMetricHistory(params.roomName, hours);
     }
 
-    // ==================== Deprecated v1 Routes ====================
-
-    else if (path === 'GET /summary/{roomName}') {
-      result = await getSummary(params.roomName);
-      result = withDeprecation(result, '/colonies/' + params.roomName);
-    }
-    else if (path === 'GET /recommendations/{roomName}') {
-      result = await getRecommendations(params.roomName);
-      result = withDeprecation(result, '/analysis/' + params.roomName + '/recommendations');
-    }
-    else if (path === 'POST /feedback/{recommendationId}') {
-      result = await submitFeedback(params.recommendationId, body);
-      result = withDeprecation(result, '/analysis/{roomName}/feedback');
-    }
-    else if (path === 'GET /live/{roomName}') {
-      result = await getLiveData(params.roomName);
-      result = withDeprecation(result, '/colonies/' + params.roomName);
-    }
-    else if (path === 'GET /live') {
-      result = await getLiveData('all');
-      result = withDeprecation(result, '/colonies');
-    }
-    else if (path === 'GET /room/{roomName}') {
-      result = await getRoomData(params.roomName);
-      result = withDeprecation(result, '(dropped - use /colonies/{roomName} instead)');
-    }
-    else if (path === 'GET /diagnostics/{roomName}') {
-      result = await getDiagnostics(params.roomName);
-      result = withDeprecation(result, '/colonies/' + params.roomName);
-    }
-    else if (path === 'GET /signals/{roomName}') {
-      const hours = parseInt(query.hours) || 24;
-      result = await getSignals(params.roomName, hours);
-      result = withDeprecation(result, '/analysis/' + params.roomName + '/signals');
-    }
-    else if (path === 'GET /signals/{roomName}/events') {
-      const hours = parseInt(query.hours) || 24;
-      result = await getSignalEvents(params.roomName, hours);
-      result = withDeprecation(result, '/analysis/' + params.roomName + '/signals/events');
-    }
-    else if (path === 'GET /observations/{roomName}') {
-      const limit = parseInt(query.limit) || 10;
-      result = await getObservations(params.roomName, limit);
-      result = withDeprecation(result, '/analysis/' + params.roomName + '/observations');
-    }
-    else if (path === 'GET /observations/{roomName}/patterns') {
-      result = await getPatterns(params.roomName);
-      result = withDeprecation(result, '/analysis/' + params.roomName + '/patterns');
-    }
-    else if (path === 'GET /observations/{roomName}/search') {
-      const q = query.q || '';
-      result = await searchObservations(params.roomName, q);
-      result = withDeprecation(result, '(dropped)');
-    }
-    else if (path === 'GET /intel/expansion-candidates') {
-      const homeRoom = query.home || null;
-      result = await getExpansionCandidates(homeRoom);
-      result = withDeprecation(result, '/intel/candidates');
-    }
-    else if (path === 'POST /command') {
-      const { command, shard } = body;
-      result = await queueCommand(command, shard || SCREEPS_SHARD);
-      result = withDeprecation(result, '/debug/command');
-    }
-    else if (path === 'GET /command') {
-      const encoded = query.cmd;
-      if (!encoded) {
-        return {
-          statusCode: 400,
-          headers,
-          body: JSON.stringify({ error: 'Missing cmd parameter' }),
-        };
-      }
-      const command = Buffer.from(encoded, 'base64').toString('utf-8');
-      const shard = query.shard || SCREEPS_SHARD;
-      result = await queueCommand(command, shard);
-      result = withDeprecation(result, '/debug/command');
-    }
-    else if (path === 'GET /command/result') {
-      const shard = query.shard || SCREEPS_SHARD;
-      const requestId = query.requestId || null;
-      result = await getCommandResult(shard, requestId);
-      result = withDeprecation(result, '/debug/command/result');
-    }
-    else if (path === 'GET /positions') {
-      result = await fetchSegment92();
-      result = withDeprecation(result, '/debug/positions');
-    }
-    else if (path === 'GET /expansion') {
-      result = await getExpansionOverview();
-      result = withDeprecation(result, '/empire/expansion');
-    }
     else {
       return {
         statusCode: 404,

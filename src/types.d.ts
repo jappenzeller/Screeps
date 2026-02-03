@@ -2,7 +2,7 @@
 // The @types/screeps package provides empty interfaces for us to extend
 
 // Creep state machine states
-type CreepState = "IDLE" | "COLLECTING" | "DELIVERING" | "BUILDING" | "UPGRADING" | "HARVESTING" | "TRAVELING";
+type CreepState = "IDLE" | "COLLECTING" | "DELIVERING" | "BUILDING" | "UPGRADING" | "HARVESTING" | "TRAVELING" | "MOVING" | "WORKING";
 
 // Container plan interface
 interface ContainerPlan {
@@ -59,10 +59,9 @@ interface RoomTask {
 }
 
 // Extend RoomMemory from @types/screeps
+// Note: Intel data (hostiles, lastScan, controller, hasKeepers) lives in Memory.intel[roomName]
 interface RoomMemory {
   sources?: Id<Source>[];
-  hostiles?: number;
-  lastScan?: number;
   containerPlan?: ContainerPlan;
   tasks?: RoomTask[];
 
@@ -71,18 +70,6 @@ interface RoomMemory {
     harvesters: Record<string, string>; // sourceId -> creepName
     haulers: Record<string, string[]>; // containerId -> creepNames
   };
-
-  // Scout intel
-  controller?: {
-    owner?: string;
-    level?: number;
-    reservation?: {
-      username: string;
-      ticksToEnd: number;
-    };
-  };
-  hasKeepers?: boolean;
-  hasInvaderCore?: boolean;
 }
 
 // AI Advisor recommendation
@@ -246,7 +233,6 @@ interface Memory {
   traffic?: { [roomName: string]: TrafficMemory };
   intel?: { [roomName: string]: RoomIntel };
   colonies?: { [roomName: string]: ColonyMemory };
-  homeRoom?: string;
   debug?: DebugFlags;
   settings?: SettingsFlags;
 }

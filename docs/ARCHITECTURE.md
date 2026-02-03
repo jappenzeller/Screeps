@@ -146,13 +146,11 @@ Memory.rooms[roomName] = {
   containerPlan: {            // Planned container locations
     [sourceId]: RoomPosition;
   };
-  controller: {               // Controller intel
-    level: number;
-    progress: number;
-  };
-  lastScan: number;           // When scouted
-  hasKeepers: boolean;        // Source keeper room?
+  sources?: Id<Source>[];     // Cached source IDs
+  sourceContainers?: Record<Id<Source>, Id<StructureContainer>>;
 }
+// Note: Intel data (hostiles, lastScan, controller, hasKeepers)
+// lives in Memory.intel[roomName] — see RoomIntel interface
 ```
 
 ### Creep Memory
