@@ -61,6 +61,8 @@ declare global {
         queue: Array<{ target: string; parent: string }>;
         history: Record<string, EmpireExpansionHistory>;
       };
+      // Crisis targets: parentRoom -> targetRoom (for bootstrap worker emergency dispatch)
+      crisisTargets?: Record<string, string>;
     };
     // NOTE: empireExpansion, expansion, and bootstrap are DEPRECATED
     // They may exist temporarily during migration but will be cleaned up

@@ -157,36 +157,69 @@ export function runLinkFiller(creep: Creep): void {
 }
 
 /**
- * Find tile adjacent to both storage and link
+ * Find tile adjacent to storage and storage link, optimizing for multiple links.
+ * At RCL 6+ there may be a source link near storage too - prefer a tile
+ * that is adjacent to ALL nearby links for maximum efficiency.
  */
-function findParkingSpot(storage: StructureStorage, link: StructureLink): RoomPosition | null {
-  const room = storage.room;
-  const terrain = room.getTerrain();
+function findParkingSpot(storage: StructureStorage, storageLink: StructureLink): RoomPosition | null {
+  var room = storage.room;
+  var terrain = room.getTerrain();
 
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dy = -1; dy <= 1; dy++) {
+  // Find all links near storage (source links placed nearby, etc.)
+  var nearbyLinks = room.find(FIND_MY_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_LINK &&
+        s.pos.inRangeTo(storage, 3);
+    },
+  }) as StructureLink[];
+
+  var candidates: Array<{ x: number; y: number; score: number }> = [];
+
+  for (var dx = -1; dx <= 1; dx++) {
+    for (var dy = -1; dy <= 1; dy++) {
       if (dx === 0 && dy === 0) continue;
 
-      const x = storage.pos.x + dx;
-      const y = storage.pos.y + dy;
+      var x = storage.pos.x + dx;
+      var y = storage.pos.y + dy;
 
       if (x < 1 || x > 48 || y < 1 || y > 48) continue;
       if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
 
-      const pos = new RoomPosition(x, y, room.name);
-      if (!pos.isNearTo(link)) continue;
+      var pos = new RoomPosition(x, y, room.name);
+
+      // Hard requirement: must be adjacent to storage link
+      if (!pos.isNearTo(storageLink)) continue;
 
       // Check for blocking structures (roads/ramparts/containers are OK)
-      const blocking = pos.lookFor(LOOK_STRUCTURES).some(
-        (s) =>
-          s.structureType !== STRUCTURE_ROAD &&
-          s.structureType !== STRUCTURE_RAMPART &&
-          s.structureType !== STRUCTURE_CONTAINER
+      var blocking = pos.lookFor(LOOK_STRUCTURES).some(
+        function(s) {
+          return s.structureType !== STRUCTURE_ROAD &&
+            s.structureType !== STRUCTURE_RAMPART &&
+            s.structureType !== STRUCTURE_CONTAINER;
+        }
       );
       if (blocking) continue;
 
-      return pos;
+      // Score: count how many links this tile is adjacent to
+      var score = 0;
+      for (var i = 0; i < nearbyLinks.length; i++) {
+        if (pos.isNearTo(nearbyLinks[i])) {
+          score += 10;
+        }
+      }
+
+      // Tiebreak: prefer plain terrain over swamp
+      if (terrain.get(x, y) === 0) {
+        score += 1;
+      }
+
+      candidates.push({ x: x, y: y, score: score });
     }
   }
-  return null;
+
+  if (candidates.length === 0) return null;
+
+  // Pick highest score
+  candidates.sort(function(a, b) { return b.score - a.score; });
+  return new RoomPosition(candidates[0].x, candidates[0].y, room.name);
 }

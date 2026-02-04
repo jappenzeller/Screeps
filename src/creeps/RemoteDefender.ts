@@ -86,48 +86,61 @@ function runRenewal(creep: Creep): boolean {
 // ============================================
 
 /**
- * Smart retreat decision based on DPS calculation
- * Only retreat if we can't survive the fight with self-heal
+ * Smart retreat decision - ONLY retreat when truly unable to fight
+ *
+ * For NPC invaders: Only retreat when critically wounded (< 20% HP) AND
+ * taking unsustainable damage. Invaders are predictable and don't chase
+ * across room borders.
+ *
+ * For player creeps: Use more conservative logic since they may pursue.
  */
 function shouldRetreat(creep: Creep): boolean {
-  // Lost ranged attack capability - can't fight, must retreat
+  // Lost all ranged attack parts - can't fight, must retreat
   if (creep.getActiveBodyparts(RANGED_ATTACK) === 0) return true;
 
-  // Estimate damage per tick from nearby hostiles
   const hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
-  let incomingDPS = 0;
-  for (const hostile of hostiles) {
-    const range = creep.pos.getRangeTo(hostile);
-    if (range <= 1) {
-      incomingDPS += hostile.getActiveBodyparts(ATTACK) * 30;
-    }
-    if (range <= 3) {
-      incomingDPS += hostile.getActiveBodyparts(RANGED_ATTACK) * 10;
+  if (hostiles.length === 0) return false;
+
+  // Check if we're fighting NPCs only
+  var allNPC = true;
+  for (var i = 0; i < hostiles.length; i++) {
+    var owner = hostiles[i].owner.username;
+    if (owner !== "Invader" && owner !== "Source Keeper") {
+      allNPC = false;
+      break;
     }
   }
 
   // Calculate our self-heal capability
-  const selfHealPerTick = creep.getActiveBodyparts(HEAL) * 12;
+  var selfHealPerTick = creep.getActiveBodyparts(HEAL) * 12;
 
-  // If we can out-heal the damage, don't retreat
-  if (selfHealPerTick >= incomingDPS) return false;
+  // Calculate incoming DPS from nearby hostiles
+  var incomingDPS = 0;
+  for (var j = 0; j < hostiles.length; j++) {
+    var range = creep.pos.getRangeTo(hostiles[j]);
+    if (range <= 1) {
+      incomingDPS += hostiles[j].getActiveBodyparts(ATTACK) * 30;
+    }
+    if (range <= 3) {
+      incomingDPS += hostiles[j].getActiveBodyparts(RANGED_ATTACK) * 10;
+    }
+  }
 
-  // Net damage after self-heal
-  const netDamage = incomingDPS - selfHealPerTick;
+  if (allNPC) {
+    // Against NPCs: Only retreat if critically wounded AND taking massive damage
+    // NPCs don't chase across room borders, so we just need to survive to the exit
+    var isCritical = creep.hits < creep.hitsMax * 0.2;
+    var unsustainableDamage = incomingDPS > selfHealPerTick * 2;
+    return isCritical && unsustainableDamage;
+  }
+
+  // Against players: More conservative - retreat if we can't sustain the fight
+  // and HP is getting low
+  var netDamage = incomingDPS - selfHealPerTick;
   if (netDamage <= 0) return false;
 
-  // Estimate ticks to reach tower range in home room
-  const distanceHome =
-    creep.room.name === creep.memory.room
-      ? 25 // Already in home room, just need to reach towers
-      : Game.map.getRoomLinearDistance(creep.room.name, creep.memory.room) * 50 + 25;
-
-  // Will I survive the trip?
-  const damageOnTrip = netDamage * distanceHome;
-  const survivalMargin = creep.hits - damageOnTrip;
-
-  // Retreat if projected HP on arrival is too low
-  return survivalMargin < 100;
+  // Retreat if HP is below 40% and taking net damage
+  return creep.hits < creep.hitsMax * 0.4 && netDamage > 10;
 }
 
 function isFullyHealed(creep: Creep): boolean {
@@ -147,17 +160,26 @@ function runRetreat(creep: Creep): boolean {
   // Get to home room first
   if (creep.room.name !== creep.memory.room) {
     moveToRoom(creep, creep.memory.room, "#ff6600");
-    creep.say("FLEE");
-    return true;
+  } else {
+    // Move to heal position (tower range)
+    var healPos = getHealPosition(creep);
+    if (creep.pos.getRangeTo(healPos) > 3) {
+      smartMoveTo(creep, healPos, { visualizePathStyle: { stroke: "#ff6600" }, reusePath: 5 });
+    }
   }
 
-  // Move to heal position (tower range)
-  const healPos = getHealPosition(creep);
-  if (creep.pos.getRangeTo(healPos) > 3) {
-    smartMoveTo(creep, healPos, { visualizePathStyle: { stroke: "#ff6600" }, reusePath: 5 });
-    creep.say("HEAL");
+  // ALWAYS attack while retreating - kite and shoot
+  var nearestHostile = creep.pos.findClosestByRange(FIND_HOSTILE_CREEPS);
+  if (nearestHostile && creep.pos.getRangeTo(nearestHostile) <= 3) {
+    creep.rangedAttack(nearestHostile);
   }
-  // Stay until fully healed by towers
+
+  // ALWAYS self-heal while retreating
+  if (creep.hits < creep.hitsMax && creep.getActiveBodyparts(HEAL) > 0) {
+    creep.heal(creep);
+  }
+
+  creep.say("KITE");
   return true;
 }
 
@@ -165,32 +187,37 @@ function runRetreat(creep: Creep): boolean {
 // Main Remote Defender Logic
 // ============================================
 export function runRemoteDefender(creep: Creep): void {
-  // Priority 1: Smart retreat based on DPS calculation
+  var homeRoom = creep.memory.room;
+
+  // Priority 1: If no RANGED_ATTACK parts, retreat immediately (can't fight)
+  if (creep.getActiveBodyparts(RANGED_ATTACK) === 0) {
+    runRetreat(creep);
+    return;
+  }
+
+  // Priority 2: Check if we need to retreat (per-tick, no sticky flag)
+  // Only retreat when critically wounded - see shouldRetreat() for logic
   if (shouldRetreat(creep)) {
-    creep.memory.retreating = true;
+    runRetreat(creep);
+    return;
   }
 
+  // Clear any stale retreating flag from old logic
   if (creep.memory.retreating) {
-    if (isFullyHealed(creep)) {
-      creep.memory.retreating = false; // fully healed and combat-capable
-    } else {
-      runRetreat(creep);
-      return;
-    }
+    delete creep.memory.retreating;
   }
 
-  const homeRoom = creep.memory.room;
-  let targetRoom = creep.memory.targetRoom;
+  var targetRoom = creep.memory.targetRoom;
 
   // Check if target room still has threats (read from Memory.intel)
-  const targetIntel = targetRoom && Memory.intel && Memory.intel[targetRoom]
+  var targetIntel = targetRoom && Memory.intel && Memory.intel[targetRoom]
     ? Memory.intel[targetRoom]
     : null;
-  const targetHasThreats = targetIntel && targetIntel.hostiles && targetIntel.hostiles > 0;
+  var targetHasThreats = targetIntel && targetIntel.hostiles && targetIntel.hostiles > 0;
 
   if (!targetHasThreats) {
     // Look for another room that needs defenders
-    const newTarget = findRoomNeedingDefender(homeRoom);
+    var newTarget = findRoomNeedingDefender(homeRoom);
     if (newTarget) {
       creep.memory.targetRoom = newTarget;
       targetRoom = newTarget;
@@ -200,6 +227,8 @@ export function runRemoteDefender(creep: Creep): void {
       // No threats anywhere - move home and handle renewal/idle
       if (creep.room.name !== homeRoom) {
         moveToRoom(creep, homeRoom, "#888888");
+        // Still attack anything in range while going home
+        alwaysAttackAndHeal(creep);
         creep.say("HOME");
         return;
       }
@@ -212,7 +241,7 @@ export function runRemoteDefender(creep: Creep): void {
       }
 
       // Idle at center position (away from spawn)
-      const idlePos = getIdlePosition(creep);
+      var idlePos = getIdlePosition(creep);
       if (creep.pos.getRangeTo(idlePos) > 2) {
         smartMoveTo(creep, idlePos, { visualizePathStyle: { stroke: "#888888" } });
       }
@@ -229,25 +258,27 @@ export function runRemoteDefender(creep: Creep): void {
   // Move to target room
   if (creep.room.name !== targetRoom) {
     moveToRoom(creep, targetRoom, "#ff0000");
+    // Attack anything in range while traveling
+    alwaysAttackAndHeal(creep);
     creep.say("GO");
     return;
   }
 
-  // In target room - attack hostiles
-  attackHostiles(creep);
+  // In target room - kite and attack hostiles
+  kiteAndAttack(creep);
 
   // Check if room is clear - update memory
-  const remainingHostiles = creep.room.find(FIND_HOSTILE_CREEPS).length;
-  const remainingCores = creep.room.find(FIND_HOSTILE_STRUCTURES, {
-    filter: (s) => s.structureType === STRUCTURE_INVADER_CORE,
+  var remainingHostiles = creep.room.find(FIND_HOSTILE_CREEPS).length;
+  var remainingCores = creep.room.find(FIND_HOSTILE_STRUCTURES, {
+    filter: function(s) { return s.structureType === STRUCTURE_INVADER_CORE; },
   }).length;
 
   if (remainingHostiles === 0 && remainingCores === 0) {
     // NOTE: Intel will be updated automatically by gatherRoomIntel() next tick
     // Disband the squad for this room
-    const homeRoomObj = Game.rooms[creep.memory.room];
+    var homeRoomObj = Game.rooms[creep.memory.room];
     if (homeRoomObj) {
-      const squadManager = new RemoteSquadManager(homeRoomObj);
+      var squadManager = new RemoteSquadManager(homeRoomObj);
       squadManager.disbandSquad(targetRoom);
     }
     // Clear assignment so we can find new threats
@@ -255,66 +286,112 @@ export function runRemoteDefender(creep: Creep): void {
   }
 }
 
-function attackHostiles(creep: Creep): void {
-  // Self-heal if damaged (always do this first, uses HEAL action)
+/**
+ * Always attack and heal - used during travel states
+ * Screeps allows move + rangedAttack + heal in the same tick
+ */
+function alwaysAttackAndHeal(creep: Creep): void {
+  var nearestHostile = creep.pos.findClosestByRange(FIND_HOSTILE_CREEPS);
+  if (nearestHostile) {
+    var range = creep.pos.getRangeTo(nearestHostile);
+    if (range <= 3) {
+      creep.rangedAttack(nearestHostile);
+    }
+  }
+
+  // Always self-heal if damaged
+  if (creep.hits < creep.hitsMax && creep.getActiveBodyparts(HEAL) > 0) {
+    creep.heal(creep);
+  }
+}
+
+/**
+ * Kite and attack - maintain range 3 from melee hostiles
+ * This is the main combat loop for remote defenders
+ */
+function kiteAndAttack(creep: Creep): void {
+  var hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
+
+  // Always self-heal if damaged (uses HEAL action slot)
   if (creep.hits < creep.hitsMax && creep.getActiveBodyparts(HEAL) > 0) {
     creep.heal(creep);
   }
 
-  // Find and attack hostiles
-  const hostile = findPriorityTarget(creep);
+  if (hostiles.length === 0) {
+    // No hostiles - check for invader cores
+    var invaderCore = creep.room.find(FIND_HOSTILE_STRUCTURES, {
+      filter: function(s) { return s.structureType === STRUCTURE_INVADER_CORE; },
+    })[0] as StructureInvaderCore | undefined;
 
-  if (hostile) {
-    const range = creep.pos.getRangeTo(hostile);
+    if (invaderCore) {
+      var coreRange = creep.pos.getRangeTo(invaderCore);
+      if (coreRange <= 3) {
+        creep.rangedAttack(invaderCore);
+      }
+      if (coreRange > 1) {
+        smartMoveTo(creep, invaderCore, { visualizePathStyle: { stroke: "#ff0000" } });
+      }
+      creep.say("CORE");
+    } else {
+      creep.say("OK");
+    }
+    return;
+  }
 
-    // Use rangedAttack (range 3) or rangedMassAttack if surrounded
-    if (range <= 3) {
-      // Check if multiple hostiles are close - use mass attack
-      const nearbyHostiles = creep.pos.findInRange(FIND_HOSTILE_CREEPS, 3);
-      if (nearbyHostiles.length > 1) {
-        creep.rangedMassAttack();
-      } else {
-        creep.rangedAttack(hostile);
+  // Find priority target (healers > ranged > melee, then closest)
+  var target = findPriorityTarget(creep);
+  if (!target) return;
+
+  var targetRange = creep.pos.getRangeTo(target);
+
+  // Check if any hostile is too close (range <= 2) - need to kite away
+  var tooClose = false;
+  for (var i = 0; i < hostiles.length; i++) {
+    if (creep.pos.getRangeTo(hostiles[i]) <= 2) {
+      tooClose = true;
+      break;
+    }
+  }
+
+  if (tooClose) {
+    // Flee from all hostiles - maintain range 4
+    var fleeGoals = [];
+    for (var j = 0; j < hostiles.length; j++) {
+      fleeGoals.push({ pos: hostiles[j].pos, range: 4 });
+    }
+    var fleePath = PathFinder.search(creep.pos, fleeGoals, { flee: true });
+    if (fleePath.path.length > 0) {
+      creep.move(creep.pos.getDirectionTo(fleePath.path[0]));
+    }
+    creep.say("KITE");
+  } else if (targetRange > 3) {
+    // Move closer to get in attack range
+    smartMoveTo(creep, target, {
+      visualizePathStyle: { stroke: "#ff0000" },
+      reusePath: 3,
+    });
+    creep.say("GO");
+  }
+  // else: range is 3, perfect - don't move
+
+  // Attack - always attack if in range
+  if (targetRange <= 3) {
+    // Check if multiple hostiles are close - use mass attack
+    var nearbyCount = 0;
+    for (var k = 0; k < hostiles.length; k++) {
+      if (creep.pos.getRangeTo(hostiles[k]) <= 3) {
+        nearbyCount++;
       }
     }
 
-    // Move to maintain range 3 (optimal for ranged attack)
-    if (range > 3) {
-      smartMoveTo(creep, hostile, {
-        visualizePathStyle: { stroke: "#ff0000" },
-        reusePath: 3,
-      });
-    } else if (range < 2) {
-      // Too close - back up to avoid melee
-      const fleePath = PathFinder.search(creep.pos, { pos: hostile.pos, range: 4 }, { flee: true });
-      if (fleePath.path.length > 0) {
-        creep.move(creep.pos.getDirectionTo(fleePath.path[0]));
-      }
+    if (nearbyCount > 1 && targetRange <= 1) {
+      // Multiple hostiles very close - mass attack
+      creep.rangedMassAttack();
+    } else {
+      creep.rangedAttack(target);
     }
-
     creep.say("ATK");
-    return;
   }
-
-  // No hostiles - check for invader cores
-  const invaderCore = creep.room.find(FIND_HOSTILE_STRUCTURES, {
-    filter: (s) => s.structureType === STRUCTURE_INVADER_CORE,
-  })[0];
-
-  if (invaderCore) {
-    const range = creep.pos.getRangeTo(invaderCore);
-    if (range <= 3) {
-      creep.rangedAttack(invaderCore);
-    }
-    if (range > 1) {
-      smartMoveTo(creep, invaderCore, { visualizePathStyle: { stroke: "#ff0000" } });
-    }
-    creep.say("CORE");
-    return;
-  }
-
-  // Room is clear
-  creep.say("OK");
 }
 
 /**

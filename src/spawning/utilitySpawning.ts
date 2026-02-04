@@ -199,25 +199,118 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
 }
 
 /**
+ * Count creeps that can actually perform their role.
+ * A creep with destroyed parts doesn't count toward its role quota.
+ * This prevents the spawner from thinking "we have 1 hauler" when that hauler has 0 CARRY.
+ */
+function getEffectiveCounts(creeps: Creep[], room: Room): Record<string, number> {
+  var counts: Record<string, number> = {};
+
+  // Check if source containers exist (harvesters without CARRY are OK if containers catch energy)
+  var sourceContainers = room.find(FIND_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_CONTAINER &&
+        s.pos.findInRange(FIND_SOURCES, 1).length > 0;
+    }
+  });
+  var hasSourceContainers = sourceContainers.length > 0;
+
+  for (var i = 0; i < creeps.length; i++) {
+    var c = creeps[i];
+    var role = c.memory.role;
+    var functional = true;
+
+    switch (role) {
+      case "HARVESTER":
+        // Must have WORK parts to harvest
+        if (c.getActiveBodyparts(WORK) === 0) { functional = false; break; }
+        // Must have CARRY OR source containers must exist to catch dropped energy
+        if (c.getActiveBodyparts(CARRY) === 0 && !hasSourceContainers) { functional = false; }
+        break;
+
+      case "HAULER":
+      case "REMOTE_HAULER":
+      case "BOOTSTRAP_HAULER":
+        // Must have CARRY to transport anything
+        if (c.getActiveBodyparts(CARRY) === 0) functional = false;
+        break;
+
+      case "UPGRADER":
+      case "BUILDER":
+      case "BOOTSTRAP_BUILDER":
+      case "BOOTSTRAP_WORKER":
+        // Must have WORK to do anything useful
+        if (c.getActiveBodyparts(WORK) === 0) functional = false;
+        break;
+
+      case "REMOTE_MINER":
+        // Must have WORK to harvest
+        if (c.getActiveBodyparts(WORK) === 0) functional = false;
+        break;
+
+      case "REMOTE_DEFENDER":
+      case "DEFENDER":
+        // Must have at least one attack-type part
+        if (c.getActiveBodyparts(ATTACK) === 0 &&
+            c.getActiveBodyparts(RANGED_ATTACK) === 0) functional = false;
+        break;
+
+      case "RESERVER":
+      case "CLAIMER":
+        // Must have CLAIM
+        if (c.getActiveBodyparts(CLAIM) === 0) functional = false;
+        break;
+
+      // SCOUT, LINK_FILLER, MINERAL_HARVESTER: just needs to be alive
+      default:
+        break;
+    }
+
+    if (functional) {
+      counts[role] = (counts[role] || 0) + 1;
+    }
+  }
+
+  return counts;
+}
+
+/**
  * Gather all metrics needed for utility calculations
  */
 function getColonyState(room: Room): ColonyState {
   const sources = room.find(FIND_SOURCES);
   const creeps = Object.values(Game.creeps).filter((c) => c.memory.room === room.name);
 
-  // Calculate actual energy income from active harvesters
+  // Check if source containers exist (affects harvester functionality)
+  var sourceContainers = room.find(FIND_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_CONTAINER &&
+        s.pos.findInRange(FIND_SOURCES, 1).length > 0;
+    }
+  });
+  var hasSourceContainers = sourceContainers.length > 0;
+
+  // Calculate actual energy income from FUNCTIONAL harvesters only
+  // A harvester with 0 CARRY and no source containers contributes 0 income
   let energyIncome = 0;
   for (const c of creeps) {
     if (c.memory.role === "HARVESTER") {
       const workParts = c.getActiveBodyparts(WORK);
-      energyIncome += workParts * 2;
+      const carryParts = c.getActiveBodyparts(CARRY);
+      // Only count income if energy can actually enter the economy
+      if (workParts > 0 && (carryParts > 0 || hasSourceContainers)) {
+        energyIncome += workParts * 2;
+      }
     }
   }
 
   const energyIncomeMax = sources.length * 10; // 5 WORK per source max
 
-  // Count creeps by role
-  const counts: Record<string, number> = {};
+  // Count FUNCTIONAL creeps by role (not just alive creeps)
+  // A hauler with 0 CARRY doesn't count as a hauler
+  const counts = getEffectiveCounts(creeps, room);
+
+  // Track dying soon separately (still uses raw role, for replacement timing)
   const dyingSoon: Record<string, number> = {};
 
   // Roles that autonomously renew - never count as dying soon
@@ -229,7 +322,6 @@ function getColonyState(room: Room): ColonyState {
 
   for (const c of creeps) {
     const role = c.memory.role;
-    counts[role] = (counts[role] || 0) + 1;
 
     // Skip self-renewing roles - they manage their own lifecycle
     if (selfRenewingRoles.has(role)) continue;
@@ -563,7 +655,11 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   if (state.rcl <= 3) {
     // Emergency upgrade: controller about to downgrade
     if (controller && controller.ticksToDowngrade && controller.ticksToDowngrade < 5000) {
-      // Allow emergency upgrader with utility 80
+      // Emergency, but still cap at 1 and require basic economy
+      var currentUpgraders = state.counts.UPGRADER || 0;
+      if (currentUpgraders >= 1) return 0; // Already have an emergency upgrader
+      // Only spawn if there's at least 1 functional harvester
+      if ((state.counts.HARVESTER || 0) === 0) return 0; // No income = upgrader can't help
       return 80;
     }
 
@@ -599,8 +695,12 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
       return 0; // No energy delivery system to controller
     }
 
-    // Young colony upgrader: low utility, max 1
-    return (state.counts.UPGRADER || 0) === 0 ? 30 : 0;
+    // Young colony upgrader: respect calculated target, diminishing utility
+    var currentUpgraders = state.counts.UPGRADER || 0;
+    var targetUpgraders = state.targets.UPGRADER || 1;
+    if (currentUpgraders >= targetUpgraders) return 0;
+    // First upgrader gets 30, subsequent get 10 less each (30, 20, 10...)
+    return Math.max(10, 30 - (currentUpgraders * 10));
   }
 
   // Gate: Don't spawn upgraders if no energy is reachable at controller
@@ -1135,13 +1235,14 @@ function bootstrapHaulerUtility(state: ColonyState): number {
  * - Colony has spawn but < 3 creeps with WORK parts
  * - Colony has no energy income (no miners/harvesters active)
  * - Controller ticksToDowngrade < 10000
+ *
+ * Scans BOTH expansion.active entries AND all owned rooms for crises.
+ * This catches established colonies that have collapsed, not just new expansions.
  */
 function bootstrapWorkerUtility(state: ColonyState): number {
-  // Check for colonies needing help
+  // === PATH 1: Check expansion.active entries (existing logic) ===
   var empExpansion = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
-  if (!empExpansion) return 0;
-
-  var empActive = empExpansion.active || {};
+  var empActive = empExpansion ? empExpansion.active || {} : {};
   var activeKeys = Object.keys(empActive);
 
   for (var i = 0; i < activeKeys.length; i++) {
@@ -1183,7 +1284,127 @@ function bootstrapWorkerUtility(state: ColonyState): number {
     }
   }
 
+  // === PATH 2: Check ALL owned rooms for crisis (not just expansions) ===
+  // This catches established colonies that have collapsed
+  var crisisTarget = findColonyInCrisis(state.room.name);
+  if (crisisTarget) {
+    // Store crisis target in memory for buildMemory() to find
+    var emp = Memory.empire || ({} as any);
+    if (!Memory.empire) Memory.empire = emp;
+    if (!emp.crisisTargets) emp.crisisTargets = {};
+    emp.crisisTargets[state.room.name] = crisisTarget;
+    return 60;
+  }
+
+  // Clear any stale crisis target for this room
+  var empClear = Memory.empire;
+  if (empClear && empClear.crisisTargets && empClear.crisisTargets[state.room.name]) {
+    delete empClear.crisisTargets[state.room.name];
+  }
+
   return 0;
+}
+
+/**
+ * Find an owned colony in crisis that this room should help
+ * Crisis criteria:
+ * - Colony has spawn but < 3 WORK parts total
+ * - No harvesters with CARRY (can't self-deliver) OR no haulers (can't distribute)
+ * - OR controller.ticksToDowngrade < 10000
+ */
+function findColonyInCrisis(parentRoom: string): string | null {
+  // Only help adjacent rooms (1-2 rooms away max)
+  var parentParsed = /^([WE])(\d+)([NS])(\d+)$/.exec(parentRoom);
+  if (!parentParsed) return null;
+
+  var parentX = parseInt(parentParsed[2]) * (parentParsed[1] === "E" ? 1 : -1);
+  var parentY = parseInt(parentParsed[4]) * (parentParsed[3] === "N" ? 1 : -1);
+
+  // Check all owned rooms
+  var ownedRooms = Object.values(Game.rooms).filter(function(r) {
+    return r.controller && r.controller.my && r.controller.level >= 1;
+  });
+
+  for (var i = 0; i < ownedRooms.length; i++) {
+    var room = ownedRooms[i];
+    if (room.name === parentRoom) continue; // Don't help self
+
+    // Check distance (max 2 rooms)
+    var parsed = /^([WE])(\d+)([NS])(\d+)$/.exec(room.name);
+    if (!parsed) continue;
+    var x = parseInt(parsed[2]) * (parsed[1] === "E" ? 1 : -1);
+    var y = parseInt(parsed[4]) * (parsed[3] === "N" ? 1 : -1);
+    var distance = Math.max(Math.abs(x - parentX), Math.abs(y - parentY));
+    if (distance > 2) continue;
+
+    // Must have a spawn (otherwise it's a brand new claim, use bootstrap builder/hauler)
+    var spawns = room.find(FIND_MY_SPAWNS);
+    if (spawns.length === 0) continue;
+
+    // Skip rooms already in expansion.active (handled by PATH 1)
+    var empExpansion = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
+    var empActive = empExpansion ? empExpansion.active || {} : {};
+    var isExpansion = false;
+    var activeKeys = Object.keys(empActive);
+    for (var k = 0; k < activeKeys.length; k++) {
+      if (empActive[activeKeys[k]].roomName === room.name) {
+        isExpansion = true;
+        break;
+      }
+    }
+    if (isExpansion) continue;
+
+    // Count existing bootstrap workers heading to this room
+    var existingWorkers = Object.values(Game.creeps).filter(function(c) {
+      return c.memory.role === "BOOTSTRAP_WORKER" &&
+        (c.memory as any).targetRoom === room.name;
+    }).length;
+    if (existingWorkers >= 4) continue; // Already have enough help
+
+    // Check crisis indicators
+    var creeps = room.find(FIND_MY_CREEPS);
+    var workParts = 0;
+    var hasHarvesterWithCarry = false;
+    var hasHauler = false;
+
+    for (var j = 0; j < creeps.length; j++) {
+      var creep = creeps[j];
+      workParts += creep.getActiveBodyparts(WORK);
+      if (creep.memory.role === "HARVESTER" && creep.getActiveBodyparts(CARRY) > 0) {
+        hasHarvesterWithCarry = true;
+      }
+      if (creep.memory.role === "HAULER") {
+        hasHauler = true;
+      }
+    }
+
+    // Check for source containers (harvesters don't need CARRY if containers exist)
+    var sources = room.find(FIND_SOURCES);
+    var sourceContainers = room.find(FIND_STRUCTURES, {
+      filter: function(s) {
+        return s.structureType === STRUCTURE_CONTAINER &&
+          s.pos.findInRange(FIND_SOURCES, 1).length > 0;
+      }
+    });
+    var hasAllSourceContainers = sourceContainers.length >= sources.length;
+
+    // Crisis: < 3 WORK parts AND (no self-deliver capability OR no distribution)
+    var energyDeadlock = !hasHarvesterWithCarry && !hasAllSourceContainers;
+    var distributionBroken = !hasHauler && !hasAllSourceContainers;
+    var isCrisis = workParts < 3 && (energyDeadlock || distributionBroken);
+
+    // Also crisis if controller about to downgrade
+    var controller = room.controller;
+    if (controller && controller.ticksToDowngrade && controller.ticksToDowngrade < 10000) {
+      isCrisis = true;
+    }
+
+    if (isCrisis) {
+      return room.name;
+    }
+  }
+
+  return null;
 }
 
 // ============================================
@@ -1240,7 +1461,33 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   if (energy < minCost) return [];
 
   // Use the generic body builder
-  return buildBodyFromConfig(role, energy);
+  var body = buildBodyFromConfig(role, energy);
+
+  // HARVESTER special case: ensure at least 1 CARRY when source containers don't exist
+  // Without CARRY, harvesters can't self-deliver energy to spawn, causing deadlock
+  if (role === "HARVESTER" && body.length > 0) {
+    var hasCarry = body.some(function(p) { return p === CARRY; });
+    if (!hasCarry) {
+      // Check if source containers exist
+      var sources = state.room.find(FIND_SOURCES);
+      var sourceContainers = state.room.find(FIND_STRUCTURES, {
+        filter: function(s) {
+          return s.structureType === STRUCTURE_CONTAINER &&
+            s.pos.findInRange(FIND_SOURCES, 1).length > 0;
+        }
+      });
+      if (sourceContainers.length < sources.length) {
+        // Not all sources have containers - use fallback body to ensure CARRY
+        var fallback: BodyPartConstant[] = [WORK, CARRY, MOVE];
+        var fallbackCost = fallback.reduce(function(sum, p) { return sum + BODYPART_COST[p]; }, 0);
+        if (energy >= fallbackCost) {
+          body = fallback;
+        }
+      }
+    }
+  }
+
+  return body;
 }
 
 // ============================================
@@ -1354,10 +1601,10 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
     }
 
     case "BOOTSTRAP_WORKER": {
-      // Find expansion needing bootstrap workers
+      // PATH 1: Find expansion needing bootstrap workers
       var empExpansion3 = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
       var empActive3 = empExpansion3 ? empExpansion3.active : {};
-      var workerTarget = null;
+      var workerTarget: string | null = null;
       var activeKeys3 = Object.keys(empActive3);
       for (var k = 0; k < activeKeys3.length; k++) {
         var exp3 = empActive3[activeKeys3[k]];
@@ -1367,18 +1614,24 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
           if (targetRoom) {
             var spawns = targetRoom.find(FIND_MY_SPAWNS);
             if (spawns.length > 0) {
-              workerTarget = exp3;
+              workerTarget = exp3.roomName;
               break;
             }
           }
         }
       }
+
+      // PATH 2: Check crisis targets (established colonies in crisis)
+      if (!workerTarget && Memory.empire && Memory.empire.crisisTargets) {
+        workerTarget = Memory.empire.crisisTargets[state.room.name] || null;
+      }
+
       if (workerTarget) {
         return {
           ...base,
           role: "BOOTSTRAP_WORKER",
-          parentRoom: workerTarget.parentRoom,
-          targetRoom: workerTarget.roomName,
+          parentRoom: state.room.name,
+          targetRoom: workerTarget,
           state: "MOVING",
         } as unknown as Partial<CreepMemory>;
       }
