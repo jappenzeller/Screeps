@@ -31,6 +31,17 @@ export class ContainerPlanner {
       logger.info("ContainerPlanner", `Created container plan for ${this.room.name}`);
     }
 
+    // Check that plan covers all sources - regenerate if any source is missing
+    if (plan && plan.sources) {
+      var sources = this.room.find(FIND_SOURCES);
+      var missingSources = sources.filter(function(s) { return !plan!.sources[s.id]; });
+      if (missingSources.length > 0) {
+        logger.info("ContainerPlanner", `Plan missing ${missingSources.length} source(s), regenerating for ${this.room.name}`);
+        plan = this.createPlan();
+        Memory.rooms[this.room.name].containerPlan = plan;
+      }
+    }
+
     // Regenerate controller container position if missing and should exist (RCL 2+)
     // Handles rooms that had plans created before this position was added
     // Skip if controller already has a container
