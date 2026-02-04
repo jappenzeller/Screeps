@@ -198,6 +198,18 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
     fallback: [WORK, WORK, CARRY, CARRY, MOVE, MOVE],
     moveMode: "road",
   },
+
+  /**
+   * PIONEER - Self-sufficient generalist for pre-container colonies
+   * Balanced WORK/CARRY/MOVE for mobile harvesting + delivery + building
+   */
+  PIONEER: {
+    pattern: [WORK, CARRY, MOVE],
+    maxRepeats: 6,
+    minEnergy: 200,
+    fallback: [WORK, CARRY, MOVE],
+    moveMode: "pattern",
+  },
 };
 
 /**

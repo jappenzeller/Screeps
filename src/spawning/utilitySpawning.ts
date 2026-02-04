@@ -25,11 +25,33 @@ import { roleCountUtility, getEffectiveCount } from "./utilities/populationUtili
 import { getBootstrapBuilderBody } from "../creeps/BootstrapBuilder";
 import { getBootstrapHaulerBody } from "../creeps/BootstrapHauler";
 import { getBootstrapWorkerBody } from "../creeps/BootstrapWorker";
+import { getPioneerBody } from "../creeps/Pioneer";
 import { ExpansionManager } from "../empire";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
 const DYING_SOON_REMOTE = CONFIG.SPAWNING.REMOTE_REPLACEMENT_TTL;
+
+/**
+ * Detect if a colony is in "pioneer phase"
+ * Pioneer phase = no source containers AND no storage
+ * This is infrastructure-based, not RCL-based
+ */
+function isPioneerPhase(room: Room): boolean {
+  // Has storage = not pioneer phase
+  if (room.storage) return false;
+
+  // Check for source containers
+  var sourceContainers = room.find(FIND_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_CONTAINER &&
+        s.pos.findInRange(FIND_SOURCES, 1).length > 0;
+    }
+  });
+
+  // Pioneer phase if no source containers exist
+  return sourceContainers.length === 0;
+}
 
 // All roles that can be spawned
 type SpawnRole =
@@ -48,9 +70,11 @@ type SpawnRole =
   | "CLAIMER"
   | "BOOTSTRAP_BUILDER"
   | "BOOTSTRAP_HAULER"
-  | "BOOTSTRAP_WORKER";
+  | "BOOTSTRAP_WORKER"
+  | "PIONEER";
 
 const ALL_ROLES: SpawnRole[] = [
+  "PIONEER",
   "HARVESTER",
   "HAULER",
   "UPGRADER",
@@ -184,7 +208,7 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
 
   // Economy is dead (no harvesters producing). Bootstrap with ECONOMY roles only.
   // Never waste energy on scouts/reservers/remote roles during bootstrap.
-  const ECONOMY_ROLES: SpawnRole[] = ["HARVESTER", "HAULER", "BUILDER", "UPGRADER", "DEFENDER"];
+  const ECONOMY_ROLES: SpawnRole[] = ["PIONEER", "HARVESTER", "HAULER", "BUILDER", "UPGRADER", "DEFENDER"];
   const economyCandidates = candidates.filter(
     (c) => c.cost <= room.energyAvailable && ECONOMY_ROLES.includes(c.role)
   );
@@ -241,6 +265,12 @@ function getEffectiveCounts(creeps: Creep[], room: Room): Record<string, number>
       case "BOOTSTRAP_WORKER":
         // Must have WORK to do anything useful
         if (c.getActiveBodyparts(WORK) === 0) functional = false;
+        break;
+
+      case "PIONEER":
+        // Must have WORK to harvest/build/upgrade AND CARRY to deliver
+        if (c.getActiveBodyparts(WORK) === 0) { functional = false; break; }
+        if (c.getActiveBodyparts(CARRY) === 0) functional = false;
         break;
 
       case "REMOTE_MINER":
@@ -479,7 +509,14 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     upgraderTarget = rcl < 8 ? Math.min(rcl, 3) : 1;
   }
 
+  // Pioneer target: only during pioneer phase
+  var pioneerTarget = 0;
+  if (isPioneerPhase(room)) {
+    pioneerTarget = sources + 1; // 1 per source + 1 extra for overlap
+  }
+
   const targets: Record<string, number> = {
+    PIONEER: pioneerTarget,
     HARVESTER: sources,
     HAULER: haulerTarget,
     UPGRADER: upgraderTarget,
@@ -546,6 +583,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
   const effectiveDeficit = deficit + dying;
 
   switch (role) {
+    case "PIONEER":
+      return pioneerUtility(state);
     case "HARVESTER":
       return harvesterUtility(effectiveDeficit, state);
     case "HAULER":
@@ -590,8 +629,13 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
 /**
  * Harvester utility - scales inversely with energy income
  * When income approaches 0, utility approaches infinity
+ *
+ * GATED during pioneer phase - pioneers handle harvesting
  */
 function harvesterUtility(deficit: number, state: ColonyState): number {
+  // Pioneer phase: pioneers harvest, not specialists
+  if (isPioneerPhase(state.room)) return 0;
+
   if (deficit <= 0) return 0;
 
   // Base utility from deficit
@@ -609,8 +653,13 @@ function harvesterUtility(deficit: number, state: ColonyState): number {
 
 /**
  * Hauler utility - useless without harvesters, high when income exists but no haulers
+ *
+ * GATED during pioneer phase - pioneers handle hauling
  */
 function haulerUtility(deficit: number, state: ColonyState): number {
+  // Pioneer phase: pioneers haul, not specialists
+  if (isPioneerPhase(state.room)) return 0;
+
   if (deficit <= 0) return 0;
 
   // Haulers are useless without harvesters
@@ -643,65 +692,15 @@ function haulerUtility(deficit: number, state: ColonyState): number {
  * Upgrader utility - uses modular utility system
  * Considers storage level, sustainability, energy rate, and population
  *
- * RCL 1-3 override: Upgraders are suppressed until economy is stable
+ * GATED during pioneer phase - pioneers handle upgrading
  */
 function upgraderUtility(deficit: number, state: ColonyState): number {
+  // Pioneer phase: pioneers upgrade, not specialists
+  if (isPioneerPhase(state.room)) return 0;
+
   if (deficit <= 0) return 0;
 
   const controller = state.room.controller;
-
-  // === RCL 1-3 YOUNG COLONY GATE ===
-  // Upgraders are a luxury - only spawn if economy is truly stable
-  if (state.rcl <= 3) {
-    // Emergency upgrade: controller about to downgrade
-    if (controller && controller.ticksToDowngrade && controller.ticksToDowngrade < 5000) {
-      // Emergency, but still cap at 1 and require basic economy
-      var currentUpgraders = state.counts.UPGRADER || 0;
-      if (currentUpgraders >= 1) return 0; // Already have an emergency upgrader
-      // Only spawn if there's at least 1 functional harvester
-      if ((state.counts.HARVESTER || 0) === 0) return 0; // No income = upgrader can't help
-      return 80;
-    }
-
-    // Gate: need at least 1 harvester per source
-    var harvesters = state.counts.HARVESTER || 0;
-    var sources = state.room.find(FIND_SOURCES).length;
-    if (harvesters < sources) {
-      return 0; // Economy not running - no upgraders
-    }
-
-    // Gate: need at least 1 hauler
-    if ((state.counts.HAULER || 0) === 0) {
-      return 0; // Can't move energy - no upgraders
-    }
-
-    // Gate: economy must be positive (more income than consumption)
-    // At young colonies, income should exceed current creep consumption
-    if (state.energyIncome < 4) {
-      return 0; // Not enough income to sustain upgrading
-    }
-
-    // Gate: must have energy at controller OR spawn energy is consistently available
-    var hasContainer = false;
-    if (controller) {
-      var nearby = controller.pos.findInRange(FIND_STRUCTURES, 3, {
-        filter: function(s) { return s.structureType === STRUCTURE_CONTAINER; }
-      });
-      hasContainer = nearby.length > 0 && (nearby[0] as StructureContainer).store[RESOURCE_ENERGY] > 100;
-    }
-    var spawnHealthy = state.energyAvailable >= state.energyCapacity * 0.8;
-
-    if (!hasContainer && !spawnHealthy) {
-      return 0; // No energy delivery system to controller
-    }
-
-    // Young colony upgrader: respect calculated target, diminishing utility
-    var currentUpgraders = state.counts.UPGRADER || 0;
-    var targetUpgraders = state.targets.UPGRADER || 1;
-    if (currentUpgraders >= targetUpgraders) return 0;
-    // First upgrader gets 30, subsequent get 10 less each (30, 20, 10...)
-    return Math.max(10, 30 - (currentUpgraders * 10));
-  }
 
   // Gate: Don't spawn upgraders if no energy is reachable at controller
   if (controller) {
@@ -763,39 +762,17 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
  * Builder utility - uses modular utility system
  * Accounts for remote room construction sites and storage levels
  *
- * RCL 1-3 override: Builders only spawn when economy can support them
+ * GATED during pioneer phase - pioneers handle building
  */
 function builderUtility(deficit: number, state: ColonyState): number {
+  // Pioneer phase: pioneers build, not specialists
+  if (isPioneerPhase(state.room)) return 0;
+
   if (deficit <= 0) return 0;
 
   // Use pre-calculated site count from state (includes home + remote + assumed)
   const totalSites = state.constructionSites;
   if (totalSites === 0) return 0;
-
-  // === RCL 1-3 YOUNG COLONY GATE ===
-  if (state.rcl <= 3) {
-    // Gate: need at least 1 harvester
-    if ((state.counts.HARVESTER || 0) === 0) {
-      return 0; // No income - no building
-    }
-
-    // Gate: need at least 1 hauler
-    if ((state.counts.HAULER || 0) === 0) {
-      return 0; // Can't move energy - no building
-    }
-
-    // Gate: must have some energy income
-    if (state.energyIncome < 4) {
-      return 0; // Not enough income
-    }
-
-    // Young colony builder: moderate utility, max 1-2
-    var currentBuilders = state.counts.BUILDER || 0;
-    if (currentBuilders >= 2) return 0;
-
-    // First builder gets utility 50, second gets 25
-    return currentBuilders === 0 ? 50 : 25;
-  }
 
   const base = CONFIG.SPAWNING.BASE_UTILITY.BUILDER;
   const energy = getEnergyState(state.room);
@@ -1407,6 +1384,33 @@ function findColonyInCrisis(parentRoom: string): string | null {
   return null;
 }
 
+/**
+ * Pioneer utility - self-sufficient generalist for colonies without infrastructure
+ *
+ * High utility when colony is in "pioneer phase" (no source containers, no storage).
+ * Returns 0 once source containers exist (specialists take over).
+ *
+ * Pioneers replace HARVESTER, HAULER, UPGRADER, BUILDER during early game.
+ * They harvest, deliver to spawn, build, and upgrade - no interdependencies.
+ */
+function pioneerUtility(state: ColonyState): number {
+  // Only spawn pioneers during pioneer phase
+  if (!isPioneerPhase(state.room)) return 0;
+
+  // Count existing pioneers
+  var currentPioneers = state.counts.PIONEER || 0;
+
+  // Target: 1 pioneer per source, max 4
+  var sources = state.room.find(FIND_SOURCES).length;
+  var targetPioneers = Math.min(sources * 2, 4);
+
+  if (currentPioneers >= targetPioneers) return 0;
+
+  // High utility - pioneers are critical for survival
+  // First pioneer: 150, second: 140, etc.
+  return 150 - (currentPioneers * 10);
+}
+
 // ============================================
 // Body Building Functions
 // ============================================
@@ -1454,6 +1458,17 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   }
   if (role === "BOOTSTRAP_WORKER") {
     return getBootstrapWorkerBody(energy);
+  }
+
+  // Pioneer uses its own body builder
+  // First pioneer: use available energy to spawn immediately
+  // Subsequent pioneers: use capacity for bigger bodies
+  if (role === "PIONEER") {
+    var pioneerEnergy = state.energyCapacity;
+    if ((state.counts.PIONEER || 0) === 0 && state.energyAvailable < state.energyCapacity) {
+      pioneerEnergy = state.energyAvailable;
+    }
+    return getPioneerBody(pioneerEnergy);
   }
 
   // Can't afford this role's minimum body
@@ -1636,6 +1651,14 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
         } as unknown as Partial<CreepMemory>;
       }
       return base;
+    }
+
+    case "PIONEER": {
+      // Pioneer just needs basic memory with state initialized
+      return {
+        ...base,
+        state: "HARVESTING",
+      };
     }
 
     default:

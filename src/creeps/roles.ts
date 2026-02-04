@@ -14,6 +14,7 @@ import { runMineralHarvester } from "./MineralHarvester";
 import { runBootstrapBuilder } from "./BootstrapBuilder";
 import { runBootstrapHauler } from "./BootstrapHauler";
 import { runBootstrapWorker } from "./BootstrapWorker";
+import { runPioneer } from "./Pioneer";
 
 // Body configurations moved to src/spawning/bodyConfig.ts
 // Use buildBody() from src/spawning/bodyBuilder.ts for body generation
@@ -39,6 +40,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   BOOTSTRAP_BUILDER: runBootstrapBuilder,
   BOOTSTRAP_HAULER: runBootstrapHauler,
   BOOTSTRAP_WORKER: runBootstrapWorker,
+  PIONEER: runPioneer,
 };
 
 export function runCreep(creep: Creep): void {
