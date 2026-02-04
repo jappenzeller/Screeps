@@ -8,6 +8,38 @@
 import { diminishingReturns } from "../../utils/smoothing";
 
 /**
+ * Map roles to the body part type that defines their effectiveness.
+ * A creep missing these parts is operating at reduced capacity.
+ */
+const ROLE_KEY_PART: Record<string, BodyPartConstant> = {
+  HARVESTER: WORK,
+  HAULER: CARRY,
+  UPGRADER: WORK,
+  BUILDER: WORK,
+  REMOTE_MINER: WORK,
+  REMOTE_HAULER: CARRY,
+  LINK_FILLER: CARRY,
+  PIONEER: WORK,
+  MINERAL_HARVESTER: WORK,
+};
+
+/**
+ * Get the effectiveness ratio of a creep (0 to 1).
+ * Based on active vs total key body parts for its role.
+ * Returns 1.0 for undamaged creeps or roles without a key part mapping.
+ */
+export function getCreepEffectiveness(creep: Creep): number {
+  var keyPart = ROLE_KEY_PART[creep.memory.role];
+  if (!keyPart) return 1.0;
+
+  var totalParts = creep.body.filter(function(p) { return p.type === keyPart; }).length;
+  if (totalParts === 0) return 1.0;
+
+  var activeParts = creep.getActiveBodyparts(keyPart);
+  return activeParts / totalParts;
+}
+
+/**
  * Diminishing returns for adding more of the same role
  * First creep has high utility, each additional has less
  *
@@ -29,7 +61,8 @@ export function roleCountUtility(currentCount: number, optimalCount: number): nu
 }
 
 /**
- * TTL-aware count - don't count creeps about to die
+ * TTL-aware count with damage-based fractional counting.
+ * A hauler with 8/16 CARRY parts counts as 0.5 haulers.
  *
  * @param creeps List of creeps to filter
  * @param role Role to count
@@ -40,9 +73,16 @@ export function getEffectiveCount(
   role: string,
   ttlThreshold: number = 100
 ): number {
-  return creeps.filter(
-    (c) => c.memory.role === role && (!c.ticksToLive || c.ticksToLive > ttlThreshold)
-  ).length;
+  var total = 0;
+  for (var i = 0; i < creeps.length; i++) {
+    var c = creeps[i];
+    if (c.memory.role !== role) continue;
+    if (c.ticksToLive && c.ticksToLive <= ttlThreshold) continue;
+
+    // Count as fractional based on damage
+    total += getCreepEffectiveness(c);
+  }
+  return total;
 }
 
 /**

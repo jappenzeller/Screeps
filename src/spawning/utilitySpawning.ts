@@ -21,7 +21,7 @@ import {
   sustainabilityUtility,
   rateUtility,
 } from "./utilities/energyUtility";
-import { roleCountUtility, getEffectiveCount } from "./utilities/populationUtility";
+import { roleCountUtility, getEffectiveCount, getCreepEffectiveness } from "./utilities/populationUtility";
 import { getBootstrapBuilderBody } from "../creeps/BootstrapBuilder";
 import { getBootstrapHaulerBody } from "../creeps/BootstrapHauler";
 import { getBootstrapWorkerBody } from "../creeps/BootstrapWorker";
@@ -282,8 +282,8 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
 
 /**
  * Count creeps that can actually perform their role.
- * A creep with destroyed parts doesn't count toward its role quota.
- * This prevents the spawner from thinking "we have 1 hauler" when that hauler has 0 CARRY.
+ * Uses fractional counting based on damage - a hauler with 8/16 CARRY counts as 0.5.
+ * This prevents the spawner from thinking "we have 1 hauler" when that hauler is damaged.
  */
 function getEffectiveCounts(creeps: Creep[], room: Room): Record<string, number> {
   var counts: Record<string, number> = {};
@@ -302,6 +302,7 @@ function getEffectiveCounts(creeps: Creep[], room: Room): Record<string, number>
     var role = c.memory.role;
     var functional = true;
 
+    // First check if creep is completely non-functional (0 key parts)
     switch (role) {
       case "HARVESTER":
         // Must have WORK parts to harvest
@@ -355,7 +356,9 @@ function getEffectiveCounts(creeps: Creep[], room: Room): Record<string, number>
     }
 
     if (functional) {
-      counts[role] = (counts[role] || 0) + 1;
+      // Count as fractional based on damage to key body parts
+      var effectiveness = getCreepEffectiveness(c);
+      counts[role] = (counts[role] || 0) + effectiveness;
     }
   }
 
@@ -566,6 +569,15 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
       // Haulers needed to keep up
       haulerTarget = Math.max(1, Math.ceil(totalSourceOutput / haulerThroughput));
     }
+  }
+
+  // Minimum 2 haulers for colonies with infrastructure
+  // Single hauler is SPOF — death or damage cascades into tower starvation
+  var hasLinks = room.find(FIND_MY_STRUCTURES, {
+    filter: function(s) { return s.structureType === STRUCTURE_LINK; }
+  }).length > 0;
+  if (m.hasStorage || hasLinks) {
+    haulerTarget = Math.max(haulerTarget, 2);
   }
 
   // Upgrader target: milestone-gated
