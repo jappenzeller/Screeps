@@ -332,7 +332,8 @@ export class ColonyStateManager {
    */
   private static checkEmergency(state: CachedColonyState): EmergencyState {
     const harvesters = state.creeps.byRole["HARVESTER"] ?? [];
-    const noHarvesters = harvesters.length === 0;
+    const pioneers = state.creeps.byRole["PIONEER"] ?? [];
+    const noHarvesters = harvesters.length === 0 && pioneers.length === 0;
 
     const spawn = state.structures.spawns[0];
     const spawnDying = spawn ? spawn.hits < spawn.hitsMax * 0.3 : false;
