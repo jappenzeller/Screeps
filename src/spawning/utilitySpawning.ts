@@ -53,6 +53,64 @@ function isPioneerPhase(room: Room): boolean {
   return sourceContainers.length === 0;
 }
 
+/**
+ * Energy budget for young colonies (RCL 1-3 without storage)
+ *
+ * These colonies have no buffer - they can only sustain creeps if
+ * income >= burn. Spawning more consumers than income supports = death spiral.
+ *
+ * Returns income, existing burn, and a function to check if additional burn is sustainable.
+ */
+interface EnergyBudget {
+  income: number;           // energy/tick from harvesters
+  existingBurn: number;     // energy/tick consumed by existing builders+upgraders
+  availableBudget: number;  // income - existingBurn
+  canSustain: (additionalBurn: number) => boolean;
+}
+
+function getEnergyBudget(state: ColonyState): EnergyBudget {
+  // Income is already calculated in state
+  var income = state.energyIncome;
+
+  // Count existing consumers (builders + upgraders) and estimate their burn rate
+  var creeps = Object.values(Game.creeps).filter(function(c) {
+    return c.memory.room === state.room.name;
+  });
+
+  var existingBurn = 0;
+  for (var i = 0; i < creeps.length; i++) {
+    var c = creeps[i];
+    var role = c.memory.role;
+    var workParts = c.getActiveBodyparts(WORK);
+
+    if (role === "BUILDER") {
+      // Builders burn 5 energy per WORK per tick when building
+      // Estimate 50% uptime (walking, waiting for energy)
+      existingBurn += workParts * 5 * 0.5;
+    } else if (role === "UPGRADER") {
+      // Upgraders burn 1 energy per WORK per tick
+      // Estimate 80% uptime (mostly stationary at controller)
+      existingBurn += workParts * 1 * 0.8;
+    } else if (role === "PIONEER") {
+      // Pioneers split time between tasks. Estimate:
+      // 40% harvesting (0 burn), 30% building (5/work), 30% upgrading (1/work)
+      existingBurn += workParts * (0.3 * 5 + 0.3 * 1);
+    }
+  }
+
+  var availableBudget = income - existingBurn;
+
+  return {
+    income: income,
+    existingBurn: existingBurn,
+    availableBudget: availableBudget,
+    canSustain: function(additionalBurn: number): boolean {
+      // Allow some slack (10%) because estimates are imprecise
+      return (existingBurn + additionalBurn) <= income * 1.1;
+    }
+  };
+}
+
 // All roles that can be spawned
 type SpawnRole =
   | "HARVESTER"
@@ -434,11 +492,18 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
   const isEarlyColony = rcl <= 3 && !m.hasStorage;
 
   // Builder target calculation
+  // For early colonies, scale target based on estimated income
+  // A builder burns ~2.5 energy/tick (1 WORK at 50% uptime building)
   let builderTarget = 0;
   if (totalSites > 0) {
     if (isEarlyColony) {
-      // Early game: always target 2 builders when sites exist
-      builderTarget = 2;
+      // Estimate income from harvesters (may not be in ColonyState here)
+      // Use sources * 6 as rough estimate (3 WORK parts per source typical)
+      const estimatedIncome = sources * 6;
+      // Each builder burns ~2.5 energy/tick, leave 50% for haulers/upgraders
+      const maxBuildersForIncome = Math.floor((estimatedIncome * 0.5) / 2.5);
+      // Target 1-2 builders based on income
+      builderTarget = Math.min(2, Math.max(1, maxBuildersForIncome));
     } else if (rcl <= 3) {
       builderTarget = Math.min(2, Math.max(2, Math.min(rcl, 4)));
     } else {
@@ -487,10 +552,19 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
       const roundTrip = avgDistance * 2 + 4;
       // Throughput per hauler in energy/tick
       const haulerThroughput = estimatedCarry / roundTrip;
-      // Total source output
-      const totalSourceOutput = sources * 10;
+
+      // Total source output: use ACTUAL income for early colonies, max for mature
+      // Young colonies may not have full harvesters yet
+      let totalSourceOutput = sources * 10; // theoretical max
+      if (isEarlyColony) {
+        // Estimate actual income from harvesters (sources * 6 = 3 WORK per source typical)
+        // Cap at actual output, not theoretical
+        const estimatedActualIncome = sources * 6;
+        totalSourceOutput = Math.min(totalSourceOutput, estimatedActualIncome);
+      }
+
       // Haulers needed to keep up
-      haulerTarget = Math.max(sources, Math.ceil(totalSourceOutput / haulerThroughput));
+      haulerTarget = Math.max(1, Math.ceil(totalSourceOutput / haulerThroughput));
     }
   }
 
@@ -693,6 +767,10 @@ function haulerUtility(deficit: number, state: ColonyState): number {
  * Considers storage level, sustainability, energy rate, and population
  *
  * GATED during pioneer phase - pioneers handle upgrading
+ *
+ * For young colonies (RCL 1-3 without storage):
+ * - Budget-aware: won't spawn if income can't sustain additional burn
+ * - Infrastructure (builders) takes priority over upgrading
  */
 function upgraderUtility(deficit: number, state: ColonyState): number {
   // Pioneer phase: pioneers upgrade, not specialists
@@ -724,12 +802,25 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
     }
   }
 
+  const hasStorage = !!state.room.storage;
+
+  // Young colony budget check (RCL 1-3 without storage)
+  // Prevent spawning upgraders that income can't sustain
+  if (!hasStorage && state.rcl <= 3) {
+    const budget = getEnergyBudget(state);
+    // Estimate burn for a new upgrader: ~1 WORK part at RCL 1-3
+    // Upgrader burns 1 energy/WORK/tick at 80% uptime = 0.8 energy/tick
+    const estimatedBurn = 0.8;
+    if (!budget.canSustain(estimatedBurn)) {
+      return 0; // Can't afford another upgrader
+    }
+  }
+
   const base = CONFIG.SPAWNING.BASE_UTILITY.UPGRADER;
   const energy = getEnergyState(state.room);
 
   // Factor 1: Storage level
   // Young colonies (no storage) get a fixed baseline — they MUST upgrade to progress
-  const hasStorage = !!state.room.storage;
   const storageFactor = hasStorage
     ? storageUtility(energy.stored, CONFIG.ENERGY.STORAGE_THRESHOLDS)
     : 0.6; // Fixed baseline for young colonies
@@ -763,6 +854,10 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
  * Accounts for remote room construction sites and storage levels
  *
  * GATED during pioneer phase - pioneers handle building
+ *
+ * For young colonies (RCL 1-3 without storage):
+ * - Budget-aware: won't spawn if income can't sustain additional burn
+ * - Prioritizes infrastructure (containers, extensions) over general building
  */
 function builderUtility(deficit: number, state: ColonyState): number {
   // Pioneer phase: pioneers build, not specialists
@@ -776,10 +871,22 @@ function builderUtility(deficit: number, state: ColonyState): number {
 
   const base = CONFIG.SPAWNING.BASE_UTILITY.BUILDER;
   const energy = getEnergyState(state.room);
+  const hasStorage = !!state.room.storage;
+
+  // Young colony budget check (RCL 1-3 without storage)
+  // Prevent spawning builders that income can't sustain
+  if (!hasStorage && state.rcl <= 3) {
+    const budget = getEnergyBudget(state);
+    // Estimate burn for a new builder: ~1 WORK part at RCL 1-3
+    // Builder burns 5 energy/WORK/tick at 50% uptime = 2.5 energy/tick
+    const estimatedBurn = 2.5;
+    if (!budget.canSustain(estimatedBurn)) {
+      return 0; // Can't afford another builder
+    }
+  }
 
   // Factor 1: Storage level
   // Young colonies (no storage) get a fixed baseline — they MUST build to progress
-  const hasStorage = !!state.room.storage;
   const storageFactor = hasStorage
     ? storageUtility(energy.stored, CONFIG.ENERGY.STORAGE_THRESHOLDS)
     : 0.6; // Fixed baseline for young colonies

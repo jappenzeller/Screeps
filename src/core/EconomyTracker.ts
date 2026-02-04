@@ -249,20 +249,35 @@ export class EconomyTracker {
   }
 
   private estimateBuildBurn(): number {
+    // Count ALL builders (any state), not just those currently building
+    // Builders spend ~50% of time actually building (rest is traveling, waiting)
     const builders = Object.values(Game.creeps).filter(
       (c) =>
         c.memory.role === "BUILDER" &&
-        c.memory.room === this.room.name &&
-        c.memory.state === "BUILDING"
+        c.memory.room === this.room.name
     );
 
-    let totalWorkParts = 0;
+    let totalBurn = 0;
     for (const b of builders) {
-      totalWorkParts += b.getActiveBodyparts(WORK);
+      const workParts = b.getActiveBodyparts(WORK);
+      // Each WORK uses 5 energy per build action, 50% uptime
+      totalBurn += workParts * 5 * 0.5;
     }
 
-    // Each WORK uses 5 energy per build action
-    return totalWorkParts * 5;
+    // Include pioneers who also build (~30% of their time)
+    const pioneers = Object.values(Game.creeps).filter(
+      (c) =>
+        c.memory.role === "PIONEER" &&
+        c.memory.room === this.room.name
+    );
+
+    for (const p of pioneers) {
+      const workParts = p.getActiveBodyparts(WORK);
+      // Pioneers: 30% time building at 5 energy/WORK/tick
+      totalBurn += workParts * 5 * 0.3;
+    }
+
+    return totalBurn;
   }
 
   private estimateTowerBurn(): number {
