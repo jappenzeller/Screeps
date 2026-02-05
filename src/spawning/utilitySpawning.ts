@@ -1024,6 +1024,12 @@ function remoteMinerUtility(deficit: number, state: ColonyState): number {
     return 0;
   }
 
+  // Don't start remote operations until home economy is stable
+  var totalEnergy = state.energyStored + state.energyAvailable;
+  if (totalEnergy < 2000 || state.energyIncome < state.energyIncomeMax * 0.5) {
+    return 0;
+  }
+
   // Base utility
   let utility = deficit * 40;
 
@@ -1052,6 +1058,12 @@ function remoteMinerUtility(deficit: number, state: ColonyState): number {
  */
 function remoteHaulerUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl < 4) return 0;
+
+  // Don't start remote operations until home economy is stable
+  var totalEnergy = state.energyStored + state.energyAvailable;
+  if (totalEnergy < 2000 || state.energyIncome < state.energyIncomeMax * 0.5) {
+    return 0;
+  }
 
   let totalActiveMiners = 0;
   let roomsWithMinersNoHaulers = 0;
@@ -1194,6 +1206,12 @@ function reserverUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl < 4) return 0;
   if (state.remoteRooms.length === 0) return 0;
 
+  // Don't reserve when home economy is struggling
+  var totalEnergy = state.energyStored + state.energyAvailable;
+  if (totalEnergy < 2000) {
+    return 0;
+  }
+
   // Check if any remote room needs reservation
   let needsReservation = false;
   const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
@@ -1267,6 +1285,12 @@ function linkFillerUtility(deficit: number, state: ColonyState): number {
  */
 function scoutUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl < 3) return 0;
+
+  // Don't scout when economy is struggling — every spawn tick matters
+  var totalEnergy = state.energyStored + state.energyAvailable;
+  if (totalEnergy < 1000 || state.energyIncome < state.energyIncomeMax * 0.5) {
+    return 0;
+  }
 
   const roomsNeedingScan = countRoomsNeedingScan(state.room.name);
   if (roomsNeedingScan === 0) return 0;
