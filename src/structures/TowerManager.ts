@@ -46,6 +46,20 @@ export class TowerManager {
     }
 
     // Priority 3: Repair structures (only if energy is sufficient)
+    // Skip repairs when economy is dead — preserve tower energy for defense only
+    var roomName = this.room.name;
+    var towerCreeps = Object.values(Game.creeps).filter(function(c: Creep) {
+      return c.memory.room === roomName;
+    });
+    var hasHarvesters = towerCreeps.some(function(c: Creep) {
+      return c.memory.role === 'HARVESTER' || c.memory.role === 'PIONEER';
+    });
+
+    if (!hasHarvesters) {
+      // Economy dead — only attack hostiles and heal, skip all repairs
+      return;
+    }
+
     const minTowerEnergy = Math.min(...this.towers.map((t) => t.store[RESOURCE_ENERGY]));
     if (minTowerEnergy < 500) return;
 

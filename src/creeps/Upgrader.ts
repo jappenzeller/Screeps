@@ -32,6 +32,28 @@ function moveOffRoad(creep: Creep): void {
 }
 
 export function runUpgrader(creep: Creep): void {
+  // EMERGENCY SHUTDOWN: Don't consume energy when economy is dead
+  var homeRoom = Game.rooms[creep.memory.room];
+  if (homeRoom) {
+    var homeCreeps = Object.values(Game.creeps).filter(function(c) {
+      return c.memory.room === creep.memory.room;
+    });
+    var hasHarvesters = homeCreeps.some(function(c) {
+      return c.memory.role === 'HARVESTER' || c.memory.role === 'PIONEER';
+    });
+    var totalEnergy = (homeRoom.energyAvailable || 0) +
+      (homeRoom.storage ? homeRoom.storage.store[RESOURCE_ENERGY] : 0);
+
+    if (!hasHarvesters && totalEnergy < 500) {
+      creep.say('NO ECO');
+      var spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+      if (spawn && creep.pos.getRangeTo(spawn) > 5) {
+        smartMoveTo(creep, spawn, { reusePath: 20 });
+      }
+      return;
+    }
+  }
+
   // If not in assigned room, travel there (handles reassigned bootstrap creeps)
   if (creep.room.name !== creep.memory.room) {
     smartMoveTo(creep, new RoomPosition(25, 25, creep.memory.room), {

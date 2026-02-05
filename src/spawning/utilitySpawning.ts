@@ -234,6 +234,57 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
 
   const best = candidates[0];
 
+  // ENERGY RESERVATION: Prevent spending energy that would make harvester replacement impossible.
+  // If we're about to spawn a non-harvester/non-pioneer role and it would leave us unable to
+  // afford a minimum harvester, skip it — UNLESS we already have 2+ healthy harvesters.
+  var harvesterCount = state.counts.HARVESTER || 0;
+  var pioneerCount = state.counts.PIONEER || 0;
+  var hasSpawningHarvester = room.find(FIND_MY_SPAWNS).some(function(s) {
+    if (!s.spawning) return false;
+    var spawningCreep = Game.creeps[s.spawning.name];
+    return spawningCreep && (spawningCreep.memory.role === 'HARVESTER' || spawningCreep.memory.role === 'PIONEER');
+  });
+
+  if (best.role !== 'HARVESTER' && best.role !== 'PIONEER') {
+    var minHarvesterCost = ROLE_MIN_COST['HARVESTER'] || 200;
+    var energyAfterSpawn = room.energyAvailable - best.cost;
+    var harvestersSafe = harvesterCount >= 2 || pioneerCount >= 2 || hasSpawningHarvester;
+
+    if (!harvestersSafe && energyAfterSpawn < minHarvesterCost && harvesterCount <= 1) {
+      // Spending this energy would make harvester replacement impossible.
+      // Check if there's a cheaper economy role we can afford while preserving the reserve.
+      var safeCandidate: SpawnCandidate | null = null;
+      for (var i = 0; i < candidates.length; i++) {
+        var c = candidates[i];
+        if (c.role === 'HARVESTER' || c.role === 'PIONEER') continue; // handled by normal flow
+        if (c.cost <= room.energyAvailable && (room.energyAvailable - c.cost) >= minHarvesterCost) {
+          safeCandidate = c;
+          break;
+        }
+      }
+      if (safeCandidate) {
+        // Found a role we can spawn while keeping reserve
+        if (safeCandidate.cost <= room.energyAvailable) {
+          return safeCandidate;
+        }
+      }
+      // No safe candidate — don't spend the reserve. Wait.
+      // Exception: if best IS affordable and is an economy role, allow it
+      // (better to have a hauler than sit with idle energy when harvester exists)
+      if (harvesterCount >= 1 && best.cost <= room.energyAvailable) {
+        var SAFE_ECONOMY: SpawnRole[] = ['HAULER', 'BUILDER', 'UPGRADER', 'DEFENDER'];
+        if (SAFE_ECONOMY.indexOf(best.role) === -1) {
+          return null; // Don't spend on non-economy roles
+        }
+        // Allow economy roles if at least 1 harvester exists
+        // (the reserve is mainly to prevent 0-harvester deadlock)
+      } else if (harvesterCount === 0) {
+        // 0 harvesters — absolutely do not spend energy on anything else
+        return null;
+      }
+    }
+  }
+
   // Can we afford the highest utility role?
   if (best.cost <= room.energyAvailable) {
     return best;

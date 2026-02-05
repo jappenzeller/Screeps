@@ -1259,4 +1259,49 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       return empireExpansion.auto(enable);
     },
   };
+
+  // Emergency rescue: dispatch pioneer from one colony to bootstrap another
+  global.rescueColony = function(fromRoom: string, toRoom: string): string {
+    var from = Game.rooms[fromRoom];
+    if (!from) return 'Cannot see room ' + fromRoom;
+
+    var spawn = from.find(FIND_MY_SPAWNS).find(function(s) { return !s.spawning; });
+    if (!spawn) return 'No available spawn in ' + fromRoom;
+
+    // Build a small pioneer that can bootstrap the target colony
+    // Use available energy, min 300 (WORK+CARRY+CARRY+MOVE+MOVE)
+    var energy = Math.min(from.energyAvailable, 800);
+    if (energy < 300) return 'Not enough energy in ' + fromRoom + ' (need 300, have ' + energy + ')';
+
+    var body: BodyPartConstant[] = [];
+    var remaining = energy;
+
+    // Build balanced WORK/CARRY/MOVE
+    while (remaining >= 250 && body.length < 30) {
+      body.push(WORK);   // 100
+      body.push(CARRY);  // 50
+      body.push(MOVE);   // 50
+      remaining -= 200;
+      if (remaining >= 50) {
+        body.push(MOVE); // extra move for road-less travel
+        remaining -= 50;
+      }
+    }
+
+    var name = 'RESCUE_' + toRoom + '_' + Game.time;
+    var result = spawn.spawnCreep(body, name, {
+      memory: {
+        role: 'PIONEER',
+        room: toRoom,
+        selfHarvest: true,
+      } as any,
+    });
+
+    if (result === OK) {
+      var cost = body.reduce(function(sum, p) { return sum + BODYPART_COST[p]; }, 0);
+      return 'Spawning rescue pioneer ' + name + ' (' + body.length + ' parts, cost ' + cost + ') from ' + fromRoom + ' -> ' + toRoom;
+    } else {
+      return 'Spawn failed: ' + result;
+    }
+  };
 }

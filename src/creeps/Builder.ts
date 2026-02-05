@@ -131,6 +131,30 @@ function moveOffRoad(creep: Creep): void {
 }
 
 export function runBuilder(creep: Creep): void {
+  // EMERGENCY SHUTDOWN: Don't consume energy when economy is dead
+  // If no harvesters exist and stored energy is critically low, idle to preserve energy for spawner
+  var homeRoom = Game.rooms[creep.memory.room];
+  if (homeRoom) {
+    var homeCreeps = Object.values(Game.creeps).filter(function(c) {
+      return c.memory.room === creep.memory.room;
+    });
+    var hasHarvesters = homeCreeps.some(function(c) {
+      return c.memory.role === 'HARVESTER' || c.memory.role === 'PIONEER';
+    });
+    var totalEnergy = (homeRoom.energyAvailable || 0) +
+      (homeRoom.storage ? homeRoom.storage.store[RESOURCE_ENERGY] : 0);
+
+    if (!hasHarvesters && totalEnergy < 500) {
+      creep.say('NO ECO');
+      // Move toward spawn to be out of the way, but do nothing
+      var spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+      if (spawn && creep.pos.getRangeTo(spawn) > 5) {
+        smartMoveTo(creep, spawn, { reusePath: 20 });
+      }
+      return;
+    }
+  }
+
   const manager = ColonyManager.getInstance(creep.memory.room);
 
   // Task tracking
