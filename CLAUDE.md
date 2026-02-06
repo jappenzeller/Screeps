@@ -23,6 +23,10 @@ This is a TypeScript Screeps bot targeting the official MMO server (shard0). The
 
 See `docs/README.md` for comprehensive documentation:
 
+**IMPORTANT: Before implementing any build planner, blueprint, terminal, lab, or empire systems, you MUST read:**
+- [BUILD_PLANNER_IMPLEMENTATION.md](docs/BUILD_PLANNER_IMPLEMENTATION.md) - **Required reading** for all remaining implementation work. Contains phase-by-phase implementation details, file locations, integration points, and verification checklists.
+
+Core documentation:
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Core systems
 - [SPAWNING.md](docs/SPAWNING.md) - Utility spawning
 - [ECONOMY.md](docs/ECONOMY.md) - Energy flow

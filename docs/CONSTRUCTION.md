@@ -72,13 +72,24 @@ To avoid CPU spikes, only **one structure** is placed per tick. The system cycle
 
 ### Links (LinkManager.ts)
 
-Two link types:
-1. **Controller Link** - Near controller for upgraders
-2. **Storage Link** - Near storage for hauler chain
+Link types (placed in priority order):
+
+1. **Controller Link** - Range 2-4 from controller for upgraders
+2. **Storage Link** - Adjacent to storage on hauler path
+3. **Source Links** - Range 1-2 from each source for direct harvester deposit
 
 **Placement:**
+
 - Controller link: Range 2-4 from controller
-- Storage link: On hauler traffic path
+- Storage link: On hauler traffic path, range 1-3 from storage
+- Source links: Adjacent to source container preferred (harvester can transfer without moving)
+
+**Link Count by RCL:**
+
+- RCL 5: 2 links (controller + storage)
+- RCL 6: 3 links (+ first source link)
+- RCL 7: 4 links (+ second source link)
+- RCL 8: 6 links (extras for remote optimization)
 
 **Unlocks at:** RCL 5
 

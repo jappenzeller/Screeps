@@ -386,9 +386,6 @@ function findLinkPosition(
   const existingLinks = room.find(FIND_MY_STRUCTURES, {
     filter: (s) => s.structureType === STRUCTURE_LINK,
   });
-  const linkSites = room.find(FIND_CONSTRUCTION_SITES, {
-    filter: (s) => s.structureType === STRUCTURE_LINK,
-  });
 
   // Check if controller already has a link nearby
   const controllerHasLink =
@@ -411,7 +408,32 @@ function findLinkPosition(
     }
   }
 
-  // Fallback: near spawn
+  // Third+ priority: Source links (near sources for direct harvester deposit)
+  var sources = room.find(FIND_SOURCES);
+  for (var i = 0; i < sources.length; i++) {
+    var source = sources[i];
+
+    // Check if this source already has a link nearby (range 2)
+    var sourceHasLink = existingLinks.some(function (l) {
+      return l.pos.getRangeTo(source) <= 2;
+    });
+
+    // Also check construction sites
+    var sourceHasLinkSite =
+      room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function (s) {
+          return (
+            s.structureType === STRUCTURE_LINK && s.pos.getRangeTo(source) <= 2
+          );
+        },
+      }).length > 0;
+
+    if (!sourceHasLink && !sourceHasLinkSite) {
+      return findSourceLinkPosition(room, source, terrain);
+    }
+  }
+
+  // Fallback: near spawn (for any additional links beyond sources)
   return findNearSpawnPosition(room, spawnPos, terrain);
 }
 
@@ -537,6 +559,77 @@ function findStorageLinkPosition(
 
   candidates.sort((a, b) => a.score - b.score);
   return candidates[0] || null;
+}
+
+/**
+ * Find position for source link - near source for direct harvester deposit
+ * Prefers positions adjacent to the source container so harvester doesn't move
+ */
+function findSourceLinkPosition(
+  room: Room,
+  source: Source,
+  terrain: RoomTerrain
+): { x: number; y: number } | null {
+  var candidates: Array<{ x: number; y: number; score: number }> = [];
+
+  // Find container near this source (if any)
+  var containers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+    filter: function (s) {
+      return s.structureType === STRUCTURE_CONTAINER;
+    },
+  });
+  var container = containers[0] || null;
+
+  // Search range 1-2 from source
+  for (var dx = -2; dx <= 2; dx++) {
+    for (var dy = -2; dy <= 2; dy++) {
+      var range = Math.max(Math.abs(dx), Math.abs(dy));
+      if (range === 0 || range > 2) continue;
+
+      var x = source.pos.x + dx;
+      var y = source.pos.y + dy;
+
+      if (!isValidBuildPos(room, x, y, terrain)) continue;
+
+      var score = 0;
+
+      // Strongly prefer range 1 (adjacent to source)
+      if (range === 1) {
+        score += 10;
+      }
+
+      // Big bonus for being adjacent to container (harvester can transfer without moving)
+      if (container) {
+        var pos = new RoomPosition(x, y, room.name);
+        if (pos.isNearTo(container)) {
+          score += 20;
+        }
+      }
+
+      // Prefer plain terrain over swamp
+      if (terrain.get(x, y) === 0) {
+        score += 2;
+      }
+
+      // Small bonus for being on existing road
+      var hasRoad = room.lookForAt(LOOK_STRUCTURES, x, y).some(function (s) {
+        return s.structureType === STRUCTURE_ROAD;
+      });
+      if (hasRoad) {
+        score += 1;
+      }
+
+      candidates.push({ x: x, y: y, score: score });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Sort descending by score (higher is better)
+  candidates.sort(function (a, b) {
+    return b.score - a.score;
+  });
+  return candidates[0];
 }
 
 /**
