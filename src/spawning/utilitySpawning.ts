@@ -866,12 +866,25 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   }
 
   const hasStorage = !!state.room.storage;
+  const energy = getEnergyState(state.room);
 
   // Young colony budget check (RCL 1-3 without storage)
   // Prevent spawning upgraders that income can't sustain
   if (!hasStorage && state.rcl <= 3) {
     const budget = getEnergyBudget(state);
-    // Estimate burn for a new upgrader: ~1 WORK part at RCL 1-3
+    const existingUpgraders = state.counts.UPGRADER || 0;
+
+    // REACTIVE: If economy is already in deficit, limit to 1 upgrader
+    // (to prevent controller downgrade, but don't add to the problem)
+    if (budget.availableBudget < 0 && energy.stored < 5000) {
+      if (existingUpgraders >= 1) {
+        return 0; // Already have 1 upgrader, don't spawn more during deficit
+      }
+      // Allow spawning 1 upgrader with low priority to prevent downgrade
+      return 5;
+    }
+
+    // PROACTIVE: Check if a new upgrader would push us into deficit
     // Upgrader burns 1 energy/WORK/tick at 80% uptime = 0.8 energy/tick
     const estimatedBurn = 0.8;
     if (!budget.canSustain(estimatedBurn)) {
@@ -880,7 +893,6 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   }
 
   const base = CONFIG.SPAWNING.BASE_UTILITY.UPGRADER;
-  const energy = getEnergyState(state.room);
 
   // Factor 1: Storage level
   // Young colonies (no storage) get a fixed baseline — they MUST upgrade to progress
@@ -940,7 +952,14 @@ function builderUtility(deficit: number, state: ColonyState): number {
   // Prevent spawning builders that income can't sustain
   if (!hasStorage && state.rcl <= 3) {
     const budget = getEnergyBudget(state);
-    // Estimate burn for a new builder: ~1 WORK part at RCL 1-3
+
+    // REACTIVE: If economy is already in deficit, suppress builder spawning entirely
+    // This catches cases where existing builders are burning more than income
+    if (budget.availableBudget < 0 && energy.stored < 5000) {
+      return 0; // Economy is hemorrhaging, don't spawn more consumers
+    }
+
+    // PROACTIVE: Check if a new builder would push us into deficit
     // Builder burns 5 energy/WORK/tick at 50% uptime = 2.5 energy/tick
     const estimatedBurn = 2.5;
     if (!budget.canSustain(estimatedBurn)) {
@@ -1692,6 +1711,44 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
         if (energy >= fallbackCost) {
           body = fallback;
         }
+      }
+    }
+  }
+
+  // BUILDER special case: cap WORK parts for early colonies to prevent economy overdraft
+  // Single-source colonies (10 energy/tick income) can't sustain 4-WORK builders (20 energy/tick burn)
+  if (role === "BUILDER" && body.length > 0) {
+    var rcl = state.room.controller ? state.room.controller.level : 0;
+    var hasStorage = !!state.room.storage;
+    var isEarlyColony = rcl <= 3 && !hasStorage;
+
+    if (isEarlyColony) {
+      var sourceCount = state.room.find(FIND_SOURCES).length;
+      // Cap WORK parts: 1 source = max 2 WORK, 2 sources = max 3 WORK
+      // Builder burns 5 energy/WORK/tick at ~50% uptime = 2.5 energy/tick per WORK
+      // 1 source = 10 income, 40% for building = 4 / 2.5 = 1.6 → round to 2
+      // 2 sources = 20 income, 40% for building = 8 / 2.5 = 3.2 → round to 3
+      var maxWorkParts = sourceCount === 1 ? 2 : 3;
+
+      var currentWorkParts = 0;
+      for (var i = 0; i < body.length; i++) {
+        if (body[i] === WORK) currentWorkParts++;
+      }
+
+      if (currentWorkParts > maxWorkParts) {
+        // Rebuild body with capped WORK parts
+        // Builder pattern: [WORK, CARRY, MOVE] per unit
+        var cappedBody: BodyPartConstant[] = [];
+        for (var w = 0; w < maxWorkParts; w++) {
+          cappedBody.push(WORK);
+        }
+        for (var c = 0; c < maxWorkParts; c++) {
+          cappedBody.push(CARRY);
+        }
+        for (var m = 0; m < maxWorkParts; m++) {
+          cappedBody.push(MOVE);
+        }
+        body = cappedBody;
       }
     }
   }
