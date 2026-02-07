@@ -524,6 +524,23 @@ function collect(creep: Creep): void {
 }
 
 function deliver(creep: Creep): void {
+  // Priority 0: CRITICAL towers - defense emergency
+  // Towers below 300 can't effectively defend (1 attack = 10 energy, need buffer for combat)
+  // This MUST come before spawn/extensions to prevent tower starvation
+  const emergencyTower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_TOWER &&
+        s.store[RESOURCE_ENERGY] < 300;
+    },
+  }) as StructureTower | null;
+
+  if (emergencyTower) {
+    if (creep.transfer(emergencyTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, emergencyTower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
+    }
+    return;
+  }
+
   // Priority 1: Spawn and Extensions (critical for spawning)
   const spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
     filter: (s) =>
@@ -541,16 +558,17 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  // Priority 2: Towers below 50% (defensive readiness - CRITICAL)
-  const criticalTower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: (s) =>
-      s.structureType === STRUCTURE_TOWER &&
-      s.store[RESOURCE_ENERGY] < 500, // 50% of 1000 capacity
+  // Priority 2: Towers below 500 (defensive readiness)
+  const lowTower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_TOWER &&
+        s.store[RESOURCE_ENERGY] < 500;
+    },
   }) as StructureTower | null;
 
-  if (criticalTower) {
-    if (creep.transfer(criticalTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, criticalTower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
+  if (lowTower) {
+    if (creep.transfer(lowTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, lowTower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
     }
     return;
   }
