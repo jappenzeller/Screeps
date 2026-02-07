@@ -479,6 +479,127 @@ function trimCreepData(payload: AWSExportData): void {
 }
 
 /**
+ * Shedding Tier 3.5: Trim colony structure details
+ */
+function trimStructureDetails(payload: AWSExportData): void {
+  for (const colony of payload.colonies) {
+    // Keep only counts, not full details
+    colony.structureDetails = {
+      links: [],
+      containers: [],
+      spawns: [],
+    };
+  }
+}
+
+/**
+ * Shedding Tier 4.5: Trim remote mining and scouting details
+ */
+function trimRemoteData(payload: AWSExportData): void {
+  for (const colony of payload.colonies) {
+    // Simplify remote mining - keep counts only
+    if (colony.remoteMining) {
+      colony.remoteMining = {
+        targetRooms: colony.remoteMining.targetRooms.map(r => ({
+          ...r,
+          miners: [],
+          haulers: [],
+          reserver: null,
+        })),
+        totalMiners: colony.remoteMining.totalMiners,
+        totalHaulers: colony.remoteMining.totalHaulers,
+        totalReservers: colony.remoteMining.totalReservers,
+      };
+    }
+
+    // Simplify scouting - keep only counts
+    if (colony.scouting) {
+      colony.scouting = {
+        scouts: [],
+        roomsNeedingScan: [],
+        totalRemaining: colony.scouting.totalRemaining,
+        totalScanned: colony.scouting.totalScanned,
+        scannedRooms: {},
+      };
+    }
+
+    // Remove remote defense details
+    if (colony.remoteDefense) {
+      colony.remoteDefense = {
+        roomVisibility: [],
+        remoteCreepStates: [],
+        spawnTriggers: [],
+      };
+    }
+
+    // Remove traffic data
+    colony.traffic = {
+      trackedTiles: 0,
+      desirePaths: 0,
+      windowSize: 0,
+      windowProgress: 0,
+      roads: { total: 0, builtByPlanner: 0 },
+      hotspots: [],
+      efficiency: { swampTraffic: 0 },
+      pathCoverage: {
+        spawnToSources: [],
+        spawnToController: { coverage: 0, distance: 0 },
+        spawnToStorage: null,
+      },
+    };
+
+    // Simplify adjacent rooms
+    colony.adjacentRooms = colony.adjacentRooms.map(r => ({
+      ...r,
+    }));
+  }
+}
+
+/**
+ * Shedding Tier 5.5: Minimal colony data - just essentials
+ */
+function trimToMinimalColonies(payload: AWSExportData): void {
+  for (const colony of payload.colonies) {
+    // Keep only the absolute essentials
+    colony.structureDetails = { links: [], containers: [], spawns: [] };
+    colony.adjacentRooms = [];
+    colony.remoteMining = {
+      targetRooms: [],
+      totalMiners: colony.remoteMining?.totalMiners || 0,
+      totalHaulers: colony.remoteMining?.totalHaulers || 0,
+      totalReservers: colony.remoteMining?.totalReservers || 0,
+    };
+    colony.scouting = {
+      scouts: [],
+      roomsNeedingScan: [],
+      totalRemaining: 0,
+      totalScanned: 0,
+      scannedRooms: {},
+    };
+    colony.remoteDefense = {
+      roomVisibility: [],
+      remoteCreepStates: [],
+      spawnTriggers: [],
+    };
+    colony.traffic = {
+      trackedTiles: 0,
+      desirePaths: 0,
+      windowSize: 0,
+      windowProgress: 0,
+      roads: { total: 0, builtByPlanner: 0 },
+      hotspots: [],
+      efficiency: { swampTraffic: 0 },
+      pathCoverage: {
+        spawnToSources: [],
+        spawnToController: { coverage: 0, distance: 0 },
+        spawnToStorage: null,
+      },
+    };
+    colony.creeps.details = [];
+  }
+}
+
+/**
  * Shedding Tier 4: Keep only operationally critical intel
  * (owned rooms, active remotes, active expansions, adjacent rooms)
  */
@@ -562,6 +683,16 @@ function buildAndShedPayload(payload: AWSExportData): { json: string; shedLevel:
     }
   }
 
+  // Tier 3.5: Trim structure details
+  if (json.length > SIZE_TARGET) {
+    trimStructureDetails(payload);
+    json = JSON.stringify(payload);
+    shedLevel = 3.5;
+    if (Game.time % 100 === 0) {
+      console.log("[AWSExporter] Tier 3.5: Trimmed structure details. Size: " + json.length);
+    }
+  }
+
   // Tier 4: Shed older intel (>1000 ticks old)
   if (json.length > SIZE_TARGET) {
     const removed = shedStaleIntel(payload, 1000);
@@ -569,6 +700,16 @@ function buildAndShedPayload(payload: AWSExportData): { json: string; shedLevel:
     shedLevel = 4;
     if (removed > 0 && Game.time % 100 === 0) {
       console.log("[AWSExporter] Tier 4: Shed " + removed + " older intel entries. Size: " + json.length);
+    }
+  }
+
+  // Tier 4.5: Trim remote/scouting/traffic data
+  if (json.length > SIZE_TARGET) {
+    trimRemoteData(payload);
+    json = JSON.stringify(payload);
+    shedLevel = 4.5;
+    if (Game.time % 100 === 0) {
+      console.log("[AWSExporter] Tier 4.5: Trimmed remote/scouting data. Size: " + json.length);
     }
   }
 
@@ -582,12 +723,30 @@ function buildAndShedPayload(payload: AWSExportData): { json: string; shedLevel:
     }
   }
 
+  // Tier 5.5: Minimal colony data
+  if (json.length > SIZE_TARGET) {
+    trimToMinimalColonies(payload);
+    json = JSON.stringify(payload);
+    shedLevel = 5.5;
+    if (Game.time % 100 === 0) {
+      console.log("[AWSExporter] Tier 5.5: Trimmed to minimal colonies. Size: " + json.length);
+    }
+  }
+
   // Tier 6: Drop all intel as last resort
   if (json.length > SIZE_LIMIT) {
     payload.intel = {};
     json = JSON.stringify(payload);
     shedLevel = 6;
     console.log("[AWSExporter] Tier 6: CRITICAL - Dropped all intel. Size: " + json.length);
+  }
+
+  // Tier 7: Drop empire data too
+  if (json.length > SIZE_LIMIT) {
+    payload.empire = null;
+    json = JSON.stringify(payload);
+    shedLevel = 7;
+    console.log("[AWSExporter] Tier 7: CRITICAL - Dropped empire data. Size: " + json.length);
   }
 
   // Final check - if still over limit, we have a serious problem
