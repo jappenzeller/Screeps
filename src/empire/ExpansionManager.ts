@@ -107,6 +107,7 @@ export class ExpansionManager {
 
   /**
    * Get spawning needs for active expansions
+   * Uses PIONEER role - self-sufficient creeps that harvest and build
    */
   getSpawnRequests(
     parentRoom: string
@@ -129,48 +130,27 @@ export class ExpansionManager {
         });
       }
 
-      // BOOTSTRAPPING state: need builders and haulers
+      // BOOTSTRAPPING state: need pioneers (self-sufficient expansion builders)
       if (state.state === "BOOTSTRAPPING") {
-        const builders = state.bootstrapCreeps.filter(
-          (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_BUILDER"
-        ).length;
-        const haulers = state.bootstrapCreeps.filter(
-          (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_HAULER"
-        ).length;
+        // Count pioneers
+        const pioneers = state.bootstrapCreeps.filter((n) => {
+          const role = Game.creeps[n]?.memory.role;
+          return role === "PIONEER";
+        }).length;
 
-        // Check if we already have a self-harvesting builder
-        const hasSelfHarvester = state.bootstrapCreeps.some((name) => {
-          const creep = Game.creeps[name];
-          return (
-            creep?.memory.role === "BOOTSTRAP_BUILDER" &&
-            (creep.memory as BootstrapBuilderMemory).selfHarvest === true
-          );
-        });
+        // Target: builderCount pioneers (haulers are no longer needed - pioneers are self-sufficient)
+        const targetPioneers = this.config.builderCount;
 
-        for (let i = builders; i < this.config.builderCount; i++) {
-          // First builder (or if none have selfHarvest) gets selfHarvest flag
-          const shouldSelfHarvest = !hasSelfHarvester && i === builders;
+        for (let i = pioneers; i < targetPioneers; i++) {
           requests.push({
-            role: "BOOTSTRAP_BUILDER",
+            role: "PIONEER",
             memory: {
-              role: "BOOTSTRAP_BUILDER",
+              role: "PIONEER",
               room: parentRoom,
               targetRoom: roomName,
-              selfHarvest: shouldSelfHarvest,
-            } as Partial<BootstrapBuilderMemory>,
-            priority: 85,
-          });
-        }
-
-        for (let i = haulers; i < this.config.haulerCount; i++) {
-          requests.push({
-            role: "BOOTSTRAP_HAULER",
-            memory: {
-              role: "BOOTSTRAP_HAULER",
-              room: parentRoom,
-              targetRoom: roomName,
+              parentRoom: parentRoom,
             },
-            priority: 80,
+            priority: 85,
           });
         }
       }
@@ -189,10 +169,10 @@ export class ExpansionManager {
     if (role === "CLAIMER") {
       state.claimer = creepName;
       console.log(`[Expansion] Registered claimer ${creepName} for ${targetRoom}`);
-    } else if (role === "BOOTSTRAP_BUILDER" || role === "BOOTSTRAP_HAULER") {
+    } else if (role === "PIONEER") {
       if (!state.bootstrapCreeps.includes(creepName)) {
         state.bootstrapCreeps.push(creepName);
-        console.log(`[Expansion] Registered ${role} ${creepName} for ${targetRoom}`);
+        console.log(`[Expansion] Registered pioneer ${creepName} for ${targetRoom}`);
       }
     }
   }
@@ -340,13 +320,11 @@ export class ExpansionManager {
         : null;
       if (site) {
         const pct = ((site.progress / site.progressTotal) * 100).toFixed(1);
-        const builders = state.bootstrapCreeps.filter(
-          (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_BUILDER"
-        ).length;
-        const haulers = state.bootstrapCreeps.filter(
-          (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_HAULER"
-        ).length;
-        console.log(`[Expansion] ${state.roomName} spawn: ${pct}% (${builders}B/${haulers}H)`);
+        const pioneers = state.bootstrapCreeps.filter((n) => {
+          const role = Game.creeps[n]?.memory.role;
+          return role === "PIONEER";
+        }).length;
+        console.log(`[Expansion] ${state.roomName} spawn: ${pct}% (${pioneers} pioneers)`);
       }
     }
 
@@ -441,9 +419,7 @@ export class ExpansionManager {
       const creep = Game.creeps[name];
       if (!creep) return false;
       if (creep.memory.targetRoom !== state.roomName) return false;
-      return (
-        creep.memory.role === "BOOTSTRAP_BUILDER" || creep.memory.role === "BOOTSTRAP_HAULER"
-      );
+      return creep.memory.role === "PIONEER";
     });
 
     // Find creeps that exist but aren't tracked
@@ -587,12 +563,10 @@ export class ExpansionManager {
       for (const roomName in active) {
         const s = active[roomName];
         const elapsed = Game.time - s.stateChangedAt;
-        const builders = s.bootstrapCreeps.filter(
-          (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_BUILDER"
-        ).length;
-        const haulers = s.bootstrapCreeps.filter(
-          (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_HAULER"
-        ).length;
+        const pioneers = s.bootstrapCreeps.filter((n) => {
+          const role = Game.creeps[n]?.memory.role;
+          return role === "PIONEER";
+        }).length;
 
         let progress = "";
         if (s.spawnSiteId) {
@@ -603,7 +577,7 @@ export class ExpansionManager {
         }
 
         lines.push(
-          `  ${roomName}: ${s.state}${progress} (${elapsed} ticks, ${builders}B/${haulers}H)`
+          `  ${roomName}: ${s.state}${progress} (${elapsed} ticks, ${pioneers}P)`
         );
         if (s.lastFailure) {
           lines.push(`    Last failure: ${s.lastFailure}`);

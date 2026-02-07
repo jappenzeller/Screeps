@@ -23,9 +23,6 @@ import {
   rateUtility,
 } from "./utilities/energyUtility";
 import { roleCountUtility, getEffectiveCount, getCreepEffectiveness } from "./utilities/populationUtility";
-import { getBootstrapBuilderBody } from "../creeps/BootstrapBuilder";
-import { getBootstrapHaulerBody } from "../creeps/BootstrapHauler";
-import { getBootstrapWorkerBody } from "../creeps/BootstrapWorker";
 import { getPioneerBody } from "../creeps/Pioneer";
 import { ExpansionManager } from "../empire";
 
@@ -128,9 +125,6 @@ type SpawnRole =
   | "LINK_FILLER"
   | "MINERAL_HARVESTER"
   | "CLAIMER"
-  | "BOOTSTRAP_BUILDER"
-  | "BOOTSTRAP_HAULER"
-  | "BOOTSTRAP_WORKER"
   | "PIONEER";
 
 const ALL_ROLES: SpawnRole[] = [
@@ -149,9 +143,6 @@ const ALL_ROLES: SpawnRole[] = [
   "LINK_FILLER",
   "MINERAL_HARVESTER",
   "CLAIMER",
-  "BOOTSTRAP_BUILDER",
-  "BOOTSTRAP_HAULER",
-  "BOOTSTRAP_WORKER",
 ];
 
 export interface SpawnCandidate {
@@ -368,15 +359,12 @@ function getEffectiveCounts(creeps: Creep[], room: Room): Record<string, number>
 
       case "HAULER":
       case "REMOTE_HAULER":
-      case "BOOTSTRAP_HAULER":
         // Must have CARRY to transport anything
         if (c.getActiveBodyparts(CARRY) === 0) functional = false;
         break;
 
       case "UPGRADER":
       case "BUILDER":
-      case "BOOTSTRAP_BUILDER":
-      case "BOOTSTRAP_WORKER":
         // Must have WORK to do anything useful
         if (c.getActiveBodyparts(WORK) === 0) functional = false;
         break;
@@ -771,12 +759,6 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return mineralHarvesterUtility(effectiveDeficit, state);
     case "CLAIMER":
       return claimerUtility(state);
-    case "BOOTSTRAP_BUILDER":
-      return bootstrapBuilderUtility(state);
-    case "BOOTSTRAP_HAULER":
-      return bootstrapHaulerUtility(state);
-    case "BOOTSTRAP_WORKER":
-      return bootstrapWorkerUtility(state);
     default:
       return 0;
   }
@@ -1467,214 +1449,6 @@ function claimerUtility(state: ColonyState): number {
 }
 
 /**
- * Bootstrap builder utility - spawns when ExpansionManager needs builders
- * Only spawns from the parent room of an active bootstrap operation
- */
-function bootstrapBuilderUtility(state: ColonyState): number {
-  var expansionManager = new ExpansionManager();
-  var needs = expansionManager.getSpawnRequests(state.room.name);
-  var builderNeeds = needs.filter(function(n) { return n.role === "BOOTSTRAP_BUILDER"; });
-
-  if (builderNeeds.length === 0) return 0;
-
-  // High priority - getting spawn built is critical
-  return 80;
-}
-
-/**
- * Bootstrap hauler utility - spawns when ExpansionManager needs haulers
- * Only spawns from the parent room of an active bootstrap operation
- */
-function bootstrapHaulerUtility(state: ColonyState): number {
-  var expansionManager = new ExpansionManager();
-  var needs = expansionManager.getSpawnRequests(state.room.name);
-  var haulerNeeds = needs.filter(function(n) { return n.role === "BOOTSTRAP_HAULER"; });
-
-  if (haulerNeeds.length === 0) return 0;
-
-  // High priority - energy delivery is critical for spawn construction
-  return 75;
-}
-
-/**
- * Bootstrap worker utility - spawns when a colony needs emergency help
- * Triggers when:
- * - Colony has spawn but < 3 creeps with WORK parts
- * - Colony has no energy income (no miners/harvesters active)
- * - Controller ticksToDowngrade < 10000
- *
- * Scans BOTH expansion.active entries AND all owned rooms for crises.
- * This catches established colonies that have collapsed, not just new expansions.
- */
-function bootstrapWorkerUtility(state: ColonyState): number {
-  // === PATH 1: Check expansion.active entries (existing logic) ===
-  var empExpansion = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
-  var empActive = empExpansion ? empExpansion.active || {} : {};
-  var activeKeys = Object.keys(empActive);
-
-  for (var i = 0; i < activeKeys.length; i++) {
-    var expansion = empActive[activeKeys[i]];
-    if (expansion.parentRoom !== state.room.name) continue;
-
-    // Check if this expansion needs bootstrap workers
-    var targetRoom = Game.rooms[expansion.roomName];
-    if (!targetRoom) continue;
-
-    var spawns = targetRoom.find(FIND_MY_SPAWNS);
-    if (spawns.length === 0) continue; // No spawn yet, use builder/hauler
-
-    // Count WORK parts in target room
-    var workParts = 0;
-    var targetCreeps = targetRoom.find(FIND_MY_CREEPS);
-    for (var j = 0; j < targetCreeps.length; j++) {
-      workParts += targetCreeps[j].getActiveBodyparts(WORK);
-    }
-
-    // Count existing bootstrap workers heading to this room
-    var existingWorkers = Object.values(Game.creeps).filter(function(c) {
-      return c.memory.role === "BOOTSTRAP_WORKER" &&
-        (c.memory as any).targetRoom === expansion.roomName;
-    }).length;
-
-    // Need workers if: < 3 WORK parts and < 4 workers assigned
-    var needsWorkers = workParts < 3 && existingWorkers < 4;
-
-    // Also check controller emergency
-    var controller = targetRoom.controller;
-    if (controller && controller.my && controller.ticksToDowngrade && controller.ticksToDowngrade < 10000) {
-      needsWorkers = true;
-    }
-
-    if (needsWorkers) {
-      // High priority - colony survival
-      return 60;
-    }
-  }
-
-  // === PATH 2: Check ALL owned rooms for crisis (not just expansions) ===
-  // This catches established colonies that have collapsed
-  var crisisTarget = findColonyInCrisis(state.room.name);
-  if (crisisTarget) {
-    // Store crisis target in memory for buildMemory() to find
-    var emp = Memory.empire || ({} as any);
-    if (!Memory.empire) Memory.empire = emp;
-    if (!emp.crisisTargets) emp.crisisTargets = {};
-    emp.crisisTargets[state.room.name] = crisisTarget;
-    return 60;
-  }
-
-  // Clear any stale crisis target for this room
-  var empClear = Memory.empire;
-  if (empClear && empClear.crisisTargets && empClear.crisisTargets[state.room.name]) {
-    delete empClear.crisisTargets[state.room.name];
-  }
-
-  return 0;
-}
-
-/**
- * Find an owned colony in crisis that this room should help
- * Crisis criteria:
- * - Colony has spawn but < 3 WORK parts total
- * - No harvesters with CARRY (can't self-deliver) OR no haulers (can't distribute)
- * - OR controller.ticksToDowngrade < 10000
- */
-function findColonyInCrisis(parentRoom: string): string | null {
-  // Only help adjacent rooms (1-2 rooms away max)
-  var parentParsed = /^([WE])(\d+)([NS])(\d+)$/.exec(parentRoom);
-  if (!parentParsed) return null;
-
-  var parentX = parseInt(parentParsed[2]) * (parentParsed[1] === "E" ? 1 : -1);
-  var parentY = parseInt(parentParsed[4]) * (parentParsed[3] === "N" ? 1 : -1);
-
-  // Check all owned rooms
-  var ownedRooms = Object.values(Game.rooms).filter(function(r) {
-    return r.controller && r.controller.my && r.controller.level >= 1;
-  });
-
-  for (var i = 0; i < ownedRooms.length; i++) {
-    var room = ownedRooms[i];
-    if (room.name === parentRoom) continue; // Don't help self
-
-    // Check distance (max 2 rooms)
-    var parsed = /^([WE])(\d+)([NS])(\d+)$/.exec(room.name);
-    if (!parsed) continue;
-    var x = parseInt(parsed[2]) * (parsed[1] === "E" ? 1 : -1);
-    var y = parseInt(parsed[4]) * (parsed[3] === "N" ? 1 : -1);
-    var distance = Math.max(Math.abs(x - parentX), Math.abs(y - parentY));
-    if (distance > 2) continue;
-
-    // Must have a spawn (otherwise it's a brand new claim, use bootstrap builder/hauler)
-    var spawns = room.find(FIND_MY_SPAWNS);
-    if (spawns.length === 0) continue;
-
-    // Skip rooms already in expansion.active (handled by PATH 1)
-    var empExpansion = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
-    var empActive = empExpansion ? empExpansion.active || {} : {};
-    var isExpansion = false;
-    var activeKeys = Object.keys(empActive);
-    for (var k = 0; k < activeKeys.length; k++) {
-      if (empActive[activeKeys[k]].roomName === room.name) {
-        isExpansion = true;
-        break;
-      }
-    }
-    if (isExpansion) continue;
-
-    // Count existing bootstrap workers heading to this room
-    var existingWorkers = Object.values(Game.creeps).filter(function(c) {
-      return c.memory.role === "BOOTSTRAP_WORKER" &&
-        (c.memory as any).targetRoom === room.name;
-    }).length;
-    if (existingWorkers >= 4) continue; // Already have enough help
-
-    // Check crisis indicators
-    var creeps = room.find(FIND_MY_CREEPS);
-    var workParts = 0;
-    var hasHarvesterWithCarry = false;
-    var hasHauler = false;
-
-    for (var j = 0; j < creeps.length; j++) {
-      var creep = creeps[j];
-      workParts += creep.getActiveBodyparts(WORK);
-      if (creep.memory.role === "HARVESTER" && creep.getActiveBodyparts(CARRY) > 0) {
-        hasHarvesterWithCarry = true;
-      }
-      if (creep.memory.role === "HAULER") {
-        hasHauler = true;
-      }
-    }
-
-    // Check for source containers (harvesters don't need CARRY if containers exist)
-    var sources = room.find(FIND_SOURCES);
-    var sourceContainers = room.find(FIND_STRUCTURES, {
-      filter: function(s) {
-        return s.structureType === STRUCTURE_CONTAINER &&
-          s.pos.findInRange(FIND_SOURCES, 1).length > 0;
-      }
-    });
-    var hasAllSourceContainers = sourceContainers.length >= sources.length;
-
-    // Crisis: < 3 WORK parts AND (no self-deliver capability OR no distribution)
-    var energyDeadlock = !hasHarvesterWithCarry && !hasAllSourceContainers;
-    var distributionBroken = !hasHauler && !hasAllSourceContainers;
-    var isCrisis = workParts < 3 && (energyDeadlock || distributionBroken);
-
-    // Also crisis if controller about to downgrade
-    var controller = room.controller;
-    if (controller && controller.ticksToDowngrade && controller.ticksToDowngrade < 10000) {
-      isCrisis = true;
-    }
-
-    if (isCrisis) {
-      return room.name;
-    }
-  }
-
-  return null;
-}
-
-/**
  * Pioneer utility - self-sufficient generalist for colonies without infrastructure
  *
  * High utility when colony is in "pioneer phase" (no source containers, no storage).
@@ -1684,11 +1458,22 @@ function findColonyInCrisis(parentRoom: string): string | null {
  * They harvest, deliver to spawn, build, and upgrade - no interdependencies.
  */
 function pioneerUtility(state: ColonyState): number {
-  // Only spawn pioneers during pioneer phase
+  // Check for expansion pioneer needs first (higher priority)
+  var expansionUtility = expansionPioneerUtility(state);
+  if (expansionUtility > 0) return expansionUtility;
+
+  // Only spawn local pioneers during pioneer phase
   if (!isPioneerPhase(state.room)) return 0;
 
-  // Count existing pioneers
-  var currentPioneers = state.counts.PIONEER || 0;
+  // Count existing LOCAL pioneers (not expansion pioneers)
+  var currentPioneers = 0;
+  var creeps = Object.values(Game.creeps);
+  for (var i = 0; i < creeps.length; i++) {
+    var c = creeps[i];
+    if (c.memory.role === "PIONEER" && c.memory.room === state.room.name && !c.memory.targetRoom) {
+      currentPioneers++;
+    }
+  }
 
   // Target: 1 pioneer per source, max 4
   var sources = state.room.find(FIND_SOURCES).length;
@@ -1699,6 +1484,21 @@ function pioneerUtility(state: ColonyState): number {
   // High utility - pioneers are critical for survival
   // First pioneer: 150, second: 140, etc.
   return 150 - (currentPioneers * 10);
+}
+
+/**
+ * Expansion pioneer utility - spawns when ExpansionManager needs pioneers
+ * Only spawns from the parent room of an active bootstrap operation
+ */
+function expansionPioneerUtility(state: ColonyState): number {
+  var expansionManager = new ExpansionManager();
+  var needs = expansionManager.getSpawnRequests(state.room.name);
+  var pioneerNeeds = needs.filter(function(n) { return n.role === "PIONEER"; });
+
+  if (pioneerNeeds.length === 0) return 0;
+
+  // High priority - getting spawn built is critical
+  return 85;
 }
 
 // ============================================
@@ -1739,21 +1539,21 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   // Otherwise, build for full capacity (wait for energy)
   const energy = (isEmergency || isHaulerBootstrap) ? state.energyAvailable : state.energyCapacity;
 
-  // Bootstrap roles use their own body builders
-  if (role === "BOOTSTRAP_BUILDER") {
-    return getBootstrapBuilderBody(energy);
-  }
-  if (role === "BOOTSTRAP_HAULER") {
-    return getBootstrapHaulerBody(energy);
-  }
-  if (role === "BOOTSTRAP_WORKER") {
-    return getBootstrapWorkerBody(energy);
-  }
-
   // Pioneer uses its own body builder
-  // First pioneer: use available energy to spawn immediately
-  // Subsequent pioneers: use capacity for bigger bodies
+  // Expansion pioneers: use available energy to spawn quickly
+  // Local pioneers: first uses available, subsequent use capacity
   if (role === "PIONEER") {
+    // Check if this is an expansion pioneer
+    var expansionManager = new ExpansionManager();
+    var pioneerRequests = expansionManager.getSpawnRequests(state.room.name)
+      .filter(function(r) { return r.role === "PIONEER"; });
+
+    if (pioneerRequests.length > 0) {
+      // Expansion pioneers use available energy (spawn quickly for bootstrap)
+      return getPioneerBody(state.energyAvailable);
+    }
+
+    // Local pioneers: first uses available, subsequent use capacity
     var pioneerEnergy = state.energyCapacity;
     if ((state.counts.PIONEER || 0) === 0 && state.energyAvailable < state.energyCapacity) {
       pioneerEnergy = state.energyAvailable;
@@ -1888,49 +1688,6 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
       };
     }
 
-    case "BOOTSTRAP_BUILDER": {
-      // Use spawn request memory from ExpansionManager to get selfHarvest flag
-      var expansionManager = new ExpansionManager();
-      var builderRequests = expansionManager
-        .getSpawnRequests(state.room.name)
-        .filter(function(r) { return r.role === "BOOTSTRAP_BUILDER"; });
-      if (builderRequests.length > 0) {
-        // Use memory from first request - includes selfHarvest flag
-        var req = builderRequests[0];
-        return {
-          ...base,
-          ...req.memory,
-          bootstrapState: "TRAVELING_TO_TARGET",
-        } as unknown as Partial<CreepMemory>;
-      }
-      return base;
-    }
-
-    case "BOOTSTRAP_HAULER": {
-      // Find expansion from this parent room
-      var empExpansion = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
-      var empActive = empExpansion ? empExpansion.active : {};
-      var expansion = null;
-      var activeKeys = Object.keys(empActive);
-      for (var i = 0; i < activeKeys.length; i++) {
-        var e = empActive[activeKeys[i]];
-        if (e.parentRoom === state.room.name) {
-          expansion = e;
-          break;
-        }
-      }
-      if (expansion) {
-        return {
-          ...base,
-          role: "BOOTSTRAP_HAULER",
-          parentRoom: expansion.parentRoom,
-          targetRoom: expansion.roomName,
-          bootstrapState: "LOADING",
-        } as unknown as Partial<CreepMemory>;
-      }
-      return base;
-    }
-
     case "CLAIMER": {
       // Find claiming-state expansion from this room
       var empExpansion2 = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
@@ -1953,46 +1710,24 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
       return base;
     }
 
-    case "BOOTSTRAP_WORKER": {
-      // PATH 1: Find expansion needing bootstrap workers
-      var empExpansion3 = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
-      var empActive3 = empExpansion3 ? empExpansion3.active : {};
-      var workerTarget: string | null = null;
-      var activeKeys3 = Object.keys(empActive3);
-      for (var k = 0; k < activeKeys3.length; k++) {
-        var exp3 = empActive3[activeKeys3[k]];
-        if (exp3.parentRoom === state.room.name) {
-          // Check if this expansion needs workers
-          var targetRoom = Game.rooms[exp3.roomName];
-          if (targetRoom) {
-            var spawns = targetRoom.find(FIND_MY_SPAWNS);
-            if (spawns.length > 0) {
-              workerTarget = exp3.roomName;
-              break;
-            }
-          }
-        }
-      }
+    case "PIONEER": {
+      // Check if this is an expansion pioneer
+      var expansionManager = new ExpansionManager();
+      var pioneerRequests = expansionManager
+        .getSpawnRequests(state.room.name)
+        .filter(function(r) { return r.role === "PIONEER"; });
 
-      // PATH 2: Check crisis targets (established colonies in crisis)
-      if (!workerTarget && Memory.empire && Memory.empire.crisisTargets) {
-        workerTarget = Memory.empire.crisisTargets[state.room.name] || null;
-      }
-
-      if (workerTarget) {
+      if (pioneerRequests.length > 0) {
+        // Use memory from expansion manager request
+        var req = pioneerRequests[0];
         return {
           ...base,
-          role: "BOOTSTRAP_WORKER",
-          parentRoom: state.room.name,
-          targetRoom: workerTarget,
-          state: "MOVING",
+          ...req.memory,
+          state: "TRAVELING",
         } as unknown as Partial<CreepMemory>;
       }
-      return base;
-    }
 
-    case "PIONEER": {
-      // Pioneer just needs basic memory with state initialized
+      // Local pioneer - basic memory
       return {
         ...base,
         state: "HARVESTING",

@@ -97,8 +97,7 @@ interface EmpireExpansionExport {
     percent: string;
   } | null;
   creeps: {
-    builders: number;
-    haulers: number;
+    pioneers: number;
     total: number;
     names: string[];
   };
@@ -1472,12 +1471,9 @@ export class AWSExporter {
     for (const roomName in active) {
       const exp = active[roomName];
 
-      // Count alive bootstrap creeps by role
-      const builders = exp.bootstrapCreeps.filter(
-        (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_BUILDER"
-      ).length;
-      const haulers = exp.bootstrapCreeps.filter(
-        (n) => Game.creeps[n]?.memory.role === "BOOTSTRAP_HAULER"
+      // Count alive pioneers
+      const pioneers = exp.bootstrapCreeps.filter(
+        (n) => Game.creeps[n]?.memory.role === "PIONEER"
       ).length;
 
       // Get spawn site progress if exists
@@ -1506,8 +1502,7 @@ export class AWSExporter {
         spawnSitePos: exp.spawnSitePos,
         spawnProgress,
         creeps: {
-          builders,
-          haulers,
+          pioneers,
           total: exp.bootstrapCreeps.length,
           names: exp.bootstrapCreeps,
         },

@@ -12,9 +12,6 @@ import { runClaimer } from "./Claimer";
 import { runRemoteDefender } from "./RemoteDefender";
 import { runLinkFiller } from "./LinkFiller";
 import { runMineralHarvester } from "./MineralHarvester";
-import { runBootstrapBuilder } from "./BootstrapBuilder";
-import { runBootstrapHauler } from "./BootstrapHauler";
-import { runBootstrapWorker } from "./BootstrapWorker";
 import { runPioneer } from "./Pioneer";
 
 // Body configurations moved to src/spawning/bodyConfig.ts
@@ -39,9 +36,6 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   CLAIMER: runClaimer,
   LINK_FILLER: runLinkFiller,
   MINERAL_HARVESTER: runMineralHarvester,
-  BOOTSTRAP_BUILDER: runBootstrapBuilder,
-  BOOTSTRAP_HAULER: runBootstrapHauler,
-  BOOTSTRAP_WORKER: runBootstrapWorker,
   PIONEER: runPioneer,
 };
 

@@ -16,6 +16,7 @@ interface CreepMemory {
   room: string;
   sourceId?: Id<Source>;
   targetRoom?: string;
+  parentRoom?: string;  // Parent colony for expansion pioneers
 
   // Task system
   taskId?: string;
@@ -195,29 +196,16 @@ interface ExportMeta {
   totalIntelCount: number;
 }
 
-// Bootstrap builder creep memory
-interface BootstrapBuilderMemory extends CreepMemory {
-  role: "BOOTSTRAP_BUILDER";
-  parentRoom: string;
-  targetRoom: string;
-  // New states: TRAVELING, COLLECTING, BUILDING
-  // Old states kept for backward compat: TRAVELING_TO_TARGET, RETURNING_FOR_ENERGY
-  bootstrapState:
-    | "TRAVELING"
-    | "COLLECTING"
-    | "BUILDING"
-    | "TRAVELING_TO_TARGET"
-    | "RETURNING_FOR_ENERGY";
-  // If true, this builder harvests directly from source instead of waiting for haulers
-  selfHarvest?: boolean;
-}
-
-// Bootstrap hauler creep memory
-interface BootstrapHaulerMemory extends CreepMemory {
-  role: "BOOTSTRAP_HAULER";
-  parentRoom: string;
-  targetRoom: string;
-  bootstrapState: "LOADING" | "TRAVELING_TO_TARGET" | "DELIVERING" | "RETURNING";
+// Pioneer creep memory - self-sufficient generalist for young colonies and expansion
+interface PioneerMemory extends CreepMemory {
+  role: "PIONEER";
+  room: string;
+  state?: "TRAVELING" | "HARVESTING" | "DELIVERING" | "BUILDING" | "UPGRADING";
+  sourceId?: Id<Source>;
+  // Expansion fields (when targetRoom is set, this is an expansion pioneer)
+  targetRoom?: string;
+  parentRoom?: string;
+  working?: boolean;
 }
 
 // Remote builder creep memory
