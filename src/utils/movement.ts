@@ -98,6 +98,59 @@ export function isOnBorder(creep: Creep): boolean {
 }
 
 /**
+ * Check if a position is on a room border.
+ */
+function isPositionOnBorder(pos: RoomPosition): boolean {
+  return pos.x === 0 || pos.x === 49 || pos.y === 0 || pos.y === 49;
+}
+
+/**
+ * Check if creep is on the border that leads to the desired exit.
+ */
+function isOnCorrectBorder(pos: RoomPosition, exitDir: ExitConstant): boolean {
+  switch (exitDir) {
+    case FIND_EXIT_TOP: return pos.y === 0;
+    case FIND_EXIT_BOTTOM: return pos.y === 49;
+    case FIND_EXIT_LEFT: return pos.x === 0;
+    case FIND_EXIT_RIGHT: return pos.x === 49;
+    default: return false;
+  }
+}
+
+/**
+ * Get the direction to move to cross INTO a room from the border.
+ */
+function getBorderCrossDirection(pos: RoomPosition): DirectionConstant {
+  if (pos.y === 0) return BOTTOM;
+  if (pos.y === 49) return TOP;
+  if (pos.x === 0) return RIGHT;
+  if (pos.x === 49) return LEFT;
+  return TOP; // fallback
+}
+
+/**
+ * Move creep off the border when already in target room.
+ * Uses PathFinder directly with maxRooms:1 to avoid routeCallback interference.
+ */
+function moveOffBorderInRoom(creep: Creep, target: RoomPosition, color?: string): ScreepsReturnCode {
+  // Use PathFinder with maxRooms: 1 to guarantee same-room path
+  const result = PathFinder.search(creep.pos, { pos: target, range: 1 }, {
+    maxRooms: 1,
+  });
+
+  if (result.path.length > 0) {
+    if (color) {
+      creep.room.visual.poly(result.path.map(p => [p.x, p.y]), { stroke: color });
+    }
+    return creep.moveByPath(result.path);
+  }
+
+  // Fallback: just move away from border
+  const dir = getBorderCrossDirection(creep.pos);
+  return creep.move(dir);
+}
+
+/**
  * Move creep toward center of room to get off a border tile.
  * Tries cardinal direction first, then diagonals if blocked.
  */
@@ -386,6 +439,7 @@ function getDirection(dx: number, dy: number): DirectionConstant {
  * Smart moveTo wrapper with stuck detection and dynamic ignoreCreeps.
  * Uses Screeps' built-in pathfinder with sensible defaults.
  * For cross-room movement, uses safe pathfinding by default.
+ * Handles border tile edge cases to prevent creeps from bouncing back.
  */
 export function smartMoveTo(
   creep: Creep,
@@ -395,58 +449,67 @@ export function smartMoveTo(
   const targetPos = "pos" in target ? target.pos : target;
   const avoidDanger = !opts || opts.avoidDanger !== false;
 
-  // Handle cross-room movement - use moveToRoom for safe routing
-  if (targetPos.roomName !== creep.room.name) {
-    // Use moveToRoom which handles safe routing internally
-    moveToRoom(creep, targetPos.roomName, opts?.visualizePathStyle?.stroke, { avoidDanger });
-    return OK;
-  }
-
-  // Stuck detection: track position
-  const currentPos = creep.pos.x + "," + creep.pos.y;
-  if (creep.memory._lastPos === currentPos) {
-    creep.memory._stuckCount = (creep.memory._stuckCount || 0) + 1;
-  } else {
-    creep.memory._stuckCount = 0;
-  }
-  creep.memory._lastPos = currentPos;
-
-  const stuckCount = creep.memory._stuckCount || 0;
-
-  // Handle border tiles in same room: step off border when stuck
-  // This prevents pathfinding issues at room edges
-  if (isOnBorder(creep) && stuckCount > 2) {
-    if (stepOffBorder(creep)) {
-      return OK; // Successfully moved off border
+  // Same room movement
+  if (targetPos.roomName === creep.room.name) {
+    // If on border in same room, use PathFinder directly to avoid routeCallback issues
+    if (isOnBorder(creep)) {
+      return moveOffBorderInRoom(creep, targetPos, opts?.visualizePathStyle?.stroke);
     }
-    // If stepOffBorder failed (all directions blocked), fall through to random shove
+
+    // Stuck detection: track position
+    const currentPos = creep.pos.x + "," + creep.pos.y;
+    if (creep.memory._lastPos === currentPos) {
+      creep.memory._stuckCount = (creep.memory._stuckCount || 0) + 1;
+    } else {
+      creep.memory._stuckCount = 0;
+    }
+    creep.memory._lastPos = currentPos;
+
+    const stuckCount = creep.memory._stuckCount || 0;
+
+    // After 5 ticks stuck: random shove to break deadlock
+    if (stuckCount > 5) {
+      const directions: DirectionConstant[] = [TOP, TOP_RIGHT, RIGHT, BOTTOM_RIGHT, BOTTOM, BOTTOM_LEFT, LEFT, TOP_LEFT];
+      const randomDir = directions[Math.floor(Math.random() * directions.length)];
+      creep.move(randomDir);
+      creep.memory._stuckCount = 0;
+      return OK;
+    }
+
+    // Build move options - same-room doesn't need routeCallback
+    const range = creep.pos.getRangeTo(targetPos);
+    const moveOpts: MoveToOpts = {
+      reusePath: 10,
+      maxRooms: 1, // Force same-room pathing
+      ...opts,
+    };
+
+    // After 3 ticks stuck: recalculate ignoring creeps
+    if (stuckCount > 2) {
+      moveOpts.reusePath = 0;
+      moveOpts.ignoreCreeps = true;
+    }
+    // Short-range ignoreCreeps: when target is 3 tiles or less, path through creeps
+    else if (range <= 3) {
+      moveOpts.ignoreCreeps = true;
+    }
+
+    return creep.moveTo(targetPos, moveOpts);
   }
 
-  // After 5 ticks stuck (or stepOffBorder failed on border): random shove to break deadlock
-  if (stuckCount > 5 || (isOnBorder(creep) && stuckCount > 3)) {
-    const directions: DirectionConstant[] = [TOP, TOP_RIGHT, RIGHT, BOTTOM_RIGHT, BOTTOM, BOTTOM_LEFT, LEFT, TOP_LEFT];
-    const randomDir = directions[Math.floor(Math.random() * directions.length)];
-    creep.move(randomDir);
-    creep.memory._stuckCount = 0;
-    return OK;
+  // Cross-room movement
+  // If on border heading to target room, check if we should just push through
+  if (isOnBorder(creep)) {
+    const exitDir = creep.room.findExitTo(targetPos.roomName);
+    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
+      if (isOnCorrectBorder(creep.pos, exitDir as ExitConstant)) {
+        // We're on the correct border - just push through
+        return creep.move(getBorderCrossDirection(creep.pos));
+      }
+    }
   }
 
-  // Build move options
-  const range = creep.pos.getRangeTo(targetPos);
-  const moveOpts: MoveToOpts = {
-    reusePath: 10, // Lower default for more responsive pathing
-    ...opts,
-  };
-
-  // After 3 ticks stuck: recalculate ignoring creeps
-  if (stuckCount > 2) {
-    moveOpts.reusePath = 0; // Force recalculation
-    moveOpts.ignoreCreeps = true;
-  }
-  // Short-range ignoreCreeps: when target is 3 tiles or less, path through creeps
-  else if (range <= 3) {
-    moveOpts.ignoreCreeps = true;
-  }
-
-  return creep.moveTo(targetPos, moveOpts);
+  // Normal cross-room - use moveToRoom which handles safe routing
+  moveToRoom(creep, targetPos.roomName, opts?.visualizePathStyle?.stroke, { avoidDanger });
+  return OK;
 }
