@@ -4,6 +4,195 @@
  */
 
 /**
+ * Check if a room is a Source Keeper room based on coordinates.
+ * SK rooms have coordinates where both x and y are between 4-6 (when mod 10).
+ * Examples: W5N5, E15N25, W45N15
+ */
+export function isSourceKeeperRoom(roomName: string): boolean {
+  const parsed = /^[WE](\d+)[NS](\d+)$/.exec(roomName);
+  if (!parsed) return false;
+
+  const x = parseInt(parsed[1], 10) % 10;
+  const y = parseInt(parsed[2], 10) % 10;
+
+  // SK rooms have coordinates 4-6 in both x and y
+  return x >= 4 && x <= 6 && y >= 4 && y <= 6;
+}
+
+/**
+ * Check if a room is a highway (coordinates 0 in x or y mod 10).
+ */
+export function isHighwayRoom(roomName: string): boolean {
+  const parsed = /^[WE](\d+)[NS](\d+)$/.exec(roomName);
+  if (!parsed) return false;
+
+  const x = parseInt(parsed[1], 10) % 10;
+  const y = parseInt(parsed[2], 10) % 10;
+
+  return x === 0 || y === 0;
+}
+
+/**
+ * Get a safe route callback that avoids dangerous rooms.
+ * Use this with Game.map.findRoute() to get safe cross-room paths.
+ */
+export function getSafeRouteCallback(): (
+  roomName: string,
+  fromRoomName: string
+) => number {
+  return (roomName: string, _fromRoomName: string): number => {
+    // Block Source Keeper rooms (too dangerous for unarmed creeps)
+    if (isSourceKeeperRoom(roomName)) {
+      return Infinity;
+    }
+
+    // Check intel for hostile ownership or invaders
+    const intel = Memory.intel && Memory.intel[roomName];
+    if (intel) {
+      // Block rooms owned by hostiles
+      if (intel.owner && intel.owner !== "me") {
+        return Infinity;
+      }
+
+      // Penalize rooms with invader cores (but don't block)
+      if (intel.invaderCore) {
+        return 5; // Higher cost but still passable
+      }
+
+      // Penalize rooms with recent hostiles
+      if (intel.hostiles && intel.hostiles > 0) {
+        const age = Game.time - (intel.lastScanned || 0);
+        if (age < 500) {
+          return 3; // Penalize recent hostile activity
+        }
+      }
+    }
+
+    // Prefer highways (cost 1) over normal rooms (cost 2)
+    if (isHighwayRoom(roomName)) {
+      return 1;
+    }
+
+    return 2; // Default cost for normal rooms
+  };
+}
+
+/**
+ * Move creep toward a target room using safe pathfinding.
+ * Avoids Source Keeper rooms and hostile-owned rooms.
+ */
+export function moveToRoomSafe(
+  creep: Creep,
+  targetRoom: string,
+  visualStroke?: string
+): boolean {
+  if (creep.spawning) return false;
+  if (creep.room.name === targetRoom) return false;
+
+  // Use safe route callback to find path
+  const route = Game.map.findRoute(creep.room.name, targetRoom, {
+    routeCallback: getSafeRouteCallback(),
+  });
+
+  if (route === ERR_NO_PATH || route.length === 0) {
+    // No safe path found - try regular pathfinding as fallback
+    // This might happen if target is unreachable safely
+    creep.say("NOPATH");
+    return moveToRoom(creep, targetRoom, visualStroke);
+  }
+
+  // Get next room in route
+  const nextRoom = route[0];
+  const exitDir = nextRoom.exit;
+
+  const pos = creep.pos;
+
+  // If on the correct border, step across
+  if (
+    (exitDir === FIND_EXIT_LEFT && pos.x === 0) ||
+    (exitDir === FIND_EXIT_RIGHT && pos.x === 49) ||
+    (exitDir === FIND_EXIT_TOP && pos.y === 0) ||
+    (exitDir === FIND_EXIT_BOTTOM && pos.y === 49)
+  ) {
+    const dirMap: Record<number, DirectionConstant> = {
+      [FIND_EXIT_LEFT]: LEFT,
+      [FIND_EXIT_RIGHT]: RIGHT,
+      [FIND_EXIT_TOP]: TOP,
+      [FIND_EXIT_BOTTOM]: BOTTOM,
+    };
+    const result = creep.move(dirMap[exitDir]);
+
+    if (result !== OK) {
+      tryAdjacentExit(creep, exitDir);
+    }
+    return true;
+  }
+
+  // If on wrong border, step off first
+  if (isOnBorder(creep)) {
+    stepOffBorder(creep);
+    return true;
+  }
+
+  // Stuck detection (same as moveToRoom)
+  const lastPos = creep.memory._lastPos;
+  const currentPos = `${pos.x},${pos.y}`;
+
+  if (lastPos === currentPos) {
+    const stuckCount = (creep.memory._stuckCount || 0) + 1;
+    creep.memory._stuckCount = stuckCount;
+
+    if (stuckCount > 2) {
+      const alternativeExit = findAlternativeExit(creep, exitDir);
+      if (alternativeExit) {
+        creep.moveTo(alternativeExit, {
+          reusePath: 5,
+          visualizePathStyle: visualStroke
+            ? { stroke: "#ff0000", opacity: 0.5 }
+            : undefined,
+        });
+        return true;
+      }
+
+      if (stuckCount > 5) {
+        const directions: DirectionConstant[] = [
+          TOP,
+          TOP_RIGHT,
+          RIGHT,
+          BOTTOM_RIGHT,
+          BOTTOM,
+          BOTTOM_LEFT,
+          LEFT,
+          TOP_LEFT,
+        ];
+        const randomDir = directions[Math.floor(Math.random() * directions.length)];
+        creep.move(randomDir);
+        creep.memory._stuckCount = 0;
+        return true;
+      }
+    }
+  } else {
+    creep.memory._stuckCount = 0;
+  }
+  creep.memory._lastPos = currentPos;
+
+  // Find exit tile for the calculated direction
+  const exit = findBestExit(creep, exitDir);
+
+  if (!exit) {
+    return false;
+  }
+
+  creep.moveTo(exit, {
+    reusePath: 20,
+    visualizePathStyle: visualStroke
+      ? { stroke: visualStroke, opacity: 0.3 }
+      : undefined,
+  });
+  return true;
+}
+
+/**
  * Check if creep is on a room border tile.
  */
 export function isOnBorder(creep: Creep): boolean {

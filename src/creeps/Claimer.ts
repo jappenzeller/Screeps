@@ -1,8 +1,8 @@
-import { moveToRoom } from "../utils/movement";
+import { moveToRoomSafe } from "../utils/movement";
 
 /**
  * Claimer - Claims controllers in target rooms for expansion
- * Simple implementation: move to room, claim controller, done.
+ * Uses safe pathfinding to avoid Source Keeper and hostile rooms.
  */
 export function runClaimer(creep: Creep): void {
   const targetRoom = creep.memory.targetRoom;
@@ -12,9 +12,9 @@ export function runClaimer(creep: Creep): void {
     return;
   }
 
-  // Not in target room yet
+  // Not in target room yet - use safe pathfinding
   if (creep.room.name !== targetRoom) {
-    moveToRoom(creep, targetRoom, "#ff00ff");
+    moveToRoomSafe(creep, targetRoom, "#ff00ff");
     return;
   }
 
