@@ -1436,6 +1436,33 @@ export async function handler(event) {
       result = await getTerrain(params.recordingId);
     }
 
+    // ==================== Viewer Endpoint ====================
+    else if (path === 'GET /viewer') {
+      // Serve the recording viewer HTML from S3
+      try {
+        const result = await s3Client.send(new GetObjectCommand({
+          Bucket: ANALYTICS_BUCKET,
+          Key: 'viewer/index.html'
+        }));
+        const html = await result.Body.transformToString();
+        return {
+          statusCode: 200,
+          headers: {
+            'Content-Type': 'text/html',
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'public, max-age=300'
+          },
+          body: html
+        };
+      } catch (e) {
+        return {
+          statusCode: 404,
+          headers,
+          body: JSON.stringify({ error: 'Viewer not found' })
+        };
+      }
+    }
+
     else {
       return {
         statusCode: 404,

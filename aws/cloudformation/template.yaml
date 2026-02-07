@@ -1453,6 +1453,13 @@ Resources:
       RouteKey: GET /recordings/{recordingId}/terrain
       Target: !Sub integrations/${ApiIntegration}
 
+  RouteViewer:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /viewer
+      Target: !Sub integrations/${ApiIntegration}
+
   ApiInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
