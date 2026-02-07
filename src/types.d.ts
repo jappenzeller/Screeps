@@ -219,6 +219,15 @@ interface BootstrapHaulerMemory extends CreepMemory {
   bootstrapState: "LOADING" | "TRAVELING_TO_TARGET" | "DELIVERING" | "RETURNING";
 }
 
+// Remote builder creep memory
+interface RemoteBuilderMemory extends CreepMemory {
+  role: "REMOTE_BUILDER";
+  homeRoom: string;
+  remoteRoom: string;          // Assigned remote room to build in
+  working: boolean;            // true = building, false = collecting energy
+  targetSiteId?: Id<ConstructionSite>;  // Current build target
+}
+
 /**
  * Performance metrics for a remote room.
  * Updated periodically by EconomyTracker.

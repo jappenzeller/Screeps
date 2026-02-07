@@ -6,6 +6,7 @@ import { runDefender } from "./Defender";
 import { runScout } from "./Scout";
 import { runRemoteMiner } from "./RemoteMiner";
 import { runRemoteHauler } from "./RemoteHauler";
+import { runRemoteBuilder } from "./RemoteBuilder";
 import { runReserver } from "./Reserver";
 import { runClaimer } from "./Claimer";
 import { runRemoteDefender } from "./RemoteDefender";
@@ -33,6 +34,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   SCOUT: runScout,
   REMOTE_MINER: runRemoteMiner,
   REMOTE_HAULER: runRemoteHauler,
+  REMOTE_BUILDER: runRemoteBuilder,
   RESERVER: runReserver,
   CLAIMER: runClaimer,
   LINK_FILLER: runLinkFiller,

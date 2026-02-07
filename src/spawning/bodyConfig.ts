@@ -151,6 +151,20 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
   },
 
   /**
+   * REMOTE_BUILDER - Builds infrastructure in remote mining rooms
+   * Travel-optimized: 1 WORK : 2 CARRY : 3 MOVE ratio
+   * Full speed on roads, reasonable speed on plains
+   * Pattern cost: 100 + 100 + 150 = 350 per unit
+   */
+  REMOTE_BUILDER: {
+    pattern: [WORK, CARRY, CARRY, MOVE, MOVE, MOVE],
+    maxRepeats: 5,
+    minEnergy: 350,
+    fallback: [WORK, CARRY, MOVE, MOVE],
+    moveMode: "pattern",
+  },
+
+  /**
    * RESERVER - Reserves remote controllers
    * CLAIM parts are expensive
    */

@@ -121,6 +121,7 @@ type SpawnRole =
   | "DEFENDER"
   | "REMOTE_MINER"
   | "REMOTE_HAULER"
+  | "REMOTE_BUILDER"
   | "REMOTE_DEFENDER"
   | "RESERVER"
   | "SCOUT"
@@ -141,6 +142,7 @@ const ALL_ROLES: SpawnRole[] = [
   "DEFENDER",
   "REMOTE_MINER",
   "REMOTE_HAULER",
+  "REMOTE_BUILDER",
   "REMOTE_DEFENDER",
   "RESERVER",
   "SCOUT",
@@ -217,6 +219,7 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
     const requiresTargetRoom: SpawnRole[] = [
       "REMOTE_MINER",
       "REMOTE_HAULER",
+      "REMOTE_BUILDER",
       "REMOTE_DEFENDER",
       "RESERVER",
     ];
@@ -661,6 +664,7 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     DEFENDER: 0, // Dynamic based on threats
     REMOTE_MINER: 0,
     REMOTE_HAULER: 0,
+    REMOTE_BUILDER: 0,
     REMOTE_DEFENDER: 0,
     RESERVER: 0,
     SCOUT: 0,
@@ -716,6 +720,9 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     targets.REMOTE_HAULER = remoteHaulers;
     targets.RESERVER = activeRemotes;
     targets.SCOUT = needsScout(room.name) ? 1 : 0;
+
+    // Remote builder target: only spawn when remote rooms have construction sites
+    targets.REMOTE_BUILDER = getRemoteBuilderTarget(room, remoteConfigs);
   }
 
   return targets;
@@ -750,6 +757,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return remoteMinerUtility(effectiveDeficit, state);
     case "REMOTE_HAULER":
       return remoteHaulerUtility(effectiveDeficit, state);
+    case "REMOTE_BUILDER":
+      return remoteBuilderUtility(effectiveDeficit, state);
     case "REMOTE_DEFENDER":
       return remoteDefenderUtility(state);
     case "RESERVER":
@@ -1159,6 +1168,60 @@ function remoteHaulerUtility(_deficit: number, state: ColonyState): number {
   // But never below 30 when there's still a deficit
   const coverageRatio = existingHaulers / Math.max(haulersNeeded, 1);
   utility *= Math.max(0.75, 1 - coverageRatio * 0.5);
+
+  return utility;
+}
+
+/**
+ * Remote builder utility - builds infrastructure in remote mining rooms
+ *
+ * Only spawns when remote rooms have construction sites.
+ * Lower priority than BUILDER, higher than UPGRADER.
+ * Utility range: 0-35 (below builder at 25 base, above upgrader at 20 base)
+ */
+function remoteBuilderUtility(deficit: number, state: ColonyState): number {
+  if (state.rcl < 4) return 0;
+  if (deficit <= 0) return 0;
+
+  // Don't spawn during economy crisis
+  var totalEnergy = state.energyStored + state.energyAvailable;
+  if (totalEnergy < 3000 || state.energyIncome < state.energyIncomeMax * 0.5) {
+    return 0;
+  }
+
+  // Count construction sites in remote rooms
+  var totalSites = 0;
+  var manager = ColonyManager.getInstance(state.room.name);
+  var remoteConfigs = manager.getRemoteConfigs();
+
+  for (var remoteName in remoteConfigs) {
+    var config = remoteConfigs[remoteName];
+    if (!config.active) continue;
+
+    var remoteRoom = Game.rooms[remoteName];
+    if (!remoteRoom) {
+      // No visibility - assume sites exist if recently activated
+      if (config.activatedAt && Game.time - config.activatedAt < 5000) {
+        totalSites += 5;
+      }
+      continue;
+    }
+
+    var sites = remoteRoom.find(FIND_CONSTRUCTION_SITES);
+    totalSites += sites.length;
+  }
+
+  if (totalSites === 0) return 0;
+
+  // Base utility 25 - lower than home builder, higher than upgrader
+  var utility = 25;
+
+  // Urgency bonus for many sites
+  if (totalSites > 10) utility += 5;
+  if (totalSites > 20) utility += 5;
+
+  // Scale by deficit
+  utility *= Math.min(deficit, 2);
 
   return utility;
 }
@@ -1807,6 +1870,16 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
       };
     }
 
+    case "REMOTE_BUILDER": {
+      const remoteRoom = findRemoteRoomNeedingBuilder(state);
+      if (!remoteRoom) return base;
+      return {
+        ...base,
+        targetRoom: remoteRoom,
+        working: false,
+      } as Partial<CreepMemory>;
+    }
+
     case "RESERVER": {
       const targetRoom = findRemoteRoomNeedingReserver(state);
       return {
@@ -2146,6 +2219,74 @@ function findThreatenedRemoteRoom(state: ColonyState): string | null {
   }
 
   return bestRoom;
+}
+
+/**
+ * Calculate how many REMOTE_BUILDERs are needed.
+ * Only spawn when remote rooms have construction sites.
+ */
+function getRemoteBuilderTarget(_room: Room, remoteConfigs: Record<string, RemoteRoomConfig>): number {
+  // Count construction sites in active remotes
+  var totalSites = 0;
+  var remotesWithSites = 0;
+
+  for (var remoteName in remoteConfigs) {
+    var config = remoteConfigs[remoteName];
+    if (!config.active) continue;
+
+    // Check if we have visibility
+    var remoteRoom = Game.rooms[remoteName];
+    if (!remoteRoom) {
+      // No visibility - assume sites exist if recently activated
+      if (config.activatedAt && Game.time - config.activatedAt < 5000) {
+        remotesWithSites++;
+        totalSites += 5; // assume some sites
+      }
+      continue;
+    }
+
+    var sites = remoteRoom.find(FIND_CONSTRUCTION_SITES);
+    if (sites.length > 0) {
+      totalSites += sites.length;
+      remotesWithSites++;
+    }
+  }
+
+  if (totalSites === 0) return 0;
+
+  // Scaling: 1 builder per 5 sites, max 2 total
+  // More builders cause congestion and aren't efficient for remotes
+  var target = Math.min(2, Math.ceil(totalSites / 5));
+
+  // At least 1 if any remote has sites
+  return Math.max(1, target);
+}
+
+/**
+ * Find which remote room needs a builder most.
+ */
+function findRemoteRoomNeedingBuilder(state: ColonyState): string | null {
+  var manager = ColonyManager.getInstance(state.room.name);
+  var remoteConfigs = manager.getRemoteConfigs();
+
+  var bestRemote: string | null = null;
+  var mostSites = 0;
+
+  for (var remoteName in remoteConfigs) {
+    var config = remoteConfigs[remoteName];
+    if (!config.active) continue;
+
+    var remoteRoom = Game.rooms[remoteName];
+    if (!remoteRoom) continue;
+
+    var sites = remoteRoom.find(FIND_CONSTRUCTION_SITES).length;
+    if (sites > mostSites) {
+      mostSites = sites;
+      bestRemote = remoteName;
+    }
+  }
+
+  return bestRemote;
 }
 
 function findRemoteRoomNeedingReserver(state: ColonyState): string | null {

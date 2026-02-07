@@ -63,6 +63,8 @@ addRemote(h, r, d, v) - Add remote (h=home, r=remote, d=distance, v=via)
 removeRemote(h, r) - Remove remote room r from colony h
 pauseRemote(h, r)  - Pause/unpause remote room r
 syncRemotes()    - Force re-derive remote rooms from intel
+remoteBuilders() - Show remote builder status
+remoteSites("W1N1") - Show construction sites in remote rooms
 threats()        - Show hostile creeps and threat levels
 safemode()       - Show safe mode status and threat assessment
 safemode("W1N1") - Safe mode status for specific room
@@ -709,6 +711,85 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       manager.initializeColonyMemory();
       console.log("Re-synced remotes for " + targetRoom);
     }
+    return "OK";
+  };
+
+  // Show remote builder status
+  global.remoteBuilders = (colonyName?: string) => {
+    var output: string[] = [];
+
+    for (var name in Game.creeps) {
+      var creep = Game.creeps[name];
+      if (creep.memory.role !== "REMOTE_BUILDER") continue;
+
+      var mem = creep.memory as any;
+      if (colonyName && mem.room !== colonyName) continue;
+
+      var status = mem.working ? "BUILDING" : "COLLECTING";
+      var location = creep.room.name;
+      var target = mem.targetRoom || "none";
+      var energy = creep.store[RESOURCE_ENERGY] + "/" + creep.store.getCapacity();
+      var ttl = creep.ticksToLive || "spawning";
+
+      output.push(name + ": " + status + " in " + location + " -> " + target + " [" + energy + "] TTL:" + ttl);
+    }
+
+    if (output.length === 0) {
+      console.log("No remote builders active");
+      return "OK";
+    }
+
+    console.log(output.join("\n"));
+    return "OK";
+  };
+
+  // Show construction sites in remote rooms
+  global.remoteSites = (colonyName: string) => {
+    if (!colonyName) {
+      // Use first owned colony
+      colonyName = Object.keys(Game.rooms).find(function(r) {
+        return Game.rooms[r].controller && Game.rooms[r].controller.my;
+      }) || "";
+    }
+
+    var mem = Memory.colonies && Memory.colonies[colonyName];
+    if (!mem || !mem.remotes) {
+      console.log("Colony not found or no remotes");
+      return "Error";
+    }
+
+    var output: string[] = [];
+
+    for (var remoteName in mem.remotes) {
+      var config = mem.remotes[remoteName];
+      var remoteRoom = Game.rooms[remoteName];
+
+      if (!remoteRoom) {
+        output.push(remoteName + ": No visibility");
+        continue;
+      }
+
+      var sites = remoteRoom.find(FIND_CONSTRUCTION_SITES);
+      if (sites.length === 0) {
+        output.push(remoteName + ": No sites (complete)");
+        continue;
+      }
+
+      output.push(remoteName + ": " + sites.length + " sites");
+
+      // Group by type
+      var byType: Record<string, number> = {};
+      for (var i = 0; i < sites.length; i++) {
+        var siteType = sites[i].structureType;
+        byType[siteType] = (byType[siteType] || 0) + 1;
+      }
+
+      for (var structType in byType) {
+        output.push("  " + structType + ": " + byType[structType]);
+      }
+    }
+
+    console.log(output.join("\n"));
     return "OK";
   };
 
