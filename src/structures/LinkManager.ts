@@ -96,14 +96,19 @@ export class LinkManager {
       }
     }
 
-    // If storage link has energy and controller link needs it, transfer
+    // Transfer from storage link to controller link ONLY when colony is satisfied
     if (this.storageLink && this.controllerLink) {
       if (
         this.storageLink.cooldown === 0 &&
         this.storageLink.store[RESOURCE_ENERGY] >= 100 &&
         this.controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100
       ) {
-        this.storageLink.transferEnergy(this.controllerLink);
+        // Gate: only send to controller when colony has enough energy
+        var colonyEnergyRatio = this.room.energyAvailable / this.room.energyCapacityAvailable;
+        if (colonyEnergyRatio >= 0.8) {
+          this.storageLink.transferEnergy(this.controllerLink);
+          logger.debug("LinkManager", "Storage link forwarding to controller (colony at " + Math.round(colonyEnergyRatio * 100) + "%)");
+        }
       }
     }
   }
