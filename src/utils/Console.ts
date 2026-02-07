@@ -1219,23 +1219,48 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
           lines.push("    " + j + ": (" + pos.x + ", " + pos.y + ") - " + status);
         }
 
-        // Validate range-2 constraint
+        // Validate range-2 constraint: each OUTPUT lab (2+) must be within range 2 of BOTH INPUT labs (0 and 1)
+        // Output-to-output distance is irrelevant for lab.runReaction()
         var allValid = true;
-        for (var a = 0; a < plan.length; a++) {
-          for (var b = a + 1; b < plan.length; b++) {
-            var dist = Math.max(
-              Math.abs(plan[a].x - plan[b].x),
-              Math.abs(plan[a].y - plan[b].y)
+        if (plan.length >= 2) {
+          var input0 = plan[0];
+          var input1 = plan[1];
+
+          // Check input labs are within range 2 of each other
+          var inputDist = Math.max(
+            Math.abs(input0.x - input1.x),
+            Math.abs(input0.y - input1.y)
+          );
+          if (inputDist > 2) {
+            lines.push("  WARNING: input labs 0↔1 are range " + inputDist + " apart (must be <= 2)");
+            allValid = false;
+          }
+
+          // Check each output lab (indices 2+) is within range 2 of both inputs
+          for (var outIdx = 2; outIdx < plan.length; outIdx++) {
+            var output = plan[outIdx];
+            var distTo0 = Math.max(
+              Math.abs(output.x - input0.x),
+              Math.abs(output.y - input0.y)
             );
-            if (dist > 2) {
-              lines.push("  WARNING: positions " + a + " and " + b + " are range " + dist + " apart (must be <= 2)");
+            var distTo1 = Math.max(
+              Math.abs(output.x - input1.x),
+              Math.abs(output.y - input1.y)
+            );
+
+            if (distTo0 > 2) {
+              lines.push("  WARNING: output " + outIdx + " is range " + distTo0 + " from input 0 (must be <= 2)");
+              allValid = false;
+            }
+            if (distTo1 > 2) {
+              lines.push("  WARNING: output " + outIdx + " is range " + distTo1 + " from input 1 (must be <= 2)");
               allValid = false;
             }
           }
         }
 
         if (allValid && plan.length >= 3) {
-          lines.push("  Range-2 constraint: VALID (all pairs within range 2)");
+          lines.push("  Range-2 constraint: VALID (all outputs within range 2 of both inputs)");
         }
 
         // Visual overlay
