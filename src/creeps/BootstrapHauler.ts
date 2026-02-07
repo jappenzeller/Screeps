@@ -8,7 +8,7 @@
  * - RETURNING: Moving back to parent room (empty)
  */
 
-import { moveToRoomSafe, smartMoveTo } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
 export function runBootstrapHauler(creep: Creep): void {
   const mem = creep.memory as BootstrapHaulerMemory;
@@ -108,7 +108,7 @@ export function runBootstrapHauler(creep: Creep): void {
 function loadFromParent(creep: Creep, mem: BootstrapHaulerMemory): void {
   // CRITICAL: If not in parent room, go there first
   if (creep.room.name !== mem.parentRoom) {
-    moveToRoomSafe(creep, mem.parentRoom, "#ffff00");
+    moveToRoom(creep, mem.parentRoom, "#ffff00");
     return;
   }
 
@@ -182,8 +182,8 @@ function travelToTarget(creep: Creep, mem: BootstrapHaulerMemory): void {
     return;
   }
 
-  // Move toward target room using safe pathfinding
-  moveToRoomSafe(creep, mem.targetRoom, "#00ff00");
+  // Move toward target room (safe pathfinding by default)
+  moveToRoom(creep, mem.targetRoom, "#00ff00");
 }
 
 function deliverAtTarget(creep: Creep, mem: BootstrapHaulerMemory): void {
@@ -251,8 +251,8 @@ function returnToParent(creep: Creep, mem: BootstrapHaulerMemory): void {
     return;
   }
 
-  // Move toward parent room using safe pathfinding
-  moveToRoomSafe(creep, mem.parentRoom, "#ffff00");
+  // Move toward parent room (safe pathfinding by default)
+  moveToRoom(creep, mem.parentRoom, "#ffff00");
 }
 
 /**

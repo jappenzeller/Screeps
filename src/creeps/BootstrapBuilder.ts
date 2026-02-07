@@ -8,7 +8,7 @@
  * - Picks up dropped energy from haulers, never returns to parent
  */
 
-import { moveToRoomSafe, smartMoveTo } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
 type BuilderState = "TRAVELING" | "COLLECTING" | "BUILDING";
 
@@ -138,7 +138,7 @@ function travelToTarget(creep: Creep, targetRoom: string): void {
     return;
   }
 
-  moveToRoomSafe(creep, targetRoom, "#00ff00");
+  moveToRoom(creep, targetRoom, "#00ff00");
 }
 
 function collectEnergyInTargetRoom(creep: Creep, targetRoom: string): void {

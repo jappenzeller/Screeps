@@ -78,118 +78,15 @@ export function getSafeRouteCallback(): (
 }
 
 /**
- * Move creep toward a target room using safe pathfinding.
- * Avoids Source Keeper rooms and hostile-owned rooms.
+ * Alias for moveToRoom with safe pathfinding (deprecated - moveToRoom is now safe by default).
+ * Kept for backward compatibility.
  */
 export function moveToRoomSafe(
   creep: Creep,
   targetRoom: string,
   visualStroke?: string
 ): boolean {
-  if (creep.spawning) return false;
-  if (creep.room.name === targetRoom) return false;
-
-  // Use safe route callback to find path
-  const route = Game.map.findRoute(creep.room.name, targetRoom, {
-    routeCallback: getSafeRouteCallback(),
-  });
-
-  if (route === ERR_NO_PATH || route.length === 0) {
-    // No safe path found - try regular pathfinding as fallback
-    // This might happen if target is unreachable safely
-    creep.say("NOPATH");
-    return moveToRoom(creep, targetRoom, visualStroke);
-  }
-
-  // Get next room in route
-  const nextRoom = route[0];
-  const exitDir = nextRoom.exit;
-
-  const pos = creep.pos;
-
-  // If on the correct border, step across
-  if (
-    (exitDir === FIND_EXIT_LEFT && pos.x === 0) ||
-    (exitDir === FIND_EXIT_RIGHT && pos.x === 49) ||
-    (exitDir === FIND_EXIT_TOP && pos.y === 0) ||
-    (exitDir === FIND_EXIT_BOTTOM && pos.y === 49)
-  ) {
-    const dirMap: Record<number, DirectionConstant> = {
-      [FIND_EXIT_LEFT]: LEFT,
-      [FIND_EXIT_RIGHT]: RIGHT,
-      [FIND_EXIT_TOP]: TOP,
-      [FIND_EXIT_BOTTOM]: BOTTOM,
-    };
-    const result = creep.move(dirMap[exitDir]);
-
-    if (result !== OK) {
-      tryAdjacentExit(creep, exitDir);
-    }
-    return true;
-  }
-
-  // If on wrong border, step off first
-  if (isOnBorder(creep)) {
-    stepOffBorder(creep);
-    return true;
-  }
-
-  // Stuck detection (same as moveToRoom)
-  const lastPos = creep.memory._lastPos;
-  const currentPos = `${pos.x},${pos.y}`;
-
-  if (lastPos === currentPos) {
-    const stuckCount = (creep.memory._stuckCount || 0) + 1;
-    creep.memory._stuckCount = stuckCount;
-
-    if (stuckCount > 2) {
-      const alternativeExit = findAlternativeExit(creep, exitDir);
-      if (alternativeExit) {
-        creep.moveTo(alternativeExit, {
-          reusePath: 5,
-          visualizePathStyle: visualStroke
-            ? { stroke: "#ff0000", opacity: 0.5 }
-            : undefined,
-        });
-        return true;
-      }
-
-      if (stuckCount > 5) {
-        const directions: DirectionConstant[] = [
-          TOP,
-          TOP_RIGHT,
-          RIGHT,
-          BOTTOM_RIGHT,
-          BOTTOM,
-          BOTTOM_LEFT,
-          LEFT,
-          TOP_LEFT,
-        ];
-        const randomDir = directions[Math.floor(Math.random() * directions.length)];
-        creep.move(randomDir);
-        creep.memory._stuckCount = 0;
-        return true;
-      }
-    }
-  } else {
-    creep.memory._stuckCount = 0;
-  }
-  creep.memory._lastPos = currentPos;
-
-  // Find exit tile for the calculated direction
-  const exit = findBestExit(creep, exitDir);
-
-  if (!exit) {
-    return false;
-  }
-
-  creep.moveTo(exit, {
-    reusePath: 20,
-    visualizePathStyle: visualStroke
-      ? { stroke: visualStroke, opacity: 0.3 }
-      : undefined,
-  });
-  return true;
+  return moveToRoom(creep, targetRoom, visualStroke);
 }
 
 /**
@@ -262,12 +159,47 @@ export function stepOffBorder(creep: Creep): boolean {
 
 /**
  * Move creep toward a target room, handling border edge cases and stuck detection.
+ * By default uses safe pathfinding to avoid Source Keeper and hostile rooms.
+ *
+ * @param creep - The creep to move
+ * @param targetRoom - Destination room name
+ * @param visualStroke - Path visualization color (optional)
+ * @param opts - Additional options
+ * @param opts.avoidDanger - Avoid SK/hostile rooms (default: true)
  */
-export function moveToRoom(creep: Creep, targetRoom: string, visualStroke?: string): boolean {
+export function moveToRoom(
+  creep: Creep,
+  targetRoom: string,
+  visualStroke?: string,
+  opts?: { avoidDanger?: boolean }
+): boolean {
   if (creep.spawning) return false;
   if (creep.room.name === targetRoom) return false;
 
-  const exitDir = creep.room.findExitTo(targetRoom);
+  const avoidDanger = !opts || opts.avoidDanger !== false;
+
+  // Use safe route finding by default
+  let exitDir: ExitConstant | ERR_NO_PATH | ERR_INVALID_ARGS;
+
+  if (avoidDanger) {
+    // Find route using safe callback
+    const route = Game.map.findRoute(creep.room.name, targetRoom, {
+      routeCallback: getSafeRouteCallback(),
+    });
+
+    if (route === ERR_NO_PATH || route.length === 0) {
+      // No safe path - try regular pathfinding as fallback
+      creep.say("NOPATH");
+      exitDir = creep.room.findExitTo(targetRoom);
+    } else {
+      // Use the first room in safe route
+      exitDir = route[0].exit;
+    }
+  } else {
+    // Opt-out: use direct pathfinding
+    exitDir = creep.room.findExitTo(targetRoom);
+  }
+
   if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) return false;
 
   const pos = creep.pos;
@@ -453,20 +385,21 @@ function getDirection(dx: number, dy: number): DirectionConstant {
 /**
  * Smart moveTo wrapper with stuck detection and dynamic ignoreCreeps.
  * Uses Screeps' built-in pathfinder with sensible defaults.
+ * For cross-room movement, uses safe pathfinding by default.
  */
 export function smartMoveTo(
   creep: Creep,
   target: RoomPosition | { pos: RoomPosition },
-  opts?: MoveToOpts
+  opts?: MoveToOpts & { avoidDanger?: boolean }
 ): ScreepsReturnCode {
   const targetPos = "pos" in target ? target.pos : target;
+  const avoidDanger = !opts || opts.avoidDanger !== false;
 
-  // Handle cross-room movement
+  // Handle cross-room movement - use moveToRoom for safe routing
   if (targetPos.roomName !== creep.room.name) {
-    if (isOnBorder(creep)) {
-      moveToRoom(creep, targetPos.roomName, opts?.visualizePathStyle?.stroke);
-      return OK;
-    }
+    // Use moveToRoom which handles safe routing internally
+    moveToRoom(creep, targetPos.roomName, opts?.visualizePathStyle?.stroke, { avoidDanger });
+    return OK;
   }
 
   // Stuck detection: track position
