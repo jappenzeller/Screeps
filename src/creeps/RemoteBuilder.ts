@@ -224,8 +224,6 @@ function handleNoSites(creep: Creep, mem: RemoteBuilderMemory): void {
   }
 
   // No remotes need building - recycle at spawn for energy return
-  console.log("[" + creep.name + "] No remote sites, recycling");
-
   var homeRoom = Game.rooms[mem.room];
   var spawn = homeRoom && homeRoom.find(FIND_MY_SPAWNS)[0];
   if (spawn) {
