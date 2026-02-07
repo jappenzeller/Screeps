@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Screeps Recording Viewer</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background: #111;
+      color: #ccc;
+      font-family: 'Consolas', 'Monaco', monospace;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .sidebar {
+      background: #1a1a1a;
+      border-right: 1px solid #333;
+      width: 280px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 12px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sidebar-header h2 { margin: 0; font-size: 14px; color: #ffcc00; }
+    .api-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+    }
+    .api-status .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #888;
+    }
+    .api-status .dot.online { background: #4f4; }
+    .api-status .dot.offline { background: #f44; }
+    .recordings-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .recording-card {
+      background: #222;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 10px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .recording-card:hover { border-color: #555; }
+    .recording-card.active { border-color: #ffcc00; }
+    .recording-card .room { font-size: 14px; color: #fff; font-weight: bold; }
+    .recording-card .meta { font-size: 11px; color: #888; margin-top: 4px; }
+    .recording-card .status {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      margin-top: 6px;
+    }
+    .recording-card .status.active { background: #2a4a2a; color: #4f4; }
+    .recording-card .status.complete { background: #2a2a4a; color: #88f; }
+    .recording-card .status.paused { background: #4a4a2a; color: #ff8; }
+    .recording-card .buttons { margin-top: 8px; display: flex; gap: 6px; }
+    .overlays-section, .outcomes-section {
+      padding: 12px;
+      border-top: 1px solid #333;
+    }
+    .overlays-section h3, .outcomes-section h3 {
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      color: #888;
+      text-transform: uppercase;
+    }
+    .overlay-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .overlay-option input { accent-color: #ffcc00; }
+    .outcome-bar {
+      margin-bottom: 8px;
+    }
+    .outcome-bar .label {
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 2px;
+    }
+    .outcome-bar .bar {
+      height: 8px;
+      background: #333;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .outcome-bar .bar .fill {
+      height: 100%;
+      transition: width 0.3s;
+    }
+    .outcome-bar .bar .fill.good { background: #4f4; }
+    .outcome-bar .bar .fill.medium { background: #ff8; }
+    .outcome-bar .bar .fill.bad { background: #f44; }
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .canvas-container {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #0a0a0a;
+      position: relative;
+      overflow: hidden;
+    }
+    #roomCanvas {
+      background: #000;
+      cursor: crosshair;
+    }
+    .loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.8);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .loading-overlay.hidden { display: none; }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #333;
+      border-top-color: #ffcc00;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .no-data {
+      color: #666;
+      font-size: 14px;
+      text-align: center;
+    }
+    .controls-bar {
+      background: #1a1a1a;
+      border-top: 1px solid #333;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .playback-controls {
+      display: flex;
+      gap: 4px;
+    }
+    .playback-controls button {
+      width: 36px;
+      height: 28px;
+      padding: 0;
+      font-size: 14px;
+    }
+    .timeline {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .timeline input[type="range"] {
+      flex: 1;
+      height: 6px;
+      accent-color: #ffcc00;
+    }
+    .tick-display {
+      font-size: 12px;
+      color: #ffcc00;
+      min-width: 120px;
+    }
+    .speed-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .speed-control input { width: 60px; }
+    .info-panel {
+      position: absolute;
+      bottom: 60px;
+      right: 16px;
+      background: rgba(26, 26, 26, 0.95);
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 12px;
+      min-width: 200px;
+      font-size: 11px;
+    }
+    .info-panel h4 {
+      margin: 0 0 8px 0;
+      color: #ffcc00;
+      font-size: 12px;
+    }
+    .info-panel .row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .info-panel .row .label { color: #888; }
+    .info-panel .row .value { color: #fff; }
+    .tooltip {
+      position: absolute;
+      background: rgba(0, 0, 0, 0.9);
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 11px;
+      pointer-events: none;
+      z-index: 100;
+      max-width: 220px;
+    }
+    .tooltip.hidden { display: none; }
+    .tooltip .title { color: #ffcc00; font-weight: bold; margin-bottom: 4px; }
+    .tooltip .line { margin-bottom: 2px; }
+    button {
+      background: #333;
+      color: #ccc;
+      border: 1px solid #555;
+      padding: 4px 12px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 11px;
+    }
+    button:hover { background: #444; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.primary { background: #4a3a00; border-color: #ffcc00; color: #ffcc00; }
+    button.primary:hover { background: #5a4a10; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2>Recording Viewer</h2>
+      <div class="api-status">
+        <span class="dot" id="apiDot"></span>
+        <span id="apiStatusText">Checking...</span>
+      </div>
+    </div>
+    <div class="recordings-list" id="recordingsList">
+      <div class="no-data">Loading recordings...</div>
+    </div>
+    <div class="overlays-section">
+      <h3>Overlays</h3>
+      <label class="overlay-option"><input type="checkbox" id="overlayTerrain" checked> Terrain</label>
+      <label class="overlay-option"><input type="checkbox" id="overlayStructures" checked> Structures</label>
+      <label class="overlay-option"><input type="checkbox" id="overlayCreeps" checked> Creeps</label>
+      <label class="overlay-option"><input type="checkbox" id="overlayHeatmap"> Heatmap</label>
+      <label class="overlay-option"><input type="checkbox" id="overlayOscillations"> Oscillations</label>
+      <label class="overlay-option"><input type="checkbox" id="overlayRoads"> Road Suggestions</label>
+      <label class="overlay-option"><input type="checkbox" id="overlayBottlenecks"> Bottlenecks</label>
+      <label class="overlay-option"><input type="checkbox" id="overlayStuck"> Stuck Events</label>
+    </div>
+    <div class="outcomes-section" id="outcomesSection" style="display: none;">
+      <h3>Outcome Summary</h3>
+      <div id="outcomeBars"></div>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="canvas-container" id="canvasContainer">
+      <canvas id="roomCanvas" width="500" height="500"></canvas>
+      <div class="loading-overlay hidden" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div id="loadingText">Loading...</div>
+      </div>
+      <div class="info-panel" id="infoPanel">
+        <h4>Recording Info</h4>
+        <div class="row"><span class="label">Room:</span><span class="value" id="infoRoom">-</span></div>
+        <div class="row"><span class="label">Tick:</span><span class="value" id="infoTick">-</span></div>
+        <div class="row"><span class="label">Creeps:</span><span class="value" id="infoCreeps">-</span></div>
+        <div class="row"><span class="label">Structures:</span><span class="value" id="infoStructures">-</span></div>
+        <div class="row"><span class="label">Frame:</span><span class="value" id="infoFrame">-</span></div>
+      </div>
+      <div class="tooltip hidden" id="tooltip"></div>
+    </div>
+    <div class="controls-bar">
+      <div class="playback-controls">
+        <button id="btnFirst" title="First frame">|&#9664;</button>
+        <button id="btnPrev" title="Previous frame">&#9664;</button>
+        <button id="btnPlay" title="Play/Pause">&#9654;</button>
+        <button id="btnNext" title="Next frame">&#9654;</button>
+        <button id="btnLast" title="Last frame">&#9654;|</button>
+      </div>
+      <div class="timeline">
+        <input type="range" id="scrubber" min="0" max="100" value="0">
+        <div class="tick-display" id="tickDisplay">Tick: -</div>
+      </div>
+      <div class="speed-control">
+        <span>Speed:</span>
+        <input type="range" id="speedSlider" min="1" max="30" value="10">
+        <span id="speedValue">10 fps</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const API_BASE = "https://dossn1w7n5.execute-api.us-east-1.amazonaws.com";
+
+    // Colors
+    const TERRAIN_COLORS = {
+      0: "#2b2b2b",  // plain
+      1: "#1a1a1a",  // wall
+      2: "#2b3b2b",  // swamp
+      3: "#1a1a1a"   // wall+swamp
+    };
+
+    const STRUCTURE_COLORS = {
+      spawn: "#ffcc00",
+      extension: "#ffcc00",
+      storage: "#ffaa00",
+      terminal: "#cc8800",
+      tower: "#ff4444",
+      link: "#44aaff",
+      container: "#888888",
+      road: "#555555",
+      constructedWall: "#446644",
+      rampart: "#44ff44",
+      controller: "#ffffff",
+      extractor: "#aa44ff",
+      lab: "#ff44ff",
+      observer: "#44ffff",
+      powerSpawn: "#ff8800",
+      nuker: "#ff0000",
+      factory: "#aaaaaa"
+    };
+
+    const ROLE_COLORS = {
+      HARVESTER: "#ffff00",
+      HAULER: "#ff8800",
+      UPGRADER: "#8844ff",
+      BUILDER: "#44ff44",
+      REPAIRER: "#44ffaa",
+      DEFENDER: "#ff0000",
+      REMOTE_MINER: "#aaaa00",
+      REMOTE_HAULER: "#aa6600",
+      REMOTE_DEFENDER: "#cc0000",
+      RESERVER: "#0088ff",
+      SCOUT: "#aaaaaa",
+      LINK_FILLER: "#4488ff",
+      MINERAL_HARVESTER: "#ff44ff",
+      PIONEER: "#ffffff",
+      CLAIMER: "#00ffff",
+      BOOTSTRAP_BUILDER: "#88ff88",
+      BOOTSTRAP_HAULER: "#ffaa44"
+    };
+
+    const ROLE_PREFIXES = {
+      'H': 'HARVESTER', 'T': 'HAULER', 'U': 'UPGRADER', 'B': 'BUILDER',
+      'R': 'REPAIRER', 'S': 'SCOUT', 'C': 'CLAIMER', 'D': 'DEFENDER',
+      'M': 'MINERAL_HARVESTER', 'RH': 'REMOTE_MINER', 'RT': 'REMOTE_HAULER',
+      'P': 'PIONEER', 'RD': 'REMOTE_DEFENDER', 'RS': 'RESERVER', 'LF': 'LINK_FILLER'
+    };
+
+    // State
+    let recordings = [];
+    let currentRecording = null;
+    let terrain = null;
+    let tickList = [];
+    let snapshotCache = new Map();
+    let loadingTicks = new Set();
+    let analysis = null;
+    let playbackIndex = 0;
+    let playing = false;
+    let fps = 10;
+    let lastFrameTime = 0;
+    let zoom = 1.0;
+    let panX = 0;
+    let panY = 0;
+    let dragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let panStartX = 0, panStartY = 0;
+    let hoverTile = null;
+    let previousSnapshot = null;
+
+    // DOM Elements
+    const canvas = document.getElementById('roomCanvas');
+    const ctx = canvas.getContext('2d');
+    const recordingsList = document.getElementById('recordingsList');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+    const apiDot = document.getElementById('apiDot');
+    const apiStatusText = document.getElementById('apiStatusText');
+    const scrubber = document.getElementById('scrubber');
+    const tickDisplay = document.getElementById('tickDisplay');
+    const speedSlider = document.getElementById('speedSlider');
+    const speedValue = document.getElementById('speedValue');
+    const tooltip = document.getElementById('tooltip');
+    const outcomesSection = document.getElementById('outcomesSection');
+    const outcomeBars = document.getElementById('outcomeBars');
+
+    // API Functions
+    async function fetchJson(url) {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return resp.json();
+    }
+
+    async function checkApiStatus() {
+      try {
+        await fetchJson(`${API_BASE}/recordings`);
+        apiDot.className = 'dot online';
+        apiStatusText.textContent = 'Online';
+        return true;
+      } catch (e) {
+        apiDot.className = 'dot offline';
+        apiStatusText.textContent = 'Offline';
+        return false;
+      }
+    }
+
+    async function loadRecordings() {
+      try {
+        recordings = await fetchJson(`${API_BASE}/recordings`);
+        renderRecordingsList();
+      } catch (e) {
+        recordingsList.innerHTML = '<div class="no-data">Failed to load recordings</div>';
+      }
+    }
+
+    function renderRecordingsList() {
+      if (!recordings || recordings.length === 0) {
+        recordingsList.innerHTML = '<div class="no-data">No recordings found</div>';
+        return;
+      }
+      recordingsList.innerHTML = recordings.map(rec => `
+        <div class="recording-card ${currentRecording?.recordingId === rec.recordingId ? 'active' : ''}"
+             data-id="${rec.recordingId}">
+          <div class="room">${rec.room}</div>
+          <div class="meta">${rec.recordingId}</div>
+          <div class="meta">Ticks: ${rec.ticksCaptured || 0} / ${rec.durationTicks || '?'}</div>
+          <span class="status ${rec.status}">${rec.status}</span>
+          <div class="buttons">
+            <button onclick="viewRecording('${rec.recordingId}')">View</button>
+            ${rec.status === 'complete' ? `<button onclick="analyzeRecording('${rec.recordingId}')">Analyze</button>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function viewRecording(recordingId) {
+      showLoading('Loading recording...');
+      try {
+        currentRecording = await fetchJson(`${API_BASE}/recordings/${recordingId}`);
+        renderRecordingsList();
+
+        showLoading('Loading terrain...');
+        const terrainData = await fetchJson(`${API_BASE}/recordings/${recordingId}/terrain`);
+        terrain = terrainData.encoded || terrainData.terrain;
+
+        showLoading('Loading snapshot list...');
+        tickList = await fetchJson(`${API_BASE}/recordings/${recordingId}/snapshots`);
+        tickList.sort((a, b) => a - b);
+
+        if (tickList.length === 0) {
+          hideLoading();
+          document.getElementById('infoRoom').textContent = currentRecording.room;
+          renderTerrain();
+          return;
+        }
+
+        scrubber.max = tickList.length - 1;
+        scrubber.value = 0;
+        playbackIndex = 0;
+        snapshotCache.clear();
+
+        showLoading('Loading snapshots...');
+        await loadSnapshotBatch(0);
+
+        hideLoading();
+        updateInfoPanel();
+        render();
+
+        // Try to load analysis
+        loadAnalysis(recordingId);
+      } catch (e) {
+        console.error('Failed to load recording:', e);
+        hideLoading();
+        alert('Failed to load recording: ' + e.message);
+      }
+    }
+
+    async function loadSnapshotBatch(startIndex) {
+      const batchSize = 20;
+      const bufferSize = 40;
+      const toLoad = [];
+
+      for (let i = startIndex; i < Math.min(startIndex + bufferSize, tickList.length); i++) {
+        const tick = tickList[i];
+        if (!snapshotCache.has(tick) && !loadingTicks.has(tick)) {
+          toLoad.push(tick);
+        }
+      }
+
+      const batches = [];
+      for (let i = 0; i < toLoad.length; i += batchSize) {
+        batches.push(toLoad.slice(i, i + batchSize));
+      }
+
+      for (const batch of batches) {
+        await Promise.all(batch.map(async tick => {
+          loadingTicks.add(tick);
+          try {
+            const data = await fetchJson(`${API_BASE}/recordings/${currentRecording.recordingId}/snapshots/${tick}`);
+            snapshotCache.set(tick, data);
+          } catch (e) {
+            console.warn('Failed to load snapshot', tick, e);
+          } finally {
+            loadingTicks.delete(tick);
+          }
+        }));
+      }
+
+      // Evict old snapshots
+      if (snapshotCache.size > bufferSize * 2) {
+        const threshold = tickList[Math.max(0, startIndex - 10)];
+        for (const [tick] of snapshotCache) {
+          if (tick < threshold) snapshotCache.delete(tick);
+        }
+      }
+    }
+
+    async function loadAnalysis(recordingId) {
+      try {
+        analysis = {};
+        analysis.summary = await fetchJson(`${API_BASE}/recordings/${recordingId}/analysis`);
+
+        // Load analysis data in parallel
+        const [heatmap, oscillations, stuck, roads, bottlenecks] = await Promise.all([
+          fetchJson(`${API_BASE}/recordings/${recordingId}/analysis/heatmap`).catch(() => null),
+          fetchJson(`${API_BASE}/recordings/${recordingId}/analysis/oscillations`).catch(() => null),
+          fetchJson(`${API_BASE}/recordings/${recordingId}/analysis/stuck`).catch(() => null),
+          fetchJson(`${API_BASE}/recordings/${recordingId}/analysis/roads`).catch(() => null),
+          fetchJson(`${API_BASE}/recordings/${recordingId}/analysis/bottlenecks`).catch(() => null)
+        ]);
+
+        analysis.heatmap = heatmap;
+        analysis.oscillations = oscillations;
+        analysis.stuck = stuck;
+        analysis.roads = roads;
+        analysis.bottlenecks = bottlenecks;
+
+        // Try to load outcomes
+        try {
+          analysis.outcomes = await fetchJson(`${API_BASE}/recordings/${recordingId}/analysis/outcomes`);
+          renderOutcomes();
+        } catch (e) {
+          outcomesSection.style.display = 'none';
+        }
+
+        render();
+      } catch (e) {
+        analysis = null;
+        outcomesSection.style.display = 'none';
+      }
+    }
+
+    async function analyzeRecording(recordingId) {
+      showLoading('Triggering analysis...');
+      try {
+        await fetch(`${API_BASE}/recordings/${recordingId}/analyze`, { method: 'POST' });
+        alert('Analysis started. Check back in a minute.');
+      } catch (e) {
+        alert('Failed to trigger analysis: ' + e.message);
+      }
+      hideLoading();
+    }
+
+    function renderOutcomes() {
+      if (!analysis?.outcomes?.composite) {
+        outcomesSection.style.display = 'none';
+        return;
+      }
+      outcomesSection.style.display = 'block';
+      const composite = analysis.outcomes.composite;
+      const metrics = [
+        { name: 'Economy', value: composite.economyScore },
+        { name: 'Progress', value: composite.progressScore },
+        { name: 'Efficiency', value: composite.efficiencyScore },
+        { name: 'Stability', value: composite.stabilityScore },
+        { name: 'Overall', value: composite.overallScore }
+      ];
+
+      outcomeBars.innerHTML = metrics.map(m => {
+        const pct = (m.value * 100).toFixed(0);
+        const cls = m.value > 0.7 ? 'good' : m.value > 0.4 ? 'medium' : 'bad';
+        return `
+          <div class="outcome-bar">
+            <div class="label"><span>${m.name}</span><span>${m.value.toFixed(2)}</span></div>
+            <div class="bar"><div class="fill ${cls}" style="width: ${pct}%"></div></div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Rendering
+    function render() {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(panX, panY);
+      ctx.scale(zoom, zoom);
+
+      if (terrain && document.getElementById('overlayTerrain').checked) {
+        renderTerrain();
+      }
+
+      const currentTick = tickList[playbackIndex];
+      const snapshot = snapshotCache.get(currentTick);
+
+      if (snapshot) {
+        if (document.getElementById('overlayStructures').checked) {
+          renderStructures(snapshot);
+        }
+        if (document.getElementById('overlayCreeps').checked) {
+          renderCreeps(snapshot);
+        }
+      }
+
+      // Analysis overlays
+      if (analysis) {
+        if (document.getElementById('overlayHeatmap').checked && analysis.heatmap) {
+          renderHeatmap();
+        }
+        if (document.getElementById('overlayRoads').checked && analysis.roads) {
+          renderRoadSuggestions();
+        }
+        if (document.getElementById('overlayOscillations').checked && analysis.oscillations) {
+          renderOscillations();
+        }
+        if (document.getElementById('overlayStuck').checked && analysis.stuck) {
+          renderStuckEvents();
+        }
+        if (document.getElementById('overlayBottlenecks').checked && analysis.bottlenecks) {
+          renderBottlenecks();
+        }
+      }
+
+      // Hover highlight
+      if (hoverTile) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1 / zoom;
+        ctx.strokeRect(hoverTile.x * 10, hoverTile.y * 10, 10, 10);
+      }
+
+      ctx.restore();
+
+      previousSnapshot = snapshot;
+    }
+
+    function renderTerrain() {
+      if (!terrain) return;
+      for (let y = 0; y < 50; y++) {
+        for (let x = 0; x < 50; x++) {
+          const idx = y * 50 + x;
+          const val = (terrain.charCodeAt(idx) - 48) & 0x03;
+          ctx.fillStyle = TERRAIN_COLORS[val];
+          ctx.fillRect(x * 10, y * 10, 10, 10);
+        }
+      }
+    }
+
+    function renderStructures(snapshot) {
+      if (!snapshot.structures) return;
+
+      // Roads first (underneath)
+      snapshot.structures.filter(s => s.structureType === 'road').forEach(s => {
+        ctx.fillStyle = STRUCTURE_COLORS.road;
+        ctx.beginPath();
+        ctx.arc(s.x * 10 + 5, s.y * 10 + 5, 2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Ramparts (semi-transparent overlay)
+      snapshot.structures.filter(s => s.structureType === 'rampart').forEach(s => {
+        ctx.fillStyle = 'rgba(68, 255, 68, 0.3)';
+        ctx.fillRect(s.x * 10, s.y * 10, 10, 10);
+      });
+
+      // Other structures
+      snapshot.structures.filter(s => s.structureType !== 'road' && s.structureType !== 'rampart').forEach(s => {
+        const color = STRUCTURE_COLORS[s.structureType] || '#666';
+        ctx.fillStyle = color;
+        const size = s.structureType === 'extension' ? 6 : 8;
+        const offset = (10 - size) / 2;
+        ctx.fillRect(s.x * 10 + offset, s.y * 10 + offset, size, size);
+      });
+
+      // Construction sites
+      if (snapshot.constructionSites) {
+        snapshot.constructionSites.forEach(s => {
+          ctx.strokeStyle = STRUCTURE_COLORS[s.structureType] || '#666';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 2]);
+          ctx.strokeRect(s.x * 10 + 2, s.y * 10 + 2, 6, 6);
+          ctx.setLineDash([]);
+        });
+      }
+
+      // Dropped resources
+      if (snapshot.droppedResources) {
+        snapshot.droppedResources.forEach(r => {
+          ctx.fillStyle = r.resourceType === 'energy' ? '#ffee00' : '#aaa';
+          ctx.beginPath();
+          ctx.arc(r.x * 10 + 5, r.y * 10 + 5, 3, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+    }
+
+    function renderCreeps(snapshot) {
+      if (!snapshot.creeps) return;
+
+      snapshot.creeps.forEach(creep => {
+        const role = parseRole(creep.name);
+        const isHostile = creep.owner && creep.owner !== currentRecording?.room?.split(/[EW]/)[0];
+        const color = isHostile ? '#ff0000' : (ROLE_COLORS[role] || '#888');
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(creep.x * 10 + 5, creep.y * 10 + 5, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Direction indicator
+        if (previousSnapshot) {
+          const prev = previousSnapshot.creeps?.find(c => c.name === creep.name);
+          if (prev && (prev.x !== creep.x || prev.y !== creep.y)) {
+            const dx = creep.x - prev.x;
+            const dy = creep.y - prev.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(creep.x * 10 + 5, creep.y * 10 + 5);
+            ctx.lineTo(creep.x * 10 + 5 + (dx / len) * 4, creep.y * 10 + 5 + (dy / len) * 4);
+            ctx.stroke();
+          }
+        }
+      });
+    }
+
+    function parseRole(name) {
+      for (const [prefix, role] of Object.entries(ROLE_PREFIXES)) {
+        if (name.startsWith(prefix + '-') || name.startsWith(prefix + '_')) {
+          return role;
+        }
+      }
+      return 'UNKNOWN';
+    }
+
+    function renderHeatmap() {
+      if (!analysis.heatmap?.total) return;
+      const heatmap = analysis.heatmap.total;
+      const maxValue = analysis.heatmap.maxValue || 1;
+
+      for (let y = 0; y < 50; y++) {
+        for (let x = 0; x < 50; x++) {
+          const value = heatmap[y]?.[x] || 0;
+          if (value <= 0) continue;
+          const terrainVal = terrain ? (terrain.charCodeAt(y * 50 + x) - 48) & 0x03 : 0;
+          if (terrainVal === 1 || terrainVal === 3) continue; // Skip walls
+
+          const normalized = value / maxValue;
+          ctx.fillStyle = heatmapColor(normalized);
+          ctx.fillRect(x * 10, y * 10, 10, 10);
+        }
+      }
+    }
+
+    function heatmapColor(normalized) {
+      if (normalized < 0.25) return `rgba(0, 0, 255, ${normalized * 2})`;
+      if (normalized < 0.5) return 'rgba(0, 255, 255, 0.5)';
+      if (normalized < 0.75) return 'rgba(255, 255, 0, 0.6)';
+      return 'rgba(255, 0, 0, 0.7)';
+    }
+
+    function renderRoadSuggestions() {
+      if (!analysis.roads?.suggestions) return;
+
+      analysis.roads.suggestions.forEach((s, i) => {
+        ctx.strokeStyle = `rgba(68, 255, 68, ${1 - i * 0.04})`;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(s.x * 10 + 1, s.y * 10 + 1, 8, 8);
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = '#4f4';
+        ctx.font = '7px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(i + 1), s.x * 10 + 5, s.y * 10 + 7);
+      });
+    }
+
+    function renderOscillations() {
+      if (!analysis.oscillations?.hotspots) return;
+
+      const time = Date.now() / 200;
+      analysis.oscillations.hotspots.forEach(h => {
+        const radius = 8 + Math.sin(time) * 2;
+        ctx.strokeStyle = 'rgba(255, 136, 0, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(h.x * 10 + 5, h.y * 10 + 5, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+    }
+
+    function renderStuckEvents() {
+      if (!analysis.stuck?.hotspots) return;
+
+      analysis.stuck.hotspots.forEach(h => {
+        ctx.strokeStyle = '#ff4444';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(h.x * 10 + 2, h.y * 10 + 2);
+        ctx.lineTo(h.x * 10 + 8, h.y * 10 + 8);
+        ctx.moveTo(h.x * 10 + 8, h.y * 10 + 2);
+        ctx.lineTo(h.x * 10 + 2, h.y * 10 + 8);
+        ctx.stroke();
+      });
+    }
+
+    function renderBottlenecks() {
+      if (!analysis.bottlenecks?.tiles) return;
+
+      analysis.bottlenecks.tiles.forEach(b => {
+        const alpha = Math.min(b.concurrentTicks / 50, 1);
+        ctx.strokeStyle = `rgba(255, 0, 0, ${alpha})`;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(b.x * 10 + 1, b.y * 10 + 1, 8, 8);
+
+        ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', b.x * 10 + 5, b.y * 10 + 8);
+      });
+    }
+
+    // Playback
+    function animate(timestamp) {
+      if (playing) {
+        if (timestamp - lastFrameTime > 1000 / fps) {
+          playbackIndex++;
+          if (playbackIndex >= tickList.length) {
+            playbackIndex = tickList.length - 1;
+            playing = false;
+            document.getElementById('btnPlay').textContent = '▶';
+          }
+          lastFrameTime = timestamp;
+          loadSnapshotBatch(playbackIndex);
+          scrubber.value = playbackIndex;
+          updateInfoPanel();
+          render();
+        }
+      }
+      requestAnimationFrame(animate);
+    }
+
+    function updateInfoPanel() {
+      const tick = tickList[playbackIndex];
+      const snapshot = snapshotCache.get(tick);
+
+      document.getElementById('infoRoom').textContent = currentRecording?.room || '-';
+      document.getElementById('infoTick').textContent = tick || '-';
+      document.getElementById('infoCreeps').textContent = snapshot?.creeps?.length || 0;
+      document.getElementById('infoStructures').textContent = snapshot?.structures?.length || 0;
+      document.getElementById('infoFrame').textContent = `${playbackIndex + 1} / ${tickList.length}`;
+      tickDisplay.textContent = `Tick: ${tick || '-'}`;
+    }
+
+    // UI Helpers
+    function showLoading(text) {
+      loadingOverlay.classList.remove('hidden');
+      loadingText.textContent = text;
+    }
+
+    function hideLoading() {
+      loadingOverlay.classList.add('hidden');
+    }
+
+    // Event Handlers
+    document.getElementById('btnPlay').addEventListener('click', () => {
+      playing = !playing;
+      document.getElementById('btnPlay').textContent = playing ? '⏸' : '▶';
+      lastFrameTime = performance.now();
+    });
+
+    document.getElementById('btnFirst').addEventListener('click', () => {
+      playbackIndex = 0;
+      scrubber.value = 0;
+      loadSnapshotBatch(0);
+      updateInfoPanel();
+      render();
+    });
+
+    document.getElementById('btnLast').addEventListener('click', () => {
+      playbackIndex = tickList.length - 1;
+      scrubber.value = playbackIndex;
+      loadSnapshotBatch(playbackIndex);
+      updateInfoPanel();
+      render();
+    });
+
+    document.getElementById('btnPrev').addEventListener('click', () => {
+      if (playbackIndex > 0) {
+        playbackIndex--;
+        scrubber.value = playbackIndex;
+        updateInfoPanel();
+        render();
+      }
+    });
+
+    document.getElementById('btnNext').addEventListener('click', () => {
+      if (playbackIndex < tickList.length - 1) {
+        playbackIndex++;
+        scrubber.value = playbackIndex;
+        loadSnapshotBatch(playbackIndex);
+        updateInfoPanel();
+        render();
+      }
+    });
+
+    scrubber.addEventListener('input', () => {
+      playbackIndex = parseInt(scrubber.value);
+      loadSnapshotBatch(playbackIndex);
+      updateInfoPanel();
+      render();
+    });
+
+    speedSlider.addEventListener('input', () => {
+      fps = parseInt(speedSlider.value);
+      speedValue.textContent = `${fps} fps`;
+    });
+
+    // Overlay checkboxes
+    document.querySelectorAll('.overlay-option input').forEach(cb => {
+      cb.addEventListener('change', render);
+    });
+
+    // Canvas interactions
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const oldZoom = zoom;
+      zoom *= e.deltaY < 0 ? 1.1 : 0.9;
+      zoom = Math.max(0.5, Math.min(5.0, zoom));
+
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      panX = mx - (mx - panX) * (zoom / oldZoom);
+      panY = my - (my - panY) * (zoom / oldZoom);
+
+      render();
+    });
+
+    canvas.addEventListener('mousedown', e => {
+      dragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      panStartX = panX;
+      panStartY = panY;
+      canvas.style.cursor = 'grabbing';
+    });
+
+    canvas.addEventListener('mousemove', e => {
+      if (dragging) {
+        panX = panStartX + (e.clientX - dragStartX);
+        panY = panStartY + (e.clientY - dragStartY);
+        render();
+      } else {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const tileX = Math.floor((mx - panX) / (10 * zoom));
+        const tileY = Math.floor((my - panY) / (10 * zoom));
+
+        if (tileX >= 0 && tileX < 50 && tileY >= 0 && tileY < 50) {
+          hoverTile = { x: tileX, y: tileY };
+          updateTooltip(e.clientX, e.clientY, tileX, tileY);
+        } else {
+          hoverTile = null;
+          tooltip.classList.add('hidden');
+        }
+        render();
+      }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      dragging = false;
+      canvas.style.cursor = 'crosshair';
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      dragging = false;
+      hoverTile = null;
+      tooltip.classList.add('hidden');
+      render();
+    });
+
+    canvas.addEventListener('dblclick', () => {
+      zoom = 1.0;
+      panX = 0;
+      panY = 0;
+      render();
+    });
+
+    function updateTooltip(clientX, clientY, tileX, tileY) {
+      const lines = [`<div class="title">(${tileX}, ${tileY})</div>`];
+
+      // Terrain
+      if (terrain) {
+        const val = (terrain.charCodeAt(tileY * 50 + tileX) - 48) & 0x03;
+        const terrainNames = ['Plain', 'Wall', 'Swamp', 'Wall'];
+        lines.push(`<div class="line">Terrain: ${terrainNames[val]}</div>`);
+      }
+
+      // Snapshot data
+      const tick = tickList[playbackIndex];
+      const snapshot = snapshotCache.get(tick);
+      if (snapshot) {
+        const structure = snapshot.structures?.find(s => s.x === tileX && s.y === tileY);
+        if (structure) {
+          lines.push(`<div class="line">Structure: ${structure.structureType}</div>`);
+          if (structure.hits) lines.push(`<div class="line">HP: ${structure.hits}/${structure.hitsMax}</div>`);
+        }
+
+        const creep = snapshot.creeps?.find(c => c.x === tileX && c.y === tileY);
+        if (creep) {
+          lines.push(`<div class="line">Creep: ${creep.name}</div>`);
+          lines.push(`<div class="line">Role: ${parseRole(creep.name)}</div>`);
+          if (creep.hits) lines.push(`<div class="line">HP: ${creep.hits}/${creep.hitsMax}</div>`);
+        }
+      }
+
+      // Analysis data
+      if (analysis?.heatmap?.total) {
+        const visits = analysis.heatmap.total[tileY]?.[tileX] || 0;
+        if (visits > 0) lines.push(`<div class="line">Visits: ${visits}</div>`);
+      }
+
+      if (analysis?.roads?.suggestions) {
+        const roadIdx = analysis.roads.suggestions.findIndex(s => s.x === tileX && s.y === tileY);
+        if (roadIdx >= 0) {
+          lines.push(`<div class="line">Road suggestion #${roadIdx + 1}</div>`);
+        }
+      }
+
+      tooltip.innerHTML = lines.join('');
+      tooltip.classList.remove('hidden');
+
+      const rect = document.body.getBoundingClientRect();
+      tooltip.style.left = Math.min(clientX + 15, rect.width - 230) + 'px';
+      tooltip.style.top = Math.min(clientY + 15, rect.height - 150) + 'px';
+    }
+
+    // Initialize
+    async function init() {
+      await checkApiStatus();
+      await loadRecordings();
+      requestAnimationFrame(animate);
+
+      // Refresh recordings list periodically
+      setInterval(async () => {
+        await loadRecordings();
+      }, 30000);
+    }
+
+    init();
+  </script>
+</body>
+</html>
