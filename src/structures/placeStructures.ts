@@ -27,6 +27,7 @@ export function placeStructures(room: Room): void {
     STRUCTURE_TOWER,
     STRUCTURE_STORAGE,
     STRUCTURE_LINK,
+    STRUCTURE_TERMINAL,
     STRUCTURE_EXTRACTOR,
     // STRUCTURE_CONTAINER - handled by ContainerPlanner
     STRUCTURE_ROAD,
@@ -126,6 +127,11 @@ function findBuildPosition(
   // Link: strategic placement based on priority
   if (type === STRUCTURE_LINK) {
     return findLinkPosition(room, near, terrain);
+  }
+
+  // Terminal: must be adjacent to storage
+  if (type === STRUCTURE_TERMINAL) {
+    return findTerminalPosition(room, terrain);
   }
 
   // Roads: connect spawn to sources and controller
@@ -680,4 +686,75 @@ function findNearSpawnPosition(
     }
   }
   return null;
+}
+
+/**
+ * Find optimal position for terminal.
+ * Must be adjacent to storage (range 1) for efficient hauler transfers.
+ */
+function findTerminalPosition(
+  room: Room,
+  terrain: RoomTerrain
+): { x: number; y: number } | null {
+  var storage = room.storage;
+  if (!storage) {
+    console.log("[Terminal] No storage in " + room.name + ", cannot place terminal");
+    return null;
+  }
+
+  var candidates: Array<{ x: number; y: number; score: number }> = [];
+
+  // Terminal must be adjacent to storage (range 1)
+  for (var dx = -1; dx <= 1; dx++) {
+    for (var dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+
+      var x = storage.pos.x + dx;
+      var y = storage.pos.y + dy;
+
+      // Check bounds
+      if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+
+      // Check if position is valid for building
+      if (!isValidBuildPos(room, x, y, terrain)) continue;
+
+      var score = 0;
+
+      // Prefer plain terrain (+2)
+      if (terrain.get(x, y) === 0) score += 2;
+
+      // Prefer tiles near spawn (central location)
+      var spawn = room.find(FIND_MY_SPAWNS)[0];
+      if (spawn) {
+        var spawnDist = Math.max(Math.abs(x - spawn.pos.x), Math.abs(y - spawn.pos.y));
+        score += Math.max(0, 10 - spawnDist); // closer to spawn = better
+      }
+
+      // Bonus for being on a road (existing infrastructure)
+      var structures = room.lookForAt(LOOK_STRUCTURES, x, y);
+      var hasRoad = false;
+      for (var i = 0; i < structures.length; i++) {
+        if (structures[i].structureType === STRUCTURE_ROAD) {
+          hasRoad = true;
+          break;
+        }
+      }
+      if (hasRoad) score += 1;
+
+      candidates.push({ x: x, y: y, score: score });
+    }
+  }
+
+  if (candidates.length === 0) {
+    console.log("[Terminal] No valid positions adjacent to storage in " + room.name);
+    return null;
+  }
+
+  // Sort by score descending
+  candidates.sort(function(a, b) { return b.score - a.score; });
+
+  var best = candidates[0];
+  console.log("[Terminal] Best position for " + room.name + ": (" + best.x + "," + best.y + ") score=" + best.score);
+
+  return best;
 }
