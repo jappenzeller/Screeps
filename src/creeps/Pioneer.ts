@@ -1,25 +1,37 @@
 /**
- * Pioneer - Self-sufficient generalist for young colonies
+ * Pioneer - Self-sufficient generalist for young colonies AND expansion
  *
- * Pioneers replace all specialist roles until source containers are built.
- * They harvest, deliver, build, and upgrade - zero interdependencies.
+ * LOCAL MODE (no targetRoom):
+ * - Pioneers replace all specialist roles until source containers are built
+ * - They harvest, deliver, build, and upgrade - zero interdependencies
+ *
+ * EXPANSION MODE (with targetRoom):
+ * - Travels from parent to target room
+ * - Self-sufficient: harvests locally, no hauler coordination needed
+ * - Builds spawn, then recycles when complete
+ * - Replaces BOOTSTRAP_BUILDER + BOOTSTRAP_HAULER with single role
  *
  * State machine:
- * - HARVESTING: Harvesting from assigned source
+ * - TRAVELING: Moving to target room (expansion only)
+ * - HARVESTING: Harvesting from source or collecting dropped energy
  * - DELIVERING: Delivering to spawn/extensions
  * - BUILDING: Building construction sites
  * - UPGRADING: Upgrading controller
  */
 
-import { smartMoveTo } from "../utils/movement";
+import { moveToRoom, smartMoveTo } from "../utils/movement";
 
-type PioneerState = "HARVESTING" | "DELIVERING" | "BUILDING" | "UPGRADING";
+type PioneerState = "TRAVELING" | "HARVESTING" | "DELIVERING" | "BUILDING" | "UPGRADING";
 
-interface PioneerMemory extends CreepMemory {
+export interface PioneerMemory extends CreepMemory {
   role: "PIONEER";
   room: string;
-  state: PioneerState;
+  state?: PioneerState;
   sourceId?: Id<Source>;
+  // Expansion fields
+  targetRoom?: string;     // If set, this is an expansion pioneer
+  parentRoom?: string;     // Parent colony for expansion pioneers
+  working?: boolean;       // true = spending energy, false = collecting
 }
 
 /**
@@ -27,31 +39,97 @@ interface PioneerMemory extends CreepMemory {
  */
 export function runPioneer(creep: Creep): void {
   var mem = creep.memory as PioneerMemory;
+  var isExpansionPioneer = !!mem.targetRoom;
+
+  // === EXPANSION COMPLETION CHECK ===
+  // If expansion room now has a spawn, recycle or convert
+  if (isExpansionPioneer && mem.targetRoom) {
+    var targetRoom = Game.rooms[mem.targetRoom];
+    if (targetRoom) {
+      var spawns = targetRoom.find(FIND_MY_SPAWNS);
+      if (spawns.length > 0) {
+        // Spawn complete! Recycle at the new spawn
+        var spawn = spawns[0];
+        if (creep.room.name !== mem.targetRoom) {
+          // Travel to target room to recycle
+          moveToRoom(creep, mem.targetRoom, "#00ff00");
+          return;
+        }
+        // Try to recycle
+        var recycleResult = spawn.recycleCreep(creep);
+        if (recycleResult === ERR_NOT_IN_RANGE) {
+          smartMoveTo(creep, spawn, { reusePath: 10 });
+        } else if (recycleResult === OK) {
+          console.log("[Pioneer] " + creep.name + " recycled at new spawn in " + mem.targetRoom);
+        }
+        return;
+      }
+    }
+  }
+
+  // === EDGE TILE HANDLING ===
+  // Creeps crossing room borders land on edge tiles where pathfinding behaves oddly
+  // Must move inward BEFORE any state logic to prevent flip-flopping
+  if (creep.pos.x === 0 || creep.pos.x === 49 || creep.pos.y === 0 || creep.pos.y === 49) {
+    // Find something to move toward
+    var site = creep.room.find(FIND_MY_CONSTRUCTION_SITES)[0];
+    if (site) {
+      creep.moveTo(site, { reusePath: 10, visualizePathStyle: { stroke: "#00ff00" } });
+    } else if (creep.room.controller) {
+      creep.moveTo(creep.room.controller, { reusePath: 10 });
+    } else {
+      creep.moveTo(25, 25);
+    }
+    creep.say("EDGE!");
+    return;
+  }
 
   // Initialize state
   if (!mem.state) {
-    mem.state = "HARVESTING";
+    if (isExpansionPioneer && creep.room.name !== mem.targetRoom) {
+      mem.state = "TRAVELING";
+    } else {
+      mem.state = "HARVESTING";
+    }
+    mem.working = false;
   }
 
-  // State transitions based on energy
-  if (mem.state === "HARVESTING" && creep.store.getFreeCapacity() === 0) {
-    // Full energy - decide what to do
-    mem.state = decideWorkState(creep);
-  } else if (mem.state !== "HARVESTING" && creep.store[RESOURCE_ENERGY] === 0) {
-    // Empty - go harvest
-    mem.state = "HARVESTING";
+  // === STATE TRANSITIONS ===
+  // Simple working toggle for expansion pioneers (like old BootstrapBuilder)
+  if (isExpansionPioneer) {
+    if (mem.working && creep.store[RESOURCE_ENERGY] === 0) {
+      mem.working = false;
+      mem.state = "HARVESTING";
+    } else if (!mem.working && creep.store.getFreeCapacity() === 0) {
+      mem.working = true;
+      mem.state = decideWorkState(creep, isExpansionPioneer);
+    }
+    // Check if we need to travel to target room
+    if (creep.room.name !== mem.targetRoom) {
+      mem.state = "TRAVELING";
+    }
+  } else {
+    // Local pioneer logic
+    if (mem.state === "HARVESTING" && creep.store.getFreeCapacity() === 0) {
+      mem.state = decideWorkState(creep, false);
+    } else if (mem.state !== "HARVESTING" && creep.store[RESOURCE_ENERGY] === 0) {
+      mem.state = "HARVESTING";
+    }
   }
 
   // Execute current state
   switch (mem.state) {
+    case "TRAVELING":
+      pioneerTravel(creep, mem);
+      break;
     case "HARVESTING":
-      pioneerHarvest(creep, mem);
+      pioneerHarvest(creep, mem, isExpansionPioneer);
       break;
     case "DELIVERING":
-      pioneerDeliver(creep);
+      pioneerDeliver(creep, isExpansionPioneer);
       break;
     case "BUILDING":
-      pioneerBuild(creep);
+      pioneerBuild(creep, isExpansionPioneer);
       break;
     case "UPGRADING":
       pioneerUpgrade(creep);
@@ -60,15 +138,40 @@ export function runPioneer(creep: Creep): void {
 }
 
 /**
- * Decide what work to do when full of energy
- * Priority: spawn/extensions > construction > controller
+ * Travel to target room (expansion mode)
  */
-function decideWorkState(creep: Creep): PioneerState {
+function pioneerTravel(creep: Creep, mem: PioneerMemory): void {
+  if (!mem.targetRoom) return;
+
+  if (creep.room.name === mem.targetRoom) {
+    mem.state = "HARVESTING";
+    return;
+  }
+
+  moveToRoom(creep, mem.targetRoom, "#00ff00");
+}
+
+/**
+ * Decide what work to do when full of energy
+ * Priority for expansion: spawn site > extensions > other sites > controller
+ * Priority for local: spawn/extensions > construction > controller
+ */
+function decideWorkState(creep: Creep, isExpansion: boolean): PioneerState {
   var room = creep.room;
+
+  if (isExpansion) {
+    // Expansion priority: spawn site first!
+    var spawnSite = room.find(FIND_CONSTRUCTION_SITES, {
+      filter: function(s) { return s.structureType === STRUCTURE_SPAWN; }
+    })[0];
+    if (spawnSite) {
+      return "BUILDING";
+    }
+  }
 
   // Priority 1: Spawn and extensions need energy
   var spawnStructures = room.find(FIND_MY_STRUCTURES, {
-    filter: function (s) {
+    filter: function(s) {
       return (
         (s.structureType === STRUCTURE_SPAWN ||
           s.structureType === STRUCTURE_EXTENSION) &&
@@ -92,18 +195,94 @@ function decideWorkState(creep: Creep): PioneerState {
 }
 
 /**
- * Harvest energy from source
+ * Harvest energy - expansion pioneers use different priority
  */
-function pioneerHarvest(creep: Creep, mem: PioneerMemory): void {
+function pioneerHarvest(creep: Creep, mem: PioneerMemory, isExpansion: boolean): void {
+  if (isExpansion) {
+    // Expansion pioneer collection priorities:
+    // 1. Dropped energy (from dead creeps, etc)
+    // 2. Tombstones
+    // 3. Ruins
+    // 4. Containers (if any exist)
+    // 5. Harvest from source
+
+    // Priority 1: Dropped energy
+    var dropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+      filter: function(r) {
+        return r.resourceType === RESOURCE_ENERGY && r.amount > 20;
+      },
+    });
+    if (dropped) {
+      if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, dropped, { reusePath: 5, visualizePathStyle: { stroke: "#ffff00" } });
+      }
+      return;
+    }
+
+    // Priority 2: Tombstones with energy
+    var tombstone = creep.pos.findClosestByRange(FIND_TOMBSTONES, {
+      filter: function(t) { return t.store.getUsedCapacity(RESOURCE_ENERGY) > 0; },
+    });
+    if (tombstone) {
+      if (creep.withdraw(tombstone, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, tombstone, { reusePath: 5 });
+      }
+      return;
+    }
+
+    // Priority 3: Ruins with energy
+    var ruin = creep.pos.findClosestByRange(FIND_RUINS, {
+      filter: function(r) { return r.store.getUsedCapacity(RESOURCE_ENERGY) > 0; },
+    });
+    if (ruin) {
+      if (creep.withdraw(ruin, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, ruin, { reusePath: 5 });
+      }
+      return;
+    }
+
+    // Priority 4: Container with energy
+    var container = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+      filter: function(s) {
+        return s.structureType === STRUCTURE_CONTAINER &&
+          (s as StructureContainer).store.getUsedCapacity(RESOURCE_ENERGY) > 50;
+      },
+    }) as StructureContainer | null;
+    if (container) {
+      if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, container, { reusePath: 5 });
+      }
+      return;
+    }
+
+    // Priority 5: Harvest from source
+    var source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
+    if (source) {
+      var result = creep.harvest(source);
+      if (result === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, source, { reusePath: 10, visualizePathStyle: { stroke: "#ffaa00" } });
+      }
+      return;
+    }
+
+    // No source active - wait near controller
+    if (creep.room.controller && creep.pos.getRangeTo(creep.room.controller) > 3) {
+      smartMoveTo(creep, creep.room.controller, { reusePath: 10 });
+    }
+    creep.say("WAIT");
+    return;
+  }
+
+  // === LOCAL PIONEER HARVESTING ===
   // Try to pick up dropped energy first (efficiency)
-  var dropped = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 1, {
-    filter: function (r) {
+  var nearbyDropped = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 1, {
+    filter: function(r) {
       return r.resourceType === RESOURCE_ENERGY && r.amount >= 50;
     },
   })[0];
 
-  if (dropped) {
-    creep.pickup(dropped);
+  if (nearbyDropped) {
+    creep.pickup(nearbyDropped);
     return;
   }
 
@@ -116,7 +295,7 @@ function pioneerHarvest(creep: Creep, mem: PioneerMemory): void {
   if (!source) {
     // Find source with fewest pioneers assigned
     var sources = creep.room.find(FIND_SOURCES);
-    var myCreeps = Object.values(Game.creeps).filter(function (c) {
+    var myCreeps = Object.values(Game.creeps).filter(function(c) {
       return c.memory.role === "PIONEER" && c.memory.room === creep.room.name;
     });
 
@@ -146,8 +325,8 @@ function pioneerHarvest(creep: Creep, mem: PioneerMemory): void {
   if (!source) return;
 
   // Harvest
-  var result = creep.harvest(source);
-  if (result === ERR_NOT_IN_RANGE) {
+  var harvestResult = creep.harvest(source);
+  if (harvestResult === ERR_NOT_IN_RANGE) {
     smartMoveTo(creep, source, { reusePath: 10 });
   }
 }
@@ -155,9 +334,9 @@ function pioneerHarvest(creep: Creep, mem: PioneerMemory): void {
 /**
  * Deliver energy to spawn/extensions
  */
-function pioneerDeliver(creep: Creep): void {
+function pioneerDeliver(creep: Creep, isExpansion: boolean): void {
   var target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function (s) {
+    filter: function(s) {
       return (
         (s.structureType === STRUCTURE_SPAWN ||
           s.structureType === STRUCTURE_EXTENSION) &&
@@ -168,7 +347,7 @@ function pioneerDeliver(creep: Creep): void {
 
   if (!target) {
     // No spawn/extensions need energy - switch to building or upgrading
-    (creep.memory as PioneerMemory).state = decideWorkState(creep);
+    (creep.memory as PioneerMemory).state = decideWorkState(creep, isExpansion);
     return;
   }
 
@@ -181,8 +360,7 @@ function pioneerDeliver(creep: Creep): void {
 /**
  * Build construction sites
  */
-function pioneerBuild(creep: Creep): void {
-  // Priority: containers at sources > extensions > other
+function pioneerBuild(creep: Creep, isExpansion: boolean): void {
   var sites = creep.room.find(FIND_CONSTRUCTION_SITES);
 
   if (sites.length === 0) {
@@ -192,16 +370,17 @@ function pioneerBuild(creep: Creep): void {
   }
 
   // Sort by priority
-  sites.sort(function (a, b) {
-    var getPriority = function (site: ConstructionSite): number {
+  sites.sort(function(a, b) {
+    var getPriority = function(site: ConstructionSite): number {
+      // Spawn is highest priority for expansion
+      if (site.structureType === STRUCTURE_SPAWN) return 0;
       if (site.structureType === STRUCTURE_CONTAINER) {
-        // Source containers are highest priority
-        if (site.pos.findInRange(FIND_SOURCES, 1).length > 0) return 0;
-        return 2;
+        // Source containers are high priority for local pioneers
+        if (site.pos.findInRange(FIND_SOURCES, 1).length > 0) return 1;
+        return 3;
       }
-      if (site.structureType === STRUCTURE_EXTENSION) return 1;
-      if (site.structureType === STRUCTURE_SPAWN) return 1;
-      return 3;
+      if (site.structureType === STRUCTURE_EXTENSION) return 2;
+      return 4;
     };
     return getPriority(a) - getPriority(b);
   });
@@ -209,7 +388,15 @@ function pioneerBuild(creep: Creep): void {
   var target = sites[0];
   var result = creep.build(target);
   if (result === ERR_NOT_IN_RANGE) {
-    smartMoveTo(creep, target, { reusePath: 10 });
+    smartMoveTo(creep, target, { reusePath: 10, visualizePathStyle: { stroke: "#00ff00" } });
+  } else if (result === OK) {
+    // Opportunistically pickup nearby energy while building
+    var nearby = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 1, {
+      filter: function(r) { return r.resourceType === RESOURCE_ENERGY; },
+    })[0];
+    if (nearby && creep.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+      creep.pickup(nearby);
+    }
   }
 }
 

@@ -3,7 +3,7 @@
 
 param(
     [string]$Region = "us-east-1",
-    [string]$Profile = "default",
+    [string]$Profile = "screeps-monitor",
     [string]$Environment = "prod",
     [string]$ScreepsToken = "",
     [string]$AnthropicKey = ""
@@ -77,7 +77,8 @@ $functions = @(
     "claude-analyzer",
     "recommendation-writer",
     "outcome-evaluator",
-    "cleanup-recommendations"
+    "cleanup-recommendations",
+    "room-recorder"
 )
 
 foreach ($func in $functions) {
@@ -98,7 +99,7 @@ foreach ($func in $functions) {
         if (-not (Test-Path $nodeModules)) {
             Write-Host "    Installing npm dependencies..."
             Push-Location $funcDir
-            npm install --production 2>&1 | Out-Null
+            $null = npm install --omit=dev 2>&1
             Pop-Location
         }
     }
@@ -133,6 +134,11 @@ Write-Host "Step 4: Deploying CloudFormation stack..." -ForegroundColor Yellow
 
 $templateFile = Join-Path $ScriptDir "template.yaml"
 
+# Upload template to S3 (required for large templates > 51200 bytes)
+Write-Host "  Uploading template to S3..."
+aws s3 cp $templateFile "s3://$BucketName/template.yaml" --profile $Profile --region $Region
+$templateUrl = "https://$BucketName.s3.$Region.amazonaws.com/template.yaml"
+
 # Check if stack exists
 $ErrorActionPreference = "SilentlyContinue"
 $null = aws cloudformation describe-stacks --stack-name $StackName --profile $Profile --region $Region 2>&1
@@ -143,7 +149,7 @@ if ($stackExists) {
     Write-Host "Updating existing stack: $StackName"
     aws cloudformation update-stack `
         --stack-name $StackName `
-        --template-body "file://$templateFile" `
+        --template-url $templateUrl `
         --parameters "ParameterKey=Environment,ParameterValue=$Environment" "ParameterKey=LambdaCodeBucket,ParameterValue=$BucketName" `
         --capabilities CAPABILITY_NAMED_IAM `
         --profile $Profile `
@@ -157,7 +163,7 @@ if ($stackExists) {
     Write-Host "Creating new stack: $StackName"
     aws cloudformation create-stack `
         --stack-name $StackName `
-        --template-body "file://$templateFile" `
+        --template-url $templateUrl `
         --parameters "ParameterKey=Environment,ParameterValue=$Environment" "ParameterKey=LambdaCodeBucket,ParameterValue=$BucketName" `
         --capabilities CAPABILITY_NAMED_IAM `
         --profile $Profile `

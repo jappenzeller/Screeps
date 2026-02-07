@@ -1,10 +1,12 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, ScanCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { S3Client, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const secretsClient = new SecretsManagerClient({});
+const s3Client = new S3Client({});
 
 const SNAPSHOTS_TABLE = process.env.SNAPSHOTS_TABLE;
 const EVENTS_TABLE = process.env.EVENTS_TABLE;
@@ -12,6 +14,8 @@ const RECOMMENDATIONS_TABLE = process.env.RECOMMENDATIONS_TABLE;
 const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
 const OBSERVATIONS_TABLE = process.env.OBSERVATIONS_TABLE;
 const INTEL_TABLE = process.env.INTEL_TABLE;
+const RECORDINGS_TABLE = process.env.RECORDINGS_TABLE;
+const ANALYTICS_BUCKET = process.env.ANALYTICS_BUCKET;
 const SCREEPS_TOKEN_SECRET = process.env.SCREEPS_TOKEN_SECRET;
 const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
 
@@ -1033,6 +1037,244 @@ async function getCommandResult(shard = "shard0", requestId = null) {
   return result;
 }
 
+// ==================== Recording Endpoints ====================
+
+/**
+ * Create a new recording
+ */
+async function createRecording(body) {
+  if (!RECORDINGS_TABLE) {
+    return { error: "Recordings table not configured" };
+  }
+
+  const { room, shard, tickInterval, durationTicks } = body;
+
+  // Validate room format
+  if (!room || !/^[EW]\d+[NS]\d+$/.test(room)) {
+    return { error: "Invalid room format. Expected format: E46N37" };
+  }
+
+  // Check for existing active recording
+  const existing = await docClient.send(new ScanCommand({
+    TableName: RECORDINGS_TABLE,
+    FilterExpression: "#status = :active",
+    ExpressionAttributeNames: { "#status": "status" },
+    ExpressionAttributeValues: { ":active": "active" }
+  }));
+
+  if (existing.Items?.length > 0) {
+    return {
+      error: "Active recording already exists",
+      existingRecordingId: existing.Items[0].recordingId,
+      room: existing.Items[0].room
+    };
+  }
+
+  const recordingId = `rec-${room}-${Date.now()}`;
+  const now = new Date().toISOString();
+  const expiresAt = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60; // 30 days TTL
+
+  const item = {
+    recordingId,
+    room,
+    shard: shard || SCREEPS_SHARD,
+    status: "active",
+    tickInterval: tickInterval || 3,
+    durationTicks: durationTicks || 3000,
+    startTick: null,
+    endTick: null,
+    lastCapturedTick: null,
+    ticksCaptured: 0,
+    terrainCaptured: false,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt
+  };
+
+  await docClient.send(new PutCommand({
+    TableName: RECORDINGS_TABLE,
+    Item: item
+  }));
+
+  return item;
+}
+
+/**
+ * List all recordings
+ */
+async function listRecordings() {
+  if (!RECORDINGS_TABLE) {
+    return { error: "Recordings table not configured" };
+  }
+
+  const result = await docClient.send(new ScanCommand({
+    TableName: RECORDINGS_TABLE
+  }));
+
+  const items = result.Items || [];
+  // Sort by createdAt descending
+  items.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+  return {
+    recordings: items,
+    count: items.length
+  };
+}
+
+/**
+ * Get a single recording
+ */
+async function getRecording(recordingId) {
+  if (!RECORDINGS_TABLE) {
+    return { error: "Recordings table not configured" };
+  }
+
+  const result = await docClient.send(new GetCommand({
+    TableName: RECORDINGS_TABLE,
+    Key: { recordingId }
+  }));
+
+  if (!result.Item) {
+    return { error: "Recording not found", recordingId };
+  }
+
+  return result.Item;
+}
+
+/**
+ * Update recording status
+ */
+async function updateRecordingStatus(recordingId, body) {
+  if (!RECORDINGS_TABLE) {
+    return { error: "Recordings table not configured" };
+  }
+
+  const { status } = body;
+  const validStatuses = ["active", "paused", "complete"];
+
+  if (!status || !validStatuses.includes(status)) {
+    return { error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` };
+  }
+
+  // Verify recording exists
+  const existing = await docClient.send(new GetCommand({
+    TableName: RECORDINGS_TABLE,
+    Key: { recordingId }
+  }));
+
+  if (!existing.Item) {
+    return { error: "Recording not found", recordingId };
+  }
+
+  await docClient.send(new UpdateCommand({
+    TableName: RECORDINGS_TABLE,
+    Key: { recordingId },
+    UpdateExpression: "SET #status = :status, updatedAt = :updatedAt",
+    ExpressionAttributeNames: { "#status": "status" },
+    ExpressionAttributeValues: {
+      ":status": status,
+      ":updatedAt": new Date().toISOString()
+    }
+  }));
+
+  return {
+    success: true,
+    recordingId,
+    status,
+    message: `Recording status updated to ${status}`
+  };
+}
+
+/**
+ * List snapshots for a recording
+ */
+async function listSnapshots(recordingId) {
+  if (!ANALYTICS_BUCKET) {
+    return { error: "Analytics bucket not configured" };
+  }
+
+  const prefix = `recordings/${recordingId}/`;
+
+  const result = await s3Client.send(new ListObjectsV2Command({
+    Bucket: ANALYTICS_BUCKET,
+    Prefix: prefix
+  }));
+
+  const objects = result.Contents || [];
+  const ticks = [];
+
+  for (const obj of objects) {
+    const key = obj.Key;
+    const filename = key.replace(prefix, "");
+
+    // Skip terrain.json, extract tick numbers from other files
+    if (filename === "terrain.json") continue;
+
+    const match = filename.match(/^(\d+)\.json$/);
+    if (match) {
+      ticks.push(parseInt(match[1], 10));
+    }
+  }
+
+  // Sort ticks ascending
+  ticks.sort((a, b) => a - b);
+
+  return {
+    recordingId,
+    ticks,
+    count: ticks.length,
+    hasTerrain: objects.some(o => o.Key.endsWith("terrain.json"))
+  };
+}
+
+/**
+ * Get a specific snapshot
+ */
+async function getSnapshot(recordingId, tick) {
+  if (!ANALYTICS_BUCKET) {
+    return { error: "Analytics bucket not configured" };
+  }
+
+  try {
+    const result = await s3Client.send(new GetObjectCommand({
+      Bucket: ANALYTICS_BUCKET,
+      Key: `recordings/${recordingId}/${tick}.json`
+    }));
+
+    const body = await result.Body.transformToString();
+    return JSON.parse(body);
+  } catch (error) {
+    if (error.name === "NoSuchKey") {
+      return { error: "Snapshot not found", recordingId, tick };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Get terrain for a recording
+ */
+async function getTerrain(recordingId) {
+  if (!ANALYTICS_BUCKET) {
+    return { error: "Analytics bucket not configured" };
+  }
+
+  try {
+    const result = await s3Client.send(new GetObjectCommand({
+      Bucket: ANALYTICS_BUCKET,
+      Key: `recordings/${recordingId}/terrain.json`
+    }));
+
+    const body = await result.Body.transformToString();
+    return JSON.parse(body);
+  } catch (error) {
+    if (error.name === "NoSuchKey") {
+      return { error: "Terrain not found", recordingId };
+    }
+    throw error;
+  }
+}
+
 export async function handler(event) {
   console.log('API request:', event.routeKey, event.pathParameters);
 
@@ -1169,6 +1411,29 @@ export async function handler(event) {
     else if (path === 'GET /metrics/{roomName}') {
       const hours = parseInt(query.hours) || 24;
       result = await getMetricHistory(params.roomName, hours);
+    }
+
+    // ==================== Recording Endpoints ====================
+    else if (path === 'POST /recordings') {
+      result = await createRecording(body);
+    }
+    else if (path === 'GET /recordings') {
+      result = await listRecordings();
+    }
+    else if (path === 'GET /recordings/{recordingId}') {
+      result = await getRecording(params.recordingId);
+    }
+    else if (path === 'PUT /recordings/{recordingId}') {
+      result = await updateRecordingStatus(params.recordingId, body);
+    }
+    else if (path === 'GET /recordings/{recordingId}/snapshots') {
+      result = await listSnapshots(params.recordingId);
+    }
+    else if (path === 'GET /recordings/{recordingId}/snapshots/{tick}') {
+      result = await getSnapshot(params.recordingId, params.tick);
+    }
+    else if (path === 'GET /recordings/{recordingId}/terrain') {
+      result = await getTerrain(params.recordingId);
     }
 
     else {

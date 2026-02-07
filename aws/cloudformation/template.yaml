@@ -222,6 +222,25 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
 
+  # ==================== Room Recordings ====================
+  RecordingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-recordings
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: recordingId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: recordingId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
   # ==================== EventBridge ====================
   ScreepsEventBus:
     Type: AWS::Events::EventBus
@@ -500,6 +519,22 @@ Resources:
                   - !GetAtt RecommendationsTable.Arn
                   - !Sub ${RecommendationsTable.Arn}/index/*
                   - !GetAtt IntelTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt RecordingsTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt AnalyticsBucket.Arn
+                  - !Sub ${AnalyticsBucket.Arn}/recordings/*
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
@@ -894,6 +929,8 @@ Resources:
           EVENTS_TABLE: !Ref EventsTable
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
           INTEL_TABLE: !Ref IntelTable
+          RECORDINGS_TABLE: !Ref RecordingsTable
+          ANALYTICS_BUCKET: !Ref AnalyticsBucket
           SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
           SCREEPS_SHARD: !Ref ScreepsShard
 
@@ -1049,6 +1086,48 @@ Resources:
         Filters:
           - Pattern: '{"eventName": ["INSERT"]}'
 
+  # Room Recorder Role
+  RoomRecorderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-room-recorder-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RoomRecorderPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt RecordingsTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub ${AnalyticsBucket.Arn}/recordings/*
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref ScreepsTokenSecret
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
   # Cleanup Lambda - marks stale pending recommendations as expired
   CleanupRecommendationsRole:
     Type: AWS::IAM::Role
@@ -1094,6 +1173,26 @@ Resources:
       Environment:
         Variables:
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+
+  # Room Recorder Lambda
+  RoomRecorderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-room-recorder-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt RoomRecorderRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: room-recorder.zip
+      Environment:
+        Variables:
+          RECORDINGS_TABLE: !Ref RecordingsTable
+          ANALYTICS_BUCKET: !Ref AnalyticsBucket
+          SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
+          SCREEPS_SHARD: !Ref ScreepsShard
 
   # ==================== Step Functions ====================
   AnalysisWorkflow:
@@ -1153,6 +1252,7 @@ Resources:
         AllowMethods:
           - GET
           - POST
+          - PUT
           - OPTIONS
         AllowHeaders:
           - Content-Type
@@ -1303,6 +1403,56 @@ Resources:
       RouteKey: GET /debug/command/result
       Target: !Sub integrations/${ApiIntegration}
 
+  # ==================== Recording Routes ====================
+  RouteRecordingsCreate:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /recordings
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecordingsList:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /recordings
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecordingsGet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /recordings/{recordingId}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecordingsUpdate:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: PUT /recordings/{recordingId}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecordingsSnapshots:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /recordings/{recordingId}/snapshots
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecordingsSnapshotGet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /recordings/{recordingId}/snapshots/{tick}
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecordingsTerrain:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /recordings/{recordingId}/terrain
+      Target: !Sub integrations/${ApiIntegration}
+
   ApiInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -1349,6 +1499,26 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt AnalysisSchedule.Arn
+
+  # Room Recorder Schedule
+  RoomRecorderSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub screeps-room-recorder-${Environment}
+      Description: Capture room snapshots for recordings
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Id: room-recorder
+          Arn: !GetAtt RoomRecorderFunction.Arn
+
+  RoomRecorderPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RoomRecorderFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RoomRecorderSchedule.Arn
 
   # ==================== Athena/Glue for QuickSight ====================
   AthenaResultsBucket:
@@ -1630,3 +1800,7 @@ Outputs:
   GlueDatabaseName:
     Description: Glue database name for Athena
     Value: !Ref GlueDatabase
+
+  RecordingsTableName:
+    Description: DynamoDB recordings table name
+    Value: !Ref RecordingsTable
