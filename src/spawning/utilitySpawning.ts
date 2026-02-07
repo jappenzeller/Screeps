@@ -25,6 +25,7 @@ import {
 import { roleCountUtility, getEffectiveCount, getCreepEffectiveness } from "./utilities/populationUtility";
 import { getPioneerBody } from "../creeps/Pioneer";
 import { ExpansionManager } from "../empire";
+import * as DuoManager from "../combat/DuoManager";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
@@ -138,7 +139,9 @@ type SpawnRole =
   | "LINK_FILLER"
   | "MINERAL_HARVESTER"
   | "CLAIMER"
-  | "PIONEER";
+  | "PIONEER"
+  | "RANGED_ATTACKER"
+  | "COMBAT_HEALER";
 
 const ALL_ROLES: SpawnRole[] = [
   "PIONEER",
@@ -156,6 +159,8 @@ const ALL_ROLES: SpawnRole[] = [
   "LINK_FILLER",
   "MINERAL_HARVESTER",
   "CLAIMER",
+  "RANGED_ATTACKER",
+  "COMBAT_HEALER",
 ];
 
 export interface SpawnCandidate {
@@ -772,6 +777,10 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return mineralHarvesterUtility(effectiveDeficit, state);
     case "CLAIMER":
       return claimerUtility(state);
+    case "RANGED_ATTACKER":
+      return rangedAttackerUtility(state);
+    case "COMBAT_HEALER":
+      return combatHealerUtility(state);
     default:
       return 0;
   }
@@ -1514,6 +1523,68 @@ function expansionPioneerUtility(state: ColonyState): number {
   return 85;
 }
 
+/**
+ * Ranged Attacker utility - queries DuoManager for spawn requests
+ *
+ * Only spawns when DuoManager has an active duo needing an attacker.
+ * Attacker has slightly higher priority than healer (spawns first).
+ */
+function rangedAttackerUtility(state: ColonyState): number {
+  // Get spawn requests from DuoManager
+  var requests = DuoManager.getSpawnRequests();
+  var attackerRequest = null;
+
+  for (var i = 0; i < requests.length; i++) {
+    if (requests[i].role === "RANGED_ATTACKER" && requests[i].homeRoom === state.room.name) {
+      attackerRequest = requests[i];
+      break;
+    }
+  }
+
+  if (!attackerRequest) return 0;
+
+  // Check economic guards
+  var priority = attackerRequest.priority >= 95 ? "CRITICAL" :
+                 attackerRequest.priority >= 75 ? "HIGH" : "NORMAL";
+  if (!DuoManager.canAffordCombat(state.room.name, priority as DuoManager.AssignmentPriority)) {
+    return 0;
+  }
+
+  // Return the priority from DuoManager
+  return attackerRequest.priority;
+}
+
+/**
+ * Combat Healer utility - queries DuoManager for spawn requests
+ *
+ * Only spawns when DuoManager has an active duo needing a healer.
+ * Healer spawns after attacker (lower priority by 2).
+ */
+function combatHealerUtility(state: ColonyState): number {
+  // Get spawn requests from DuoManager
+  var requests = DuoManager.getSpawnRequests();
+  var healerRequest = null;
+
+  for (var i = 0; i < requests.length; i++) {
+    if (requests[i].role === "COMBAT_HEALER" && requests[i].homeRoom === state.room.name) {
+      healerRequest = requests[i];
+      break;
+    }
+  }
+
+  if (!healerRequest) return 0;
+
+  // Check economic guards
+  var priority = healerRequest.priority >= 95 ? "CRITICAL" :
+                 healerRequest.priority >= 75 ? "HIGH" : "NORMAL";
+  if (!DuoManager.canAffordCombat(state.room.name, priority as DuoManager.AssignmentPriority)) {
+    return 0;
+  }
+
+  // Return the priority from DuoManager
+  return healerRequest.priority;
+}
+
 // ============================================
 // Body Building Functions
 // ============================================
@@ -1745,6 +1816,38 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
         ...base,
         state: "HARVESTING",
       };
+    }
+
+    case "RANGED_ATTACKER": {
+      // Find the spawn request for this attacker
+      var attackerRequests = DuoManager.getSpawnRequests().filter(function(r) {
+        return r.role === "RANGED_ATTACKER" && r.homeRoom === state.room.name;
+      });
+      if (attackerRequests.length > 0) {
+        var attackReq = attackerRequests[0];
+        return {
+          ...base,
+          duoId: attackReq.duoId,
+          targetRoom: attackReq.targetRoom,
+        };
+      }
+      return base;
+    }
+
+    case "COMBAT_HEALER": {
+      // Find the spawn request for this healer
+      var healerRequests = DuoManager.getSpawnRequests().filter(function(r) {
+        return r.role === "COMBAT_HEALER" && r.homeRoom === state.room.name;
+      });
+      if (healerRequests.length > 0) {
+        var healReq = healerRequests[0];
+        return {
+          ...base,
+          duoId: healReq.duoId,
+          targetRoom: healReq.targetRoom,
+        };
+      }
+      return base;
     }
 
     default:

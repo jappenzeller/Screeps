@@ -9,6 +9,7 @@ import { TrafficMonitor } from "../core/TrafficMonitor";
 import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
+import * as DuoManager from "../combat/DuoManager";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -94,6 +95,10 @@ expansion.readiness() - Check parent colony readiness
 expansion.auto(bool) - Toggle auto-expansion
 analyzeRoute(from, to) - Analyze safe/unsafe routes between rooms
 checkSK("roomName")  - Check if a room is a Source Keeper room
+combat.status()      - Show active combat duos
+combat.spawn(home, target) - Force spawn a combat duo
+combat.cancel(duoId) - Cancel a duo
+combat.toggle()      - Toggle duo combat system on/off
 `);
   };
 
@@ -1466,6 +1471,48 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
 
     auto: function(enable?: boolean) {
       return empireExpansion.auto(enable);
+    },
+  };
+
+  // Combat duo system commands
+  global.combat = {
+    status: () => {
+      console.log(DuoManager.status());
+      return "OK";
+    },
+
+    spawn: (homeRoom: string, targetRoom: string, type?: string, priority?: string) => {
+      if (!homeRoom || !targetRoom) {
+        console.log("Usage: combat.spawn('E46N37', 'E47N38')");
+        console.log("  homeRoom: Colony to spawn from (required)");
+        console.log("  targetRoom: Room to defend (required)");
+        console.log("  type: DEFEND_REMOTE, DEFEND_ROOM, CLEAR_INVADER_CORE (optional)");
+        console.log("  priority: CRITICAL, HIGH, NORMAL (optional)");
+        return "Error: specify home and target rooms";
+      }
+
+      var duoType = (type || "DEFEND_REMOTE") as DuoManager.AssignmentType;
+      var duoPriority = (priority || "HIGH") as DuoManager.AssignmentPriority;
+
+      var duoId = DuoManager.spawnDuo(homeRoom, targetRoom, duoType, duoPriority);
+      console.log("Created duo " + duoId);
+      return duoId;
+    },
+
+    cancel: (duoId: string) => {
+      if (!duoId) {
+        console.log("Usage: combat.cancel('duo_1')");
+        return "Error: specify duo ID";
+      }
+
+      var result = DuoManager.cancelDuo(duoId);
+      console.log(result ? "Cancelled " + duoId : "Duo not found: " + duoId);
+      return result ? "OK" : "Not found";
+    },
+
+    toggle: () => {
+      var enabled = DuoManager.toggle();
+      return enabled ? "Duo system ENABLED" : "Duo system DISABLED";
     },
   };
 

@@ -10,6 +10,7 @@
  */
 
 import { getSpawnCandidate } from "./utilitySpawning";
+import * as DuoManager from "../combat/DuoManager";
 
 /**
  * Main spawning function - uses utility-based decision making
@@ -35,6 +36,15 @@ export function spawnCreeps(room: Room): void {
     console.log(
       `[${room.name}] Spawning ${candidate.role}${targetInfo} (utility: ${candidate.utility.toFixed(1)})`
     );
+
+    // Handle duo assignment for combat roles
+    if (candidate.role === "RANGED_ATTACKER" || candidate.role === "COMBAT_HEALER") {
+      var duoId = (candidate.memory as any).duoId;
+      if (duoId) {
+        var roleType: "attacker" | "healer" = candidate.role === "RANGED_ATTACKER" ? "attacker" : "healer";
+        DuoManager.assignCreepToDuo(duoId, name, roleType);
+      }
+    }
   } else if (result !== ERR_NOT_ENOUGH_ENERGY) {
     console.log(`[${room.name}] Spawn failed: ${result} for ${candidate.role} (cost: ${candidate.cost})`);
   }

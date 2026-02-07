@@ -46,6 +46,10 @@ interface CreepMemory {
   // Defender retreat state (damaged, needs tower healing)
   retreating?: boolean;
 
+  // Combat duo system
+  duoId?: string;
+  partnerId?: Id<Creep>;
+
   // Legacy support
   working?: boolean;
 }
@@ -331,7 +335,33 @@ interface ColonyMemory {
   remoteSettings?: RemoteSettings;
 }
 
-// Extend Memory for advisor data, traffic, intel, and colonies
+// Combat duo state for DuoManager
+interface DuoCombatState {
+  id: string;
+  state: "SPAWNING" | "RALLYING" | "ENGAGING" | "RETREATING" | "RECYCLING";
+  attackerId: Id<Creep> | null;
+  attackerName: string | null;
+  healerId: Id<Creep> | null;
+  healerName: string | null;
+  assignment: {
+    type: "DEFEND_REMOTE" | "DEFEND_ROOM" | "CLEAR_INVADER_CORE" | "ATTACK_ROOM" | "PATROL";
+    priority: "CRITICAL" | "HIGH" | "NORMAL";
+    targetRoom: string;
+    homeRoom: string;
+    reason?: string;
+  };
+  createdAt: number;
+  stateChangedAt: number;
+}
+
+// Combat system memory
+interface CombatMemory {
+  useDuos: boolean;
+  duos: Record<string, DuoCombatState>;
+  nextDuoId: number;
+}
+
+// Extend Memory for advisor data, traffic, intel, colonies, and combat
 interface Memory {
   advisor?: AdvisorData;
   traffic?: { [roomName: string]: TrafficMemory };
@@ -339,6 +369,7 @@ interface Memory {
   colonies?: { [roomName: string]: ColonyMemory };
   debug?: DebugFlags;
   settings?: SettingsFlags;
+  combat?: CombatMemory;
 }
 
 // Global console declaration for Screeps

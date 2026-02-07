@@ -214,4 +214,6 @@ export const ROLE_MIN_COST: Record<string, number> = {
   SCOUT: getMinEnergyCost("SCOUT"),
   LINK_FILLER: getMinEnergyCost("LINK_FILLER"),
   UPGRADE_HAULER: getMinEnergyCost("UPGRADE_HAULER"),
+  RANGED_ATTACKER: getMinEnergyCost("RANGED_ATTACKER"),
+  COMBAT_HEALER: getMinEnergyCost("COMBAT_HEALER"),
 };

@@ -13,6 +13,8 @@ import { runRemoteDefender } from "./RemoteDefender";
 import { runLinkFiller } from "./LinkFiller";
 import { runMineralHarvester } from "./MineralHarvester";
 import { runPioneer } from "./Pioneer";
+import { runRangedAttacker } from "../combat/roles/RangedAttacker";
+import { runCombatHealer } from "../combat/roles/CombatHealer";
 
 // Body configurations moved to src/spawning/bodyConfig.ts
 // Use buildBody() from src/spawning/bodyBuilder.ts for body generation
@@ -37,6 +39,8 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   LINK_FILLER: runLinkFiller,
   MINERAL_HARVESTER: runMineralHarvester,
   PIONEER: runPioneer,
+  RANGED_ATTACKER: runRangedAttacker,
+  COMBAT_HEALER: runCombatHealer,
 };
 
 export function runCreep(creep: Creep): void {

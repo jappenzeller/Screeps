@@ -31,6 +31,7 @@ import { EconomyTracker } from "./core/EconomyTracker";
 import { PositionLogger } from "./logging/PositionLogger";
 import { ExpansionManager, eventBus, initializeEmpireMemory } from "./empire";
 import { getMilestones, getMilestonePhase } from "./core/ColonyMilestones";
+import * as DuoManager from "./combat/DuoManager";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -88,6 +89,9 @@ export function loop(): void {
 
   // Process empire events
   eventBus.processEvents();
+
+  // Run combat duo manager (state transitions and cleanup)
+  DuoManager.run();
 
   // Run all creeps
   runCreeps();

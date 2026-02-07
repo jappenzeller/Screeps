@@ -224,6 +224,41 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
     fallback: [WORK, CARRY, MOVE],
     moveMode: "pattern",
   },
+
+  /**
+   * RANGED_ATTACKER - Ranged DPS for combat duos
+   * Kiting-optimized: RANGED_ATTACK + MOVE for plains mobility
+   * Prefix TOUGH for damage buffer, extra MOVE suffix for kiting
+   * At 2300 energy: 2 TOUGH + 8 RANGED_ATTACK + 10 MOVE + 2 MOVE
+   *   = 80 ranged DPS with full kiting mobility
+   */
+  RANGED_ATTACKER: {
+    pattern: [RANGED_ATTACK, MOVE],
+    prefix: [TOUGH, TOUGH],
+    suffix: [MOVE, MOVE], // Extra MOVE for kiting
+    maxRepeats: 10,
+    minEnergy: 420, // 2 TOUGH + 1 RANGED + 3 MOVE
+    fallback: [TOUGH, RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE, MOVE],
+    moveMode: "pattern",
+    sortForCombat: true,
+  },
+
+  /**
+   * COMBAT_HEALER - Healing support for combat duos
+   * HEAL + MOVE pattern for healing and mobility
+   * Extra TOUGH prefix for damage absorption
+   * At 2300 energy: 3 TOUGH + 6 HEAL + 9 MOVE
+   *   = 72 HPS (adjacent) or 24 HPS (ranged)
+   */
+  COMBAT_HEALER: {
+    pattern: [HEAL, MOVE],
+    prefix: [TOUGH, TOUGH, TOUGH],
+    maxRepeats: 8,
+    minEnergy: 550, // 3 TOUGH + 1 HEAL + 2 MOVE
+    fallback: [TOUGH, TOUGH, HEAL, HEAL, MOVE, MOVE, MOVE],
+    moveMode: "pattern",
+    sortForCombat: true,
+  },
 };
 
 /**
