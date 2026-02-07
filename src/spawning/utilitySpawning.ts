@@ -32,12 +32,25 @@ const DYING_SOON_REMOTE = CONFIG.SPAWNING.REMOTE_REPLACEMENT_TTL;
 
 /**
  * Detect if a colony is in "pioneer phase"
- * Pioneer phase = no source containers AND no storage
- * This is infrastructure-based, not RCL-based
+ * Pioneer phase = RCL 1, no source containers, no storage
+ *
+ * Exit pioneer phase when:
+ * - Has storage (mature colony)
+ * - Has source containers (infrastructure built)
+ * - RCL >= 2 (prevents deadlock where pioneers max out before containers)
  */
 function isPioneerPhase(room: Room): boolean {
   // Has storage = not pioneer phase
   if (room.storage) return false;
+
+  // Not pioneer phase if no spawn (pre-expansion)
+  var spawns = room.find(FIND_MY_SPAWNS);
+  if (spawns.length === 0) return false;
+
+  // Exit pioneer phase at RCL 2+ regardless of containers
+  // This prevents deadlock where 4 pioneers exist but can't build containers fast enough
+  var rcl = room.controller ? room.controller.level : 0;
+  if (rcl >= 2) return false;
 
   // Check for source containers
   var sourceContainers = room.find(FIND_STRUCTURES, {
@@ -47,7 +60,7 @@ function isPioneerPhase(room: Room): boolean {
     }
   });
 
-  // Pioneer phase if no source containers exist
+  // Pioneer phase only at RCL 1 with no source containers
   return sourceContainers.length === 0;
 }
 
