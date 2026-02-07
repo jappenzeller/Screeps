@@ -71,6 +71,10 @@ export const COMBAT = {
   // === Squad/Duo ===
   DUO_RALLY_RANGE: 5,          // Max distance between duo members when rallying
   SQUAD_TIMEOUT_TICKS: 2000,   // Disband squad after this many ticks
+
+  // === Structure Attack ===
+  STRUCTURE_ATTACK_RANGE: 3,   // Default range for structure attacks
+  STRUCTURE_SAFE_RANGE: 4,     // Kite range when hostile towers present
 };
 
 // NPC owners that use predictable AI

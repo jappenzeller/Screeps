@@ -75,6 +75,8 @@ clearStats()     - Clear all collected stats
 awsExport()      - Show AWS memory segment export status
 segmentSize()    - Show segment 90 size breakdown and shedding status
 construction()   - Show construction status and priorities
+labs()           - Show lab placement plan and status
+labs("W1N1")     - Show lab plan for specific room
 advisor()        - Show AI Advisor API endpoints
 fetchAdvisor("W1N1") - Show cached recommendations for room
 traffic()        - Show traffic heatmap stats for all rooms
@@ -1139,6 +1141,119 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     console.log(lines.join("\n"));
+  };
+
+  // Lab placement status
+  global.labs = (roomName?: string) => {
+    var lines: string[] = ["=== Lab Placement Status ==="];
+
+    var roomsToCheck: Room[] = [];
+    if (roomName) {
+      var room = Game.rooms[roomName];
+      if (!room) {
+        console.log("Room not visible: " + roomName);
+        return;
+      }
+      roomsToCheck.push(room);
+    } else {
+      for (var name in Game.rooms) {
+        var r = Game.rooms[name];
+        if (r.controller && r.controller.my && r.controller.level >= 6) {
+          roomsToCheck.push(r);
+        }
+      }
+    }
+
+    for (var i = 0; i < roomsToCheck.length; i++) {
+      var room = roomsToCheck[i];
+      var rcl = room.controller ? room.controller.level : 0;
+      var maxLabs = CONTROLLER_STRUCTURES[STRUCTURE_LAB][rcl] || 0;
+
+      lines.push("\n[" + room.name + "] RCL " + rcl + " (max " + maxLabs + " labs)");
+
+      // Get existing labs
+      var labs = room.find(FIND_MY_STRUCTURES, {
+        filter: function(s) { return s.structureType === STRUCTURE_LAB; }
+      }) as StructureLab[];
+
+      var labSites = room.find(FIND_CONSTRUCTION_SITES, {
+        filter: function(s) { return s.structureType === STRUCTURE_LAB; }
+      });
+
+      lines.push("  Built: " + labs.length + ", Sites: " + labSites.length);
+
+      // Check lab plan
+      var roomMem = Memory.rooms && Memory.rooms[room.name];
+      var plan = roomMem && roomMem.labPlan;
+
+      if (!plan || plan.length === 0) {
+        lines.push("  Plan: NONE (will be computed on next placeStructures tick)");
+      } else {
+        lines.push("  Plan: " + plan.length + " positions");
+
+        // Show each position in the plan
+        for (var j = 0; j < plan.length; j++) {
+          var pos = plan[j];
+          var status = "pending";
+
+          // Check if built
+          var structures = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
+          for (var k = 0; k < structures.length; k++) {
+            if (structures[k].structureType === STRUCTURE_LAB) {
+              status = "BUILT";
+              break;
+            }
+          }
+
+          // Check if site exists
+          if (status === "pending") {
+            var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y);
+            for (var l = 0; l < sites.length; l++) {
+              if (sites[l].structureType === STRUCTURE_LAB) {
+                status = "site (" + Math.round(sites[l].progress / sites[l].progressTotal * 100) + "%)";
+                break;
+              }
+            }
+          }
+
+          lines.push("    " + j + ": (" + pos.x + ", " + pos.y + ") - " + status);
+        }
+
+        // Validate range-2 constraint
+        var allValid = true;
+        for (var a = 0; a < plan.length; a++) {
+          for (var b = a + 1; b < plan.length; b++) {
+            var dist = Math.max(
+              Math.abs(plan[a].x - plan[b].x),
+              Math.abs(plan[a].y - plan[b].y)
+            );
+            if (dist > 2) {
+              lines.push("  WARNING: positions " + a + " and " + b + " are range " + dist + " apart (must be <= 2)");
+              allValid = false;
+            }
+          }
+        }
+
+        if (allValid && plan.length >= 3) {
+          lines.push("  Range-2 constraint: VALID (all pairs within range 2)");
+        }
+
+        // Visual overlay
+        var visual = room.visual;
+        for (var m = 0; m < plan.length; m++) {
+          var p = plan[m];
+          var labExists = room.lookForAt(LOOK_STRUCTURES, p.x, p.y).some(function(s) {
+            return s.structureType === STRUCTURE_LAB;
+          });
+          var color = labExists ? "#00ff00" : "#ffff00";
+          visual.circle(p.x, p.y, { radius: 0.4, fill: color, opacity: 0.5 });
+          visual.text(String(m), p.x, p.y + 0.1, { font: 0.4, color: "#000000" });
+        }
+      }
+    }
+
+    console.log(lines.join("\n"));
+    return "OK";
   };
 
   // AI Advisor API endpoints

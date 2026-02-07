@@ -279,6 +279,41 @@ function roomHasHostiles(roomName: string): boolean {
 }
 
 /**
+ * Check if room has hostile structures worth attacking.
+ * Only relevant for ATTACK_ROOM assignments.
+ */
+function roomHasHostileStructures(roomName: string): boolean {
+  var room = Game.rooms[roomName];
+  if (!room) return false;
+  var structures = room.find(FIND_HOSTILE_STRUCTURES, {
+    filter: function(s) {
+      // Skip indestructible controller
+      return s.structureType !== STRUCTURE_CONTROLLER;
+    }
+  });
+  return structures.length > 0;
+}
+
+/**
+ * Check if an assignment is complete.
+ * For ATTACK_ROOM: complete when no hostile spawns remain.
+ * For others: complete when no hostiles remain.
+ */
+function isAssignmentComplete(duo: DuoStateData): boolean {
+  if (duo.assignment.type === "ATTACK_ROOM") {
+    // Complete when no hostile spawns remain
+    var room = Game.rooms[duo.assignment.targetRoom];
+    if (!room) return false; // Can't verify, assume not done
+    var hostileSpawns = room.find(FIND_HOSTILE_STRUCTURES, {
+      filter: function(s) { return s.structureType === STRUCTURE_SPAWN; }
+    });
+    return hostileSpawns.length === 0;
+  }
+  // Other assignment types: complete when no hostiles
+  return !roomHasHostiles(duo.assignment.targetRoom);
+}
+
+/**
  * Check if both creeps are spawned and not spawning.
  */
 function bothSpawned(duo: DuoStateData): boolean {
@@ -403,8 +438,13 @@ function runStateTransitions(duo: DuoStateData): void {
 
     case "RALLYING":
       // Check for hostiles in target room
-      if (bothInTargetRoom(duo) && roomHasHostiles(duo.assignment.targetRoom)) {
-        transitionTo(duo, "ENGAGING");
+      if (bothInTargetRoom(duo)) {
+        if (roomHasHostiles(duo.assignment.targetRoom)) {
+          transitionTo(duo, "ENGAGING");
+        } else if (duo.assignment.type === "ATTACK_ROOM" && roomHasHostileStructures(duo.assignment.targetRoom)) {
+          // ATTACK_ROOM: engage even if only structures remain
+          transitionTo(duo, "ENGAGING");
+        }
       }
       break;
 
@@ -413,10 +453,19 @@ function runStateTransitions(duo: DuoStateData): void {
       if (shouldDuoRetreat(duo)) {
         transitionTo(duo, "RETREATING");
       }
-      // Check if hostiles cleared
+      // Check if assignment is complete
+      else if (isAssignmentComplete(duo)) {
+        console.log("[DuoManager] Assignment complete for " + duo.id + ", recycling");
+        transitionTo(duo, "RECYCLING");
+      }
+      // Check if hostiles cleared but structures remain (ATTACK_ROOM)
       else if (!roomHasHostiles(duo.assignment.targetRoom)) {
-        // Stay rallying in case more hostiles come
-        transitionTo(duo, "RALLYING");
+        if (duo.assignment.type === "ATTACK_ROOM" && roomHasHostileStructures(duo.assignment.targetRoom)) {
+          // Still have structures to destroy, stay engaged
+        } else {
+          // Stay rallying in case more hostiles come
+          transitionTo(duo, "RALLYING");
+        }
       }
       break;
 

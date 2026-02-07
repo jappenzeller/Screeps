@@ -76,6 +76,9 @@ interface RoomMemory {
     harvesters: Record<string, string>; // sourceId -> creepName
     haulers: Record<string, string[]>; // containerId -> creepNames
   };
+
+  // Lab placement plan (10 positions, ordered by placement priority)
+  labPlan?: Array<{ x: number; y: number }>;
 }
 
 // AI Advisor recommendation

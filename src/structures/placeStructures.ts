@@ -3,6 +3,62 @@
  * Places structures in priority order, one per tick to avoid CPU spikes.
  */
 
+// ============================================
+// Lab Placement System
+// ============================================
+
+/**
+ * Verified 10-lab pattern (4 wide × 3 tall footprint)
+ * Positions 0-1 are input labs, 2+ are output labs
+ *
+ * Visual grid:
+ *   .  6  7  .     (y = -1)
+ *   4 I1 I2  5     (y =  0)   I1=(0,0) I2=(1,0)
+ *   8  2  3  9     (y =  1)
+ *
+ * All outputs verified within range 2 of both inputs.
+ * Order: RCL 6 = positions 0-2, RCL 7 = positions 0-5, RCL 8 = positions 0-9
+ */
+var LAB_PATTERN = [
+  { dx: 0, dy: 0 },   // 0: input lab 1 (anchor)
+  { dx: 1, dy: 0 },   // 1: input lab 2
+  { dx: 0, dy: 1 },   // 2: output -- 3 labs at RCL 6
+  { dx: 1, dy: 1 },   // 3: output (RCL 7+)
+  { dx: -1, dy: 0 },  // 4: output (RCL 7+)
+  { dx: 2, dy: 0 },   // 5: output (RCL 7+) -- 6 labs at RCL 7
+  { dx: 0, dy: -1 },  // 6: output (RCL 8+)
+  { dx: 1, dy: -1 },  // 7: output (RCL 8+)
+  { dx: -1, dy: 1 },  // 8: output (RCL 8+)
+  { dx: 2, dy: 1 },   // 9: output (RCL 8+) -- 10 labs at RCL 8
+];
+
+/**
+ * Rotate a pattern 90 degrees clockwise.
+ * To rotate 90° CW: new_dx = -dy, new_dy = dx
+ */
+function rotatePattern(pattern: Array<{ dx: number; dy: number }>): Array<{ dx: number; dy: number }> {
+  var rotated: Array<{ dx: number; dy: number }> = [];
+  for (var i = 0; i < pattern.length; i++) {
+    rotated.push({ dx: -pattern[i].dy, dy: pattern[i].dx });
+  }
+  return rotated;
+}
+
+/**
+ * Generate all 4 rotations of the lab pattern.
+ */
+function getLabPatternRotations(): Array<Array<{ dx: number; dy: number }>> {
+  var rotations: Array<Array<{ dx: number; dy: number }>> = [];
+  var current = LAB_PATTERN;
+
+  for (var r = 0; r < 4; r++) {
+    rotations.push(current);
+    current = rotatePattern(current);
+  }
+
+  return rotations;
+}
+
 export function placeStructures(room: Room): void {
   const rcl = room.controller?.level ?? 0;
   const spawn = room.find(FIND_MY_SPAWNS)[0];
@@ -29,6 +85,7 @@ export function placeStructures(room: Room): void {
     STRUCTURE_LINK,
     STRUCTURE_TERMINAL,
     STRUCTURE_EXTRACTOR,
+    STRUCTURE_LAB,
     // STRUCTURE_CONTAINER - handled by ContainerPlanner
     STRUCTURE_ROAD,
   ];
@@ -132,6 +189,11 @@ function findBuildPosition(
   // Terminal: must be adjacent to storage
   if (type === STRUCTURE_TERMINAL) {
     return findTerminalPosition(room, terrain);
+  }
+
+  // Labs: cluster near storage in a valid reaction pattern
+  if (type === STRUCTURE_LAB) {
+    return findLabPosition(room, terrain);
   }
 
   // Roads: connect spawn to sources and controller
@@ -757,4 +819,278 @@ function findTerminalPosition(
   console.log("[Terminal] Best position for " + room.name + ": (" + best.x + "," + best.y + ") score=" + best.score);
 
   return best;
+}
+
+// ============================================
+// Lab Placement Functions
+// ============================================
+
+/**
+ * Find optimal position for labs.
+ * Labs must be placed in a cluster where all labs are within range 2 of each other.
+ * Uses a pre-validated 10-lab pattern near storage/terminal.
+ *
+ * Stores the full 10-position plan in Memory.rooms[roomName].labPlan
+ * Returns the next unbuilt position from the plan.
+ */
+function findLabPosition(
+  room: Room,
+  terrain: RoomTerrain
+): { x: number; y: number } | null {
+  var roomMem = Memory.rooms && Memory.rooms[room.name];
+
+  // Check if we already have a plan
+  if (roomMem && roomMem.labPlan && roomMem.labPlan.length > 0) {
+    return getNextLabFromPlan(room, roomMem.labPlan);
+  }
+
+  // No plan exists - compute one
+  var storage = room.storage;
+  var terminal = room.find(FIND_MY_STRUCTURES, {
+    filter: function(s) { return s.structureType === STRUCTURE_TERMINAL; }
+  })[0] as StructureTerminal | undefined;
+
+  if (!storage) {
+    console.log("[Lab] No storage in " + room.name + ", cannot place labs");
+    return null;
+  }
+
+  // Find the best anchor position for the lab cluster
+  var bestPlan = findBestLabPlan(room, storage, terminal, terrain);
+
+  if (!bestPlan) {
+    console.log("[Lab] Could not find valid lab placement in " + room.name);
+    return null;
+  }
+
+  // Store the plan in memory
+  if (!Memory.rooms) {
+    Memory.rooms = {};
+  }
+  if (!Memory.rooms[room.name]) {
+    Memory.rooms[room.name] = {} as RoomMemory;
+  }
+  Memory.rooms[room.name].labPlan = bestPlan;
+
+  console.log("[Lab] Created lab plan for " + room.name + " with " + bestPlan.length + " positions");
+  for (var i = 0; i < bestPlan.length; i++) {
+    console.log("[Lab]   Position " + i + ": (" + bestPlan[i].x + ", " + bestPlan[i].y + ")");
+  }
+
+  return getNextLabFromPlan(room, bestPlan);
+}
+
+/**
+ * Get the next unbuilt lab position from the plan.
+ */
+function getNextLabFromPlan(
+  room: Room,
+  plan: Array<{ x: number; y: number }>
+): { x: number; y: number } | null {
+  for (var i = 0; i < plan.length; i++) {
+    var pos = plan[i];
+
+    // Check if lab already exists at this position
+    var structures = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
+    var hasLab = false;
+    for (var j = 0; j < structures.length; j++) {
+      if (structures[j].structureType === STRUCTURE_LAB) {
+        hasLab = true;
+        break;
+      }
+    }
+    if (hasLab) continue;
+
+    // Check if construction site already exists
+    var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y);
+    var hasSite = false;
+    for (var k = 0; k < sites.length; k++) {
+      if (sites[k].structureType === STRUCTURE_LAB) {
+        hasSite = true;
+        break;
+      }
+    }
+    if (hasSite) continue;
+
+    // This position needs a lab
+    return pos;
+  }
+
+  return null; // All positions filled
+}
+
+/**
+ * Find the best lab plan by trying all rotations at all candidate anchor positions.
+ */
+function findBestLabPlan(
+  room: Room,
+  storage: StructureStorage,
+  terminal: StructureTerminal | undefined,
+  terrain: RoomTerrain
+): Array<{ x: number; y: number }> | null {
+  var rotations = getLabPatternRotations();
+  var bestPlan: Array<{ x: number; y: number }> | null = null;
+  var bestScore = -Infinity;
+
+  // Search anchor positions in range 3-8 from storage
+  for (var radius = 3; radius <= 8; radius++) {
+    for (var dx = -radius; dx <= radius; dx++) {
+      for (var dy = -radius; dy <= radius; dy++) {
+        // Only check positions at this radius distance
+        var dist = Math.max(Math.abs(dx), Math.abs(dy));
+        if (dist !== radius) continue;
+
+        var anchorX = storage.pos.x + dx;
+        var anchorY = storage.pos.y + dy;
+
+        // Skip if anchor is out of valid build range
+        if (anchorX < 4 || anchorX > 45 || anchorY < 4 || anchorY > 45) continue;
+
+        // Try each rotation
+        for (var r = 0; r < rotations.length; r++) {
+          var pattern = rotations[r];
+          var plan = applyPattern(anchorX, anchorY, pattern);
+
+          // Check if ALL 10 positions are valid (forward-looking)
+          if (!allPositionsValid(room, plan, terrain)) continue;
+
+          // Score this placement
+          var score = scoreLabPlan(room, plan, storage, terminal, terrain);
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestPlan = plan;
+          }
+        }
+      }
+    }
+  }
+
+  return bestPlan;
+}
+
+/**
+ * Apply the pattern to an anchor position to get absolute coordinates.
+ */
+function applyPattern(
+  anchorX: number,
+  anchorY: number,
+  pattern: Array<{ dx: number; dy: number }>
+): Array<{ x: number; y: number }> {
+  var result: Array<{ x: number; y: number }> = [];
+  for (var i = 0; i < pattern.length; i++) {
+    result.push({
+      x: anchorX + pattern[i].dx,
+      y: anchorY + pattern[i].dy
+    });
+  }
+  return result;
+}
+
+/**
+ * Check if all positions in the plan are valid for building.
+ * Also checks bounds (must be buildable for all 10 positions).
+ */
+function allPositionsValid(
+  room: Room,
+  plan: Array<{ x: number; y: number }>,
+  terrain: RoomTerrain
+): boolean {
+  for (var i = 0; i < plan.length; i++) {
+    var pos = plan[i];
+
+    // Bounds check (leave margin from room edges)
+    if (pos.x < 2 || pos.x > 47 || pos.y < 2 || pos.y > 47) {
+      return false;
+    }
+
+    // Terrain check (can't build on walls)
+    if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) {
+      return false;
+    }
+
+    // Check for existing structures (except roads which we can build on)
+    var structures = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
+    for (var j = 0; j < structures.length; j++) {
+      var sType = structures[j].structureType;
+      if (sType !== STRUCTURE_ROAD) {
+        return false;
+      }
+    }
+
+    // Check for construction sites (any type)
+    var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y);
+    if (sites.length > 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Score a lab plan. Higher score = better placement.
+ *
+ * Factors:
+ * - Closer to storage = better (hauler efficiency)
+ * - Closer to terminal = bonus
+ * - Plain terrain = better than swamp
+ * - Not blocking roads = better
+ */
+function scoreLabPlan(
+  room: Room,
+  plan: Array<{ x: number; y: number }>,
+  storage: StructureStorage,
+  terminal: StructureTerminal | undefined,
+  terrain: RoomTerrain
+): number {
+  var score = 0;
+
+  // Calculate centroid of the plan
+  var centroidX = 0;
+  var centroidY = 0;
+  for (var i = 0; i < plan.length; i++) {
+    centroidX += plan[i].x;
+    centroidY += plan[i].y;
+  }
+  centroidX = Math.floor(centroidX / plan.length);
+  centroidY = Math.floor(centroidY / plan.length);
+
+  // Distance from storage (closer = better)
+  var storageDist = Math.max(
+    Math.abs(centroidX - storage.pos.x),
+    Math.abs(centroidY - storage.pos.y)
+  );
+  score -= storageDist * 10; // Penalty for distance
+
+  // Terminal proximity bonus
+  if (terminal) {
+    var terminalDist = Math.max(
+      Math.abs(centroidX - terminal.pos.x),
+      Math.abs(centroidY - terminal.pos.y)
+    );
+    score -= terminalDist * 5;
+  }
+
+  // Terrain quality (prefer plains)
+  for (var j = 0; j < plan.length; j++) {
+    if (terrain.get(plan[j].x, plan[j].y) === TERRAIN_MASK_SWAMP) {
+      score -= 5; // Penalty for swamp
+    }
+  }
+
+  // Road blocking penalty
+  var roads = room.find(FIND_STRUCTURES, {
+    filter: function(s) { return s.structureType === STRUCTURE_ROAD; }
+  });
+  for (var k = 0; k < plan.length; k++) {
+    for (var l = 0; l < roads.length; l++) {
+      if (roads[l].pos.x === plan[k].x && roads[l].pos.y === plan[k].y) {
+        score -= 3; // Small penalty for blocking a road
+        break;
+      }
+    }
+  }
+
+  return score;
 }

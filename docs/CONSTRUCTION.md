@@ -93,6 +93,44 @@ Link types (placed in priority order):
 
 **Unlocks at:** RCL 5
 
+### Labs
+
+Labs must be placed in a cluster where ALL labs are within range 2 (Chebyshev distance) of each other for reactions to work. Two labs serve as inputs, and all others are outputs.
+
+**Placement Strategy:**
+- Pre-computed 10-lab pattern stored in `Memory.rooms[name].labPlan`
+- Near storage/terminal for hauler efficiency (range 3-8 from storage)
+- All 10 positions validated upfront (forward-looking for RCL 8)
+- 4 rotations tested to fit terrain constraints
+
+**Lab Pattern (4×3 footprint):**
+```
+.  6  7  .     (y = -1)
+4 I1 I2  5     (y =  0)   I1, I2 = input labs
+8  2  3  9     (y =  1)
+```
+
+Position 0-1 are input labs, 2-9 are output labs. All outputs are within range 2 of both inputs.
+
+**Placement Order by RCL:**
+- RCL 6: positions 0-2 (3 labs: 2 input + 1 output)
+- RCL 7: positions 0-5 (6 labs: 2 input + 4 output)
+- RCL 8: positions 0-9 (10 labs: 2 input + 8 output)
+
+**Scoring Factors:**
+- Closer to storage = better (hauler efficiency)
+- Closer to terminal = bonus
+- Plain terrain preferred over swamp
+- Avoid blocking existing roads
+
+**Console Commands:**
+```javascript
+labs()           // Show lab plan for all RCL 6+ rooms
+labs("W1N1")     // Show lab plan for specific room
+```
+
+**Unlocks at:** RCL 6
+
 ### Towers (TowerPlanner.ts)
 
 **Placement:**
@@ -207,6 +245,8 @@ Roads reduce fatigue, speeding up creep movement on high-traffic paths.
 ```javascript
 construction()           // Building status
 construction("W1N1")     // Room-specific
+labs()                   // Lab placement status
+labs("W1N1")             // Lab plan for specific room
 traffic("W1N1")          // Traffic heatmap
 suggestRoads("W1N1")     // Road suggestions
 ```

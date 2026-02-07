@@ -34,7 +34,8 @@ export type RangedAttackerState =
   | "KITE"
   | "ENGAGE"
   | "ADVANCE"
-  | "HOLD";
+  | "HOLD"
+  | "ATTACK_STRUCTURE";
 
 export interface RangedAttackerMemory extends CreepMemory {
   role: "RANGED_ATTACKER";
@@ -97,6 +98,39 @@ function findMeleeHostiles(hostiles: Creep[]): Creep[] {
   return melee;
 }
 
+/**
+ * Find hostile structures to attack, prioritized.
+ * Towers first (they shoot back), spawns second (objective),
+ * then extensions, then everything else.
+ */
+function findTargetStructure(creep: Creep): Structure | null {
+  var structures = creep.room.find(FIND_HOSTILE_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType !== STRUCTURE_CONTROLLER;
+    }
+  });
+
+  if (structures.length === 0) return null;
+
+  // Priority order: lower number = higher priority
+  var priorities: { [key: string]: number } = {};
+  priorities[STRUCTURE_TOWER] = 0;
+  priorities[STRUCTURE_SPAWN] = 1;
+  priorities[STRUCTURE_EXTENSION] = 2;
+  priorities[STRUCTURE_STORAGE] = 3;
+  priorities[STRUCTURE_TERMINAL] = 4;
+
+  structures.sort(function(a, b) {
+    var pa = priorities[a.structureType] !== undefined ? priorities[a.structureType] : 10;
+    var pb = priorities[b.structureType] !== undefined ? priorities[b.structureType] : 10;
+    if (pa !== pb) return pa - pb;
+    // Same priority: prefer closer
+    return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
+  });
+
+  return structures[0];
+}
+
 // ============================================
 // State Decision Logic
 // ============================================
@@ -130,8 +164,15 @@ function determineState(
     }
   }
 
-  // No hostiles - hold position
+  // No hostiles - check for structure targets if on attack mission
   if (hostiles.length === 0) {
+    // Check if we're in target room on an attack mission
+    if (memory.targetRoom && creep.room.name === memory.targetRoom) {
+      var targetStructure = findTargetStructure(creep);
+      if (targetStructure) {
+        return "ATTACK_STRUCTURE";
+      }
+    }
     return "HOLD";
   }
 
@@ -423,6 +464,50 @@ function runHold(creep: Creep, partner: Creep | null): void {
   }
 }
 
+/**
+ * ATTACK_STRUCTURE state - destroy hostile structures.
+ * Approach to range 3 (or range 1 for faster DPS if no towers), attack.
+ * Immediately switches to creep targeting if hostiles appear.
+ */
+function runAttackStructure(creep: Creep, partner: Creep | null): void {
+  creep.say("DESTROY");
+
+  var target = findTargetStructure(creep);
+  if (!target) return;
+
+  var range = creep.pos.getRangeTo(target);
+
+  // Check if any hostile towers exist (determines safe range)
+  var hostileTowers = creep.room.find(FIND_HOSTILE_STRUCTURES, {
+    filter: function(s) { return s.structureType === STRUCTURE_TOWER; }
+  });
+
+  // If towers exist, kite at range 3. If no towers, close to range 1 for max DPS.
+  var desiredRange = hostileTowers.length > 0 ? 3 : 1;
+
+  // Attack if in range
+  if (range <= 3) {
+    creep.rangedAttack(target);
+  }
+
+  // Move to desired range
+  if (range > desiredRange) {
+    smartMoveTo(creep, target, { range: desiredRange, reusePath: 3 });
+  } else if (range < desiredRange && hostileTowers.length > 0) {
+    // Too close to towers, back up
+    var fleeGoals: { pos: RoomPosition; range: number }[] = [];
+    for (var i = 0; i < hostileTowers.length; i++) {
+      fleeGoals.push({ pos: hostileTowers[i].pos, range: 4 });
+    }
+    if (fleeGoals.length > 0) {
+      var path = PathFinder.search(creep.pos, fleeGoals, { flee: true, maxRooms: 1 });
+      if (path.path.length > 0) {
+        creep.moveByPath(path.path);
+      }
+    }
+  }
+}
+
 // ============================================
 // Main Run Function
 // ============================================
@@ -457,6 +542,9 @@ export function runRangedAttacker(creep: Creep): void {
       break;
     case "HOLD":
       runHold(creep, partner);
+      break;
+    case "ATTACK_STRUCTURE":
+      runAttackStructure(creep, partner);
       break;
   }
 

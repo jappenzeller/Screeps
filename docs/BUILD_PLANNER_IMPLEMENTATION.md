@@ -285,7 +285,7 @@ const structures: BuildableStructureConstant[] = [
 - [ ] Terminal places adjacent to storage (range 1), not random spiral position
 - [ ] 3rd link places within range 2 of a source, not near spawn
 - [ ] 4th link (RCL 7) places at the other source
-- [ ] Labs place in a cluster where all are within range 2
+- [x] Labs place in a cluster where all are within range 2
 - [ ] Existing colonies don't break (backward compatible)
 - [ ] Console command: `construction()` shows correct placement for all types
 - [ ] No CPU regression (benchmark with `cpu()` before/after)
