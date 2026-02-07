@@ -2,11 +2,13 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, ScanCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { S3Client, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const secretsClient = new SecretsManagerClient({});
 const s3Client = new S3Client({});
+const lambdaClient = new LambdaClient({});
 
 const SNAPSHOTS_TABLE = process.env.SNAPSHOTS_TABLE;
 const EVENTS_TABLE = process.env.EVENTS_TABLE;
@@ -18,6 +20,7 @@ const RECORDINGS_TABLE = process.env.RECORDINGS_TABLE;
 const ANALYTICS_BUCKET = process.env.ANALYTICS_BUCKET;
 const SCREEPS_TOKEN_SECRET = process.env.SCREEPS_TOKEN_SECRET;
 const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
+const ANALYZER_FUNCTION = process.env.ANALYZER_FUNCTION;
 
 // Cache for Screeps token
 let cachedToken = null;
@@ -1305,6 +1308,155 @@ async function getTerrain(recordingId) {
   }
 }
 
+// ==================== Analysis Endpoints ====================
+
+/**
+ * Trigger analysis for a recording (async Lambda invoke)
+ */
+async function triggerAnalysis(recordingId) {
+  if (!ANALYZER_FUNCTION) {
+    return { error: "Analyzer function not configured" };
+  }
+
+  if (!RECORDINGS_TABLE) {
+    return { error: "Recordings table not configured" };
+  }
+
+  // Verify recording exists and is complete
+  const recording = await docClient.send(new GetCommand({
+    TableName: RECORDINGS_TABLE,
+    Key: { recordingId }
+  }));
+
+  if (!recording.Item) {
+    return { error: "Recording not found", recordingId };
+  }
+
+  if (recording.Item.status !== "complete") {
+    return {
+      error: "Recording must be complete before analysis",
+      recordingId,
+      currentStatus: recording.Item.status
+    };
+  }
+
+  // Check if analysis is already in progress
+  if (recording.Item.analysisStatus === "in_progress") {
+    return {
+      error: "Analysis already in progress",
+      recordingId,
+      analysisStatus: "in_progress"
+    };
+  }
+
+  // Update status to in_progress
+  await docClient.send(new UpdateCommand({
+    TableName: RECORDINGS_TABLE,
+    Key: { recordingId },
+    UpdateExpression: "SET analysisStatus = :status, analysisStartedAt = :startedAt, updatedAt = :updatedAt",
+    ExpressionAttributeValues: {
+      ":status": "in_progress",
+      ":startedAt": new Date().toISOString(),
+      ":updatedAt": new Date().toISOString()
+    }
+  }));
+
+  // Invoke analyzer Lambda asynchronously
+  await lambdaClient.send(new InvokeCommand({
+    FunctionName: ANALYZER_FUNCTION,
+    InvocationType: "Event", // Async invocation
+    Payload: JSON.stringify({ recordingId })
+  }));
+
+  return {
+    success: true,
+    recordingId,
+    message: "Analysis started",
+    analysisStatus: "in_progress"
+  };
+}
+
+/**
+ * Get analysis summary for a recording
+ */
+async function getAnalysisSummary(recordingId) {
+  if (!ANALYTICS_BUCKET) {
+    return { error: "Analytics bucket not configured" };
+  }
+
+  try {
+    const result = await s3Client.send(new GetObjectCommand({
+      Bucket: ANALYTICS_BUCKET,
+      Key: `recordings/${recordingId}/analysis/summary.json`
+    }));
+
+    const body = await result.Body.transformToString();
+    return JSON.parse(body);
+  } catch (error) {
+    if (error.name === "NoSuchKey") {
+      // Check if recording exists and get its analysis status
+      if (RECORDINGS_TABLE) {
+        const recording = await docClient.send(new GetCommand({
+          TableName: RECORDINGS_TABLE,
+          Key: { recordingId }
+        }));
+
+        if (!recording.Item) {
+          return { error: "Recording not found", recordingId };
+        }
+
+        return {
+          error: "Analysis not available",
+          recordingId,
+          analysisStatus: recording.Item.analysisStatus || "not_started",
+          hint: recording.Item.status !== "complete"
+            ? "Recording must be complete before analysis"
+            : "Use POST /recordings/{id}/analyze to start analysis"
+        };
+      }
+      return { error: "Analysis not found", recordingId };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Get specific analysis data for a recording
+ */
+async function getAnalysisData(recordingId, analysisType) {
+  if (!ANALYTICS_BUCKET) {
+    return { error: "Analytics bucket not configured" };
+  }
+
+  const validTypes = ["heatmap", "oscillations", "stuck", "roads", "bottlenecks"];
+  if (!validTypes.includes(analysisType)) {
+    return {
+      error: `Invalid analysis type. Must be one of: ${validTypes.join(", ")}`,
+      requestedType: analysisType
+    };
+  }
+
+  try {
+    const result = await s3Client.send(new GetObjectCommand({
+      Bucket: ANALYTICS_BUCKET,
+      Key: `recordings/${recordingId}/analysis/${analysisType}.json`
+    }));
+
+    const body = await result.Body.transformToString();
+    return JSON.parse(body);
+  } catch (error) {
+    if (error.name === "NoSuchKey") {
+      return {
+        error: `Analysis data not found for type: ${analysisType}`,
+        recordingId,
+        analysisType,
+        hint: "Use POST /recordings/{id}/analyze to generate analysis"
+      };
+    }
+    throw error;
+  }
+}
+
 export async function handler(event) {
   console.log('API request:', event.routeKey, event.pathParameters);
 
@@ -1464,6 +1616,16 @@ export async function handler(event) {
     }
     else if (path === 'GET /recordings/{recordingId}/terrain') {
       result = await getTerrain(params.recordingId);
+    }
+    // Analysis endpoints
+    else if (path === 'POST /recordings/{recordingId}/analyze') {
+      result = await triggerAnalysis(params.recordingId);
+    }
+    else if (path === 'GET /recordings/{recordingId}/analysis') {
+      result = await getAnalysisSummary(params.recordingId);
+    }
+    else if (path === 'GET /recordings/{recordingId}/analysis/{type}') {
+      result = await getAnalysisData(params.recordingId, params.type);
     }
 
     // ==================== Viewer Endpoint ====================

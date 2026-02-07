@@ -78,7 +78,8 @@ $functions = @(
     "recommendation-writer",
     "outcome-evaluator",
     "cleanup-recommendations",
-    "room-recorder"
+    "room-recorder",
+    "recording-analyzer"
 )
 
 foreach ($func in $functions) {

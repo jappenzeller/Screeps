@@ -357,3 +357,182 @@ curl -X PUT https://{api-endpoint}/recordings/{recordingId} \
 ```
 
 Setting `continuous: false` in the same request prevents a new recording from being created.
+
+## Recording Analysis
+
+When a recording completes, it can be analyzed to extract insights about creep behavior patterns. Analysis is triggered automatically via EventBridge or manually via the API.
+
+### Trigger Analysis
+
+```http
+POST /recordings/{recordingId}/analyze
+```
+
+Starts analysis asynchronously. Only works for completed recordings.
+
+**Response:**
+```json
+{
+  "success": true,
+  "recordingId": "rec-E46N37-1707300000",
+  "message": "Analysis started",
+  "analysisStatus": "in_progress"
+}
+```
+
+### Get Analysis Summary
+
+```http
+GET /recordings/{recordingId}/analysis
+```
+
+Returns the analysis summary with key insights.
+
+**Response:**
+```json
+{
+  "recordingId": "rec-E46N37-1707300000",
+  "analyzedAt": "2026-02-07T16:00:00Z",
+  "snapshotsAnalyzed": 1000,
+  "tickRange": { "start": 48231050, "end": 48234050 },
+  "uniqueCreeps": 45,
+  "roleBreakdown": {
+    "harvester": 8,
+    "hauler": 12,
+    "upgrader": 15,
+    "builder": 5,
+    "miner": 2,
+    "remoteMiner": 3
+  },
+  "heatmapPeakTile": { "x": 25, "y": 25, "count": 2340 },
+  "oscillationCount": 12,
+  "stuckCount": 3,
+  "suggestedRoads": 15,
+  "bottleneckCount": 4
+}
+```
+
+### Get Specific Analysis Data
+
+```http
+GET /recordings/{recordingId}/analysis/{type}
+```
+
+**Valid types:**
+- `heatmap` - Traffic heatmap data (total and per-role)
+- `oscillations` - Creeps cycling between 2-3 positions
+- `stuck` - Creeps stuck in the same position for extended periods
+- `roads` - Suggested road placements based on traffic
+- `bottlenecks` - High-concurrency tiles where creeps collide
+
+**Heatmap Response:**
+```json
+{
+  "recordingId": "rec-E46N37-1707300000",
+  "type": "heatmap",
+  "total": [[0, 0, 5, 12, ...], ...],
+  "byRole": {
+    "harvester": [[...], ...],
+    "hauler": [[...], ...]
+  }
+}
+```
+
+**Oscillations Response:**
+```json
+{
+  "recordingId": "rec-E46N37-1707300000",
+  "type": "oscillations",
+  "events": [
+    {
+      "creepName": "H-4",
+      "role": "hauler",
+      "positions": [[25, 24], [25, 25], [25, 24]],
+      "startTick": 48231500,
+      "endTick": 48231550,
+      "duration": 50
+    }
+  ]
+}
+```
+
+**Stuck Response:**
+```json
+{
+  "recordingId": "rec-E46N37-1707300000",
+  "type": "stuck",
+  "events": [
+    {
+      "creepName": "B-2",
+      "role": "builder",
+      "position": [30, 15],
+      "startTick": 48232000,
+      "endTick": 48232100,
+      "duration": 100
+    }
+  ]
+}
+```
+
+**Roads Response:**
+```json
+{
+  "recordingId": "rec-E46N37-1707300000",
+  "type": "roads",
+  "suggestions": [
+    { "x": 25, "y": 25, "traffic": 2340, "terrain": "plain", "priority": 1 },
+    { "x": 26, "y": 25, "traffic": 2100, "terrain": "swamp", "priority": 2 }
+  ]
+}
+```
+
+**Bottlenecks Response:**
+```json
+{
+  "recordingId": "rec-E46N37-1707300000",
+  "type": "bottlenecks",
+  "tiles": [
+    { "x": 25, "y": 25, "avgConcurrency": 2.5, "maxConcurrency": 5 }
+  ]
+}
+```
+
+### Analysis S3 Structure
+
+```
+recordings/
+  rec-E46N37-1707300000/
+    terrain.json
+    48231050.json
+    ...
+    analysis/
+      summary.json
+      heatmap.json
+      oscillations.json
+      stuck.json
+      roads.json
+      bottlenecks.json
+```
+
+### Auto-Analysis
+
+When a recording completes (via `durationTicks` being reached), an EventBridge event triggers the analyzer automatically. The recording's `analysisStatus` field tracks progress:
+
+- `not_started` - No analysis yet
+- `in_progress` - Analysis running
+- `complete` - Analysis finished successfully
+- `failed` - Analysis encountered an error
+
+## Recording Viewer
+
+A web-based viewer is available at:
+
+```
+https://{api-endpoint}/viewer
+```
+
+Features:
+- Playback mode to animate through snapshots
+- Analysis overlays (heatmap, oscillations, stuck, roads, bottlenecks)
+- Zoom/pan with mouse wheel and drag
+- Hover tooltips for creeps and structures

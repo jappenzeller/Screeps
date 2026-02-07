@@ -2,18 +2,21 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, ScanCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge";
 
 // Initialize clients (cached across Lambda invocations)
 const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 const s3Client = new S3Client({});
 const secretsClient = new SecretsManagerClient({});
+const eventBridgeClient = new EventBridgeClient({});
 
 // Environment variables
 const RECORDINGS_TABLE = process.env.RECORDINGS_TABLE;
 const ANALYTICS_BUCKET = process.env.ANALYTICS_BUCKET;
 const SCREEPS_TOKEN_SECRET = process.env.SCREEPS_TOKEN_SECRET;
 const SCREEPS_SHARD = process.env.SCREEPS_SHARD || "shard0";
+const EVENT_BUS_NAME = process.env.EVENT_BUS_NAME;
 
 // Token cache
 let cachedToken = null;
@@ -322,6 +325,43 @@ async function updateRecording(recordingId, updates) {
 }
 
 /**
+ * Publish RecordingComplete event to EventBridge
+ */
+async function publishRecordingComplete(recording) {
+  if (!EVENT_BUS_NAME) {
+    console.log("EVENT_BUS_NAME not configured, skipping event publish");
+    return;
+  }
+
+  try {
+    await eventBridgeClient.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            EventBusName: EVENT_BUS_NAME,
+            Source: "screeps.room-recorder",
+            DetailType: "RecordingComplete",
+            Detail: JSON.stringify({
+              recordingId: recording.recordingId,
+              room: recording.room,
+              shard: recording.shard,
+              ticksCaptured: recording.ticksCaptured,
+              startTick: recording.startTick,
+              endTick: recording.endTick,
+              completedAt: new Date().toISOString(),
+            }),
+          },
+        ],
+      })
+    );
+    console.log(`Published RecordingComplete event for ${recording.recordingId}`);
+  } catch (error) {
+    console.error("Error publishing RecordingComplete event:", error);
+    // Don't throw - event publishing is best-effort
+  }
+}
+
+/**
  * Create a new recording for continuous mode rotation
  */
 async function createContinuousRecording(oldRecording) {
@@ -383,6 +423,9 @@ async function processRecording(recording, token, currentTick, roomObjectsCache)
       await updateRecording(recording.recordingId, { status: "complete" });
       console.log(`[${recording.room}] Recording ${recording.recordingId} completed`);
       result.status = "completed";
+
+      // Publish RecordingComplete event to trigger analysis
+      await publishRecordingComplete(recording);
 
       // If continuous mode, create a new recording
       if (recording.continuous) {

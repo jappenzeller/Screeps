@@ -1,0 +1,11 @@
+{
+  "name": "screeps-recording-analyzer",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lambda function to analyze Screeps room recordings",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.400.0",
+    "@aws-sdk/lib-dynamodb": "^3.400.0",
+    "@aws-sdk/client-s3": "^3.400.0"
+  }
+}

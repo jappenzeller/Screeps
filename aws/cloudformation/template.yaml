@@ -542,6 +542,11 @@ Resources:
                   - !Ref ScreepsTokenSecret
               - Effect: Allow
                 Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:screeps-recording-analyzer-${Environment}
+              - Effect: Allow
+                Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
@@ -933,6 +938,7 @@ Resources:
           ANALYTICS_BUCKET: !Ref AnalyticsBucket
           SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
           SCREEPS_SHARD: !Ref ScreepsShard
+          ANALYZER_FUNCTION: !Ref RecordingAnalyzerFunction
 
   # Stream Processor - DynamoDB Streams -> EventBridge
   StreamProcessorFunction:
@@ -1123,6 +1129,53 @@ Resources:
                   - !Ref ScreepsTokenSecret
               - Effect: Allow
                 Action:
+                  - events:PutEvents
+                Resource:
+                  - !GetAtt ScreepsEventBus.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Recording Analyzer Role
+  RecordingAnalyzerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-recording-analyzer-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RecordingAnalyzerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt RecordingsTable.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt AnalyticsBucket.Arn
+                  - !Sub ${AnalyticsBucket.Arn}/recordings/*
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub ${AnalyticsBucket.Arn}/recordings/*/analysis/*
+              - Effect: Allow
+                Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
@@ -1193,6 +1246,25 @@ Resources:
           ANALYTICS_BUCKET: !Ref AnalyticsBucket
           SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
           SCREEPS_SHARD: !Ref ScreepsShard
+          EVENT_BUS_NAME: !Ref ScreepsEventBus
+
+  # Recording Analyzer Lambda
+  RecordingAnalyzerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-recording-analyzer-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt RecordingAnalyzerRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: recording-analyzer.zip
+      Environment:
+        Variables:
+          RECORDINGS_TABLE: !Ref RecordingsTable
+          ANALYTICS_BUCKET: !Ref AnalyticsBucket
 
   # ==================== Step Functions ====================
   AnalysisWorkflow:
@@ -1460,6 +1532,28 @@ Resources:
       RouteKey: GET /viewer
       Target: !Sub integrations/${ApiIntegration}
 
+  # ==================== Recording Analysis Routes ====================
+  RouteRecordingsAnalyze:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /recordings/{recordingId}/analyze
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecordingsAnalysisSummary:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /recordings/{recordingId}/analysis
+      Target: !Sub integrations/${ApiIntegration}
+
+  RouteRecordingsAnalysisType:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /recordings/{recordingId}/analysis/{type}
+      Target: !Sub integrations/${ApiIntegration}
+
   ApiInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -1526,6 +1620,35 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt RoomRecorderSchedule.Arn
+
+  # Recording Analysis Auto-Trigger
+  RecordingCompleteRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${ProjectName}-recording-complete
+      Description: Trigger analysis when a recording completes
+      EventBusName: !Ref ScreepsEventBus
+      EventPattern:
+        source:
+          - screeps.room-recorder
+        detail-type:
+          - RecordingComplete
+      State: ENABLED
+      Targets:
+        - Id: recording-analyzer
+          Arn: !GetAtt RecordingAnalyzerFunction.Arn
+          InputTransformer:
+            InputPathsMap:
+              recordingId: $.detail.recordingId
+            InputTemplate: '{"recordingId": <recordingId>}'
+
+  RecordingAnalyzerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RecordingAnalyzerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RecordingCompleteRule.Arn
 
   # ==================== Athena/Glue for QuickSight ====================
   AthenaResultsBucket:
