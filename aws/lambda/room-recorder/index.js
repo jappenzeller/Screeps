@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, ScanCommand, UpdateCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 
@@ -322,6 +322,131 @@ async function updateRecording(recordingId, updates) {
 }
 
 /**
+ * Create a new recording for continuous mode rotation
+ */
+async function createContinuousRecording(oldRecording) {
+  const recordingId = `rec-${oldRecording.room}-${Date.now()}`;
+  const now = new Date().toISOString();
+  const expiresAt = Math.floor(Date.now() / 1000) + 30 * 86400; // 30 days
+
+  const newRecording = {
+    recordingId,
+    room: oldRecording.room,
+    shard: oldRecording.shard,
+    status: "active",
+    tickInterval: oldRecording.tickInterval,
+    durationTicks: oldRecording.durationTicks,
+    continuous: true,
+    startTick: null,
+    endTick: null,
+    lastCapturedTick: null,
+    ticksCaptured: 0,
+    terrainCaptured: false,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt,
+  };
+
+  await docClient.send(
+    new PutCommand({
+      TableName: RECORDINGS_TABLE,
+      Item: newRecording,
+    })
+  );
+
+  console.log(`Created continuous recording ${recordingId} for room ${oldRecording.room}`);
+  return newRecording;
+}
+
+/**
+ * Process a single recording
+ */
+async function processRecording(recording, token, currentTick, roomObjectsCache) {
+  const shard = recording.shard || SCREEPS_SHARD;
+  const result = { recordingId: recording.recordingId, status: "processed" };
+
+  try {
+    // Check if this is the first capture (set startTick)
+    if (recording.startTick === null || recording.startTick === undefined) {
+      const endTick = currentTick + recording.durationTicks;
+      await updateRecording(recording.recordingId, {
+        startTick: currentTick,
+        endTick: endTick,
+      });
+      recording.startTick = currentTick;
+      recording.endTick = endTick;
+      console.log(`[${recording.room}] First capture: startTick=${currentTick}, endTick=${endTick}`);
+    }
+
+    // Check if recording has ended
+    if (currentTick >= recording.endTick) {
+      await updateRecording(recording.recordingId, { status: "complete" });
+      console.log(`[${recording.room}] Recording ${recording.recordingId} completed`);
+      result.status = "completed";
+
+      // If continuous mode, create a new recording
+      if (recording.continuous) {
+        const newRecording = await createContinuousRecording(recording);
+        result.continuedAs = newRecording.recordingId;
+      }
+
+      return result;
+    }
+
+    // Check if enough ticks have elapsed since last capture
+    const tickInterval = recording.tickInterval || 3;
+    if (recording.lastCapturedTick !== null && recording.lastCapturedTick !== undefined) {
+      const ticksSinceCapture = currentTick - recording.lastCapturedTick;
+      if (ticksSinceCapture < tickInterval) {
+        result.status = "skipped";
+        result.reason = `Only ${ticksSinceCapture} ticks since last capture`;
+        return result;
+      }
+    }
+
+    // Fetch room objects (use cache if already fetched for this room)
+    const cacheKey = `${recording.room}:${shard}`;
+    let objects;
+    if (roomObjectsCache.has(cacheKey)) {
+      objects = roomObjectsCache.get(cacheKey);
+    } else {
+      objects = await fetchRoomObjects(token, recording.room, shard);
+      roomObjectsCache.set(cacheKey, objects);
+    }
+    console.log(`[${recording.room}] Fetched ${objects.length} objects`);
+
+    // Capture terrain if not already done
+    if (!recording.terrainCaptured) {
+      const terrain = await fetchRoomTerrain(token, recording.room, shard);
+      await writeTerrain(recording.recordingId, recording.room, terrain);
+      await updateRecording(recording.recordingId, { terrainCaptured: true });
+    }
+
+    // Write snapshot to S3
+    await writeSnapshot(recording.recordingId, currentTick, recording.room, objects);
+
+    // Update DynamoDB tracking
+    const newTicksCaptured = (recording.ticksCaptured || 0) + 1;
+    await updateRecording(recording.recordingId, {
+      lastCapturedTick: currentTick,
+      ticksCaptured: newTicksCaptured,
+    });
+
+    result.tick = currentTick;
+    result.ticksCaptured = newTicksCaptured;
+    result.objectCount = objects.length;
+
+    console.log(`[${recording.room}] Capture complete: tick ${currentTick}, total: ${newTicksCaptured}`);
+  } catch (error) {
+    console.error(`[${recording.room}] Error processing recording:`, error);
+    result.status = "error";
+    result.error = error.message;
+  }
+
+  return result;
+}
+
+/**
  * Main Lambda handler
  */
 export async function handler(event) {
@@ -344,84 +469,35 @@ export async function handler(event) {
       return { statusCode: 200, body: "No active recordings" };
     }
 
-    // Process only the first active recording (constraint: 1 at a time)
-    const recording = activeRecordings[0];
-    console.log(`Processing recording: ${recording.recordingId} for room ${recording.room}`);
+    console.log(`Found ${activeRecordings.length} active recording(s)`);
 
     // 2. Get Screeps token
     const token = await getScreepsToken();
-    const shard = recording.shard || SCREEPS_SHARD;
 
-    // 3. Fetch current game tick
+    // 3. Fetch current game tick (once for all recordings)
+    // Use the shard from the first recording, assume all are on same shard
+    const shard = activeRecordings[0].shard || SCREEPS_SHARD;
     const currentTick = await fetchGameTime(token, shard);
     console.log(`Current game tick: ${currentTick}`);
 
-    // 4. Check if this is the first capture (set startTick)
-    if (recording.startTick === null || recording.startTick === undefined) {
-      const endTick = currentTick + recording.durationTicks;
-      await updateRecording(recording.recordingId, {
-        startTick: currentTick,
-        endTick: endTick,
-      });
-      recording.startTick = currentTick;
-      recording.endTick = endTick;
-      console.log(`First capture: set startTick=${currentTick}, endTick=${endTick}`);
+    // 4. Process all active recordings
+    // Cache room objects to avoid duplicate API calls for same room
+    const roomObjectsCache = new Map();
+    const results = [];
+
+    for (const recording of activeRecordings) {
+      const result = await processRecording(recording, token, currentTick, roomObjectsCache);
+      results.push(result);
     }
 
-    // 5. Check if recording has ended
-    if (currentTick >= recording.endTick) {
-      await updateRecording(recording.recordingId, { status: "complete" });
-      console.log(`Recording ${recording.recordingId} completed at tick ${currentTick}`);
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ message: "Recording completed", recordingId: recording.recordingId }),
-      };
-    }
-
-    // 6. Check if enough ticks have elapsed since last capture
-    const tickInterval = recording.tickInterval || 3;
-    if (recording.lastCapturedTick !== null && recording.lastCapturedTick !== undefined) {
-      const ticksSinceCapture = currentTick - recording.lastCapturedTick;
-      if (ticksSinceCapture < tickInterval) {
-        console.log(`Skipping capture: only ${ticksSinceCapture} ticks since last (interval: ${tickInterval})`);
-        return {
-          statusCode: 200,
-          body: JSON.stringify({ message: "Skipped - not enough ticks elapsed" }),
-        };
-      }
-    }
-
-    // 7. Fetch room objects
-    const objects = await fetchRoomObjects(token, recording.room, shard);
-    console.log(`Fetched ${objects.length} objects from room ${recording.room}`);
-
-    // 8. Capture terrain if not already done
-    if (!recording.terrainCaptured) {
-      const terrain = await fetchRoomTerrain(token, recording.room, shard);
-      await writeTerrain(recording.recordingId, recording.room, terrain);
-      await updateRecording(recording.recordingId, { terrainCaptured: true });
-    }
-
-    // 9. Write snapshot to S3
-    await writeSnapshot(recording.recordingId, currentTick, recording.room, objects);
-
-    // 10. Update DynamoDB tracking
-    const newTicksCaptured = (recording.ticksCaptured || 0) + 1;
-    await updateRecording(recording.recordingId, {
-      lastCapturedTick: currentTick,
-      ticksCaptured: newTicksCaptured,
-    });
-
-    console.log(`Capture complete: tick ${currentTick}, total captures: ${newTicksCaptured}`);
+    console.log(`Processed ${results.length} recording(s)`);
 
     return {
       statusCode: 200,
       body: JSON.stringify({
-        message: "Capture complete",
-        recordingId: recording.recordingId,
+        message: "Processing complete",
         tick: currentTick,
-        ticksCaptured: newTicksCaptured,
-        objectCount: objects.length,
+        recordings: results,
       }),
     };
   } catch (error) {

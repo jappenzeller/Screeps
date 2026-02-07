@@ -1047,27 +1047,43 @@ async function createRecording(body) {
     return { error: "Recordings table not configured" };
   }
 
-  const { room, shard, tickInterval, durationTicks } = body;
+  const { room, shard, tickInterval, durationTicks, continuous } = body;
 
   // Validate room format
   if (!room || !/^[EW]\d+[NS]\d+$/.test(room)) {
     return { error: "Invalid room format. Expected format: E46N37" };
   }
 
-  // Check for existing active recording
+  // Validate tickInterval (1-20)
+  const finalTickInterval = tickInterval || 3;
+  if (finalTickInterval < 1 || finalTickInterval > 20) {
+    return { error: "tickInterval must be between 1 and 20" };
+  }
+
+  // Check for existing active recording FOR THE SAME ROOM (one per room allowed)
   const existing = await docClient.send(new ScanCommand({
     TableName: RECORDINGS_TABLE,
-    FilterExpression: "#status = :active",
+    FilterExpression: "#status = :active AND room = :room",
     ExpressionAttributeNames: { "#status": "status" },
-    ExpressionAttributeValues: { ":active": "active" }
+    ExpressionAttributeValues: { ":active": "active", ":room": room }
   }));
 
   if (existing.Items?.length > 0) {
     return {
-      error: "Active recording already exists",
+      error: `Active recording already exists for room ${room}`,
       existingRecordingId: existing.Items[0].recordingId,
       room: existing.Items[0].room
     };
+  }
+
+  // Continuous mode: set durationTicks to 30000 (~24 hours at 3s/tick)
+  // Otherwise validate durationTicks (100-50000)
+  let finalDurationTicks = durationTicks || 3000;
+  const isContinuous = continuous === true;
+  if (isContinuous) {
+    finalDurationTicks = 30000;
+  } else if (finalDurationTicks < 100 || finalDurationTicks > 50000) {
+    return { error: "durationTicks must be between 100 and 50000" };
   }
 
   const recordingId = `rec-${room}-${Date.now()}`;
@@ -1079,8 +1095,9 @@ async function createRecording(body) {
     room,
     shard: shard || SCREEPS_SHARD,
     status: "active",
-    tickInterval: tickInterval || 3,
-    durationTicks: durationTicks || 3000,
+    tickInterval: finalTickInterval,
+    durationTicks: finalDurationTicks,
+    continuous: isContinuous,
     startTick: null,
     endTick: null,
     lastCapturedTick: null,
@@ -1149,7 +1166,7 @@ async function updateRecordingStatus(recordingId, body) {
     return { error: "Recordings table not configured" };
   }
 
-  const { status } = body;
+  const { status, continuous } = body;
   const validStatuses = ["active", "paused", "complete"];
 
   if (!status || !validStatuses.includes(status)) {
@@ -1166,21 +1183,34 @@ async function updateRecordingStatus(recordingId, body) {
     return { error: "Recording not found", recordingId };
   }
 
+  // Build update expression
+  let updateExpr = "SET #status = :status, updatedAt = :updatedAt";
+  const exprNames = { "#status": "status" };
+  const exprValues = {
+    ":status": status,
+    ":updatedAt": new Date().toISOString()
+  };
+
+  // If setting to complete and continuous was provided as false, disable continuous mode
+  // This prevents auto-rotation from creating a new recording
+  if (status === "complete" && continuous === false) {
+    updateExpr += ", continuous = :continuous";
+    exprValues[":continuous"] = false;
+  }
+
   await docClient.send(new UpdateCommand({
     TableName: RECORDINGS_TABLE,
     Key: { recordingId },
-    UpdateExpression: "SET #status = :status, updatedAt = :updatedAt",
-    ExpressionAttributeNames: { "#status": "status" },
-    ExpressionAttributeValues: {
-      ":status": status,
-      ":updatedAt": new Date().toISOString()
-    }
+    UpdateExpression: updateExpr,
+    ExpressionAttributeNames: exprNames,
+    ExpressionAttributeValues: exprValues
   }));
 
   return {
     success: true,
     recordingId,
     status,
+    continuousStopped: status === "complete" && continuous === false,
     message: `Recording status updated to ${status}`
   };
 }

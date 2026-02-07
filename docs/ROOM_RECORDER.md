@@ -1,6 +1,6 @@
 # Room Recorder System
 
-The Room Recorder system captures live game state from the Screeps API for a single room, storing snapshots to S3 for later offline rendering (e.g., video generation for demos).
+The Room Recorder system captures live game state from the Screeps API for one or more rooms, storing snapshots to S3 for later offline rendering (e.g., video generation for demos).
 
 ## Architecture
 
@@ -9,26 +9,34 @@ EventBridge (every 1 min) --> room-recorder Lambda --> S3 (recordings/...)
                                     |
                               DynamoDB (recordings table)
                                     |
-                              API Lambda (new /recordings routes)
+                              API Lambda (/recordings routes)
 ```
 
 ## How It Works
 
 1. **Start a Recording**: POST to `/recordings` with room name and configuration
 2. **Capture Loop**: The room-recorder Lambda runs every minute via EventBridge
-   - Checks for active recordings in DynamoDB
-   - Fetches current game tick from Screeps API
-   - If enough ticks have elapsed, fetches room objects
-   - Writes snapshot to S3 as JSON
-   - Updates DynamoDB with progress
+   - Checks for ALL active recordings in DynamoDB
+   - Fetches current game tick from Screeps API (once per invocation)
+   - For each active recording:
+     - If enough ticks have elapsed, fetches room objects
+     - Writes snapshot to S3 as JSON
+     - Updates DynamoDB with progress
 3. **Automatic Completion**: When `durationTicks` is reached, status changes to "complete"
-4. **Retrieve Data**: Use API endpoints to list/download snapshots and terrain
+4. **Continuous Mode**: With `continuous: true`, a new recording auto-starts when one completes
+5. **Retrieve Data**: Use API endpoints to list/download snapshots and terrain
+
+## Multi-Room Support
+
+- You can record **multiple rooms simultaneously** (one active recording per room)
+- Room objects are cached per invocation to avoid duplicate API calls
+- All recordings are processed in a single Lambda invocation
 
 ## API Endpoints
 
 ### Create Recording
 
-```
+```http
 POST /recordings
 Content-Type: application/json
 
@@ -36,11 +44,13 @@ Content-Type: application/json
   "room": "E46N37",
   "shard": "shard0",        // Optional, defaults to env SCREEPS_SHARD
   "tickInterval": 3,        // Optional, capture every N ticks (default: 3)
-  "durationTicks": 3000     // Optional, total ticks to record (default: 3000)
+  "durationTicks": 3000,    // Optional, total ticks to record (default: 3000)
+  "continuous": true        // Optional, auto-restart when complete (default: false)
 }
 ```
 
 **Response:**
+
 ```json
 {
   "recordingId": "rec-E46N37-1707300000",
@@ -49,6 +59,7 @@ Content-Type: application/json
   "status": "active",
   "tickInterval": 3,
   "durationTicks": 3000,
+  "continuous": false,
   "startTick": null,
   "endTick": null,
   "ticksCaptured": 0,
@@ -57,10 +68,18 @@ Content-Type: application/json
 ```
 
 **Constraints:**
-- Only 1 active recording allowed at a time
+
+- Only 1 active recording per room (multiple rooms can record simultaneously)
 - Room format must match `/^[EW]\d+[NS]\d+$/`
 - tickInterval: 1-20
-- durationTicks: 100-50000
+- durationTicks: 100-50000 (ignored if continuous=true, defaults to 30000)
+
+**Continuous Mode:**
+
+When `continuous: true`, recordings auto-rotate every ~24 hours (30000 ticks):
+- Old recording is marked "complete"
+- New recording starts immediately for the same room
+- Each recording gets its own S3 folder
 
 ### List Recordings
 
@@ -321,8 +340,20 @@ recordings/
 
 ## Limitations
 
-- Only 1 active recording at a time
+- Only 1 active recording per room (but multiple rooms can record simultaneously)
 - Room must have vision (owned or with observer) for objects to be captured
 - Terrain is always available, even without vision
 - Lambda runs every 1 minute (EventBridge minimum), so actual tick interval may vary
 - No automatic S3 cleanup (configure lifecycle rule if needed)
+
+## Stopping Continuous Mode
+
+To stop a continuous recording from auto-rotating:
+
+```bash
+curl -X PUT https://{api-endpoint}/recordings/{recordingId} \
+  -H "Content-Type: application/json" \
+  -d '{"status": "complete", "continuous": false}'
+```
+
+Setting `continuous: false` in the same request prevents a new recording from being created.
