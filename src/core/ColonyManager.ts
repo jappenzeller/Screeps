@@ -98,6 +98,11 @@ export class ColonyManager {
       this.syncRemoteRooms();
     }
 
+    // Update remote creep assignments (every 50 ticks)
+    if (Game.time % 50 === 0) {
+      this.updateRemoteAssignments();
+    }
+
     // Refresh tasks every 10 ticks or when task list is empty
     if (Game.time % 10 === 0 || this.getTasks().length === 0) {
       this.refreshTasks();
@@ -669,7 +674,7 @@ export class ColonyManager {
 
   /**
    * Initialize Memory.colonies[roomName] if it doesn't exist.
-   * Auto-populates remoteRooms from exits + Memory.intel on first run.
+   * Migrates old format and auto-populates remotes from exits + Memory.intel.
    */
   initializeColonyMemory(): void {
     if (!Memory.colonies) {
@@ -679,49 +684,121 @@ export class ColonyManager {
     if (!Memory.colonies[this.roomName]) {
       // First-time initialization: derive remote rooms from intel
       const derived = this.deriveRemoteTargets();
+      var remotes: Record<string, RemoteRoomConfig> = {};
+
+      for (var i = 0; i < derived.length; i++) {
+        var roomName = derived[i];
+        var intel = Memory.intel && Memory.intel[roomName];
+        var sources = intel && intel.sources ? intel.sources.length : 2;
+
+        remotes[roomName] = {
+          room: roomName,
+          homeColony: this.roomName,
+          distance: 1,
+          sources: sources,
+          active: true,
+          activatedAt: Game.time,
+          miners: [],
+          haulers: [],
+        };
+      }
+
       Memory.colonies[this.roomName] = {
-        remoteRooms: derived,
-        remoteRoomsLastSync: Game.time,
+        remotes: remotes,
+        remoteSettings: {
+          maxDistance: 2,
+          maxRemotes: 4,
+          minScoreThreshold: 30,
+          autoExpand: false,
+        },
       };
-      console.log("[Colony] Initialized " + this.roomName + " with " + derived.length + " remote rooms: " + derived.join(", "));
+      console.log("[Colony] Initialized " + this.roomName + " with " + derived.length + " remote rooms");
+    } else {
+      // Migration: convert old remoteRooms[] to new remotes{}
+      this.migrateRemoteRooms();
+    }
+  }
+
+  /**
+   * Migrate from old remoteRooms string[] format to new remotes Record format.
+   */
+  private migrateRemoteRooms(): void {
+    if (!Memory.colonies) return;
+    var mem = Memory.colonies[this.roomName];
+    if (!mem) return;
+
+    // Check if migration is needed
+    if (Array.isArray(mem.remoteRooms) && !mem.remotes) {
+      mem.remotes = {};
+
+      for (var i = 0; i < mem.remoteRooms.length; i++) {
+        var roomName = mem.remoteRooms[i];
+        var intel = Memory.intel && Memory.intel[roomName];
+        var sources = intel && intel.sources ? intel.sources.length : 2;
+
+        mem.remotes[roomName] = {
+          room: roomName,
+          homeColony: this.roomName,
+          distance: 1,
+          sources: sources,
+          active: true,
+          activatedAt: Game.time,
+          miners: [],
+          haulers: [],
+        };
+      }
+
+      delete mem.remoteRooms;
+      delete mem.remoteRoomsLastSync;
+
+      console.log("[Colony] Migrated " + this.roomName + " to new remote format: " + Object.keys(mem.remotes).length + " rooms");
+    }
+
+    // Initialize remoteSettings if missing
+    if (!mem.remoteSettings) {
+      mem.remoteSettings = {
+        maxDistance: 2,
+        maxRemotes: 4,
+        minScoreThreshold: 30,
+        autoExpand: false,
+      };
     }
   }
 
   /**
    * Re-derive remote rooms and update Memory.colonies.
-   * Logs changes for visibility.
+   * Only adds new distance-1 remotes automatically; doesn't remove existing ones.
    */
   private syncRemoteRooms(): void {
-    if (!Memory.colonies || !Memory.colonies[this.roomName]) return;
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem || !mem.remotes) return;
 
-    const current = Memory.colonies[this.roomName].remoteRooms;
-    const derived = this.deriveRemoteTargets();
+    var derived = this.deriveRemoteTargets();
+    var added: string[] = [];
 
-    // Find additions and removals
-    const added: string[] = [];
-    const removed: string[] = [];
+    // Only auto-add new distance-1 rooms (don't remove existing)
+    for (var i = 0; i < derived.length; i++) {
+      var roomName = derived[i];
+      if (!mem.remotes[roomName]) {
+        var intel = Memory.intel && Memory.intel[roomName];
+        var sources = intel && intel.sources ? intel.sources.length : 2;
 
-    for (const room of derived) {
-      if (current.indexOf(room) === -1) {
-        added.push(room);
+        mem.remotes[roomName] = {
+          room: roomName,
+          homeColony: this.roomName,
+          distance: 1,
+          sources: sources,
+          active: true,
+          activatedAt: Game.time,
+          miners: [],
+          haulers: [],
+        };
+        added.push(roomName);
       }
     }
-    for (const room of current) {
-      if (derived.indexOf(room) === -1) {
-        removed.push(room);
-      }
-    }
 
-    if (added.length > 0 || removed.length > 0) {
-      Memory.colonies[this.roomName].remoteRooms = derived;
-      Memory.colonies[this.roomName].remoteRoomsLastSync = Game.time;
-
-      if (added.length > 0) {
-        console.log("[Colony] " + this.roomName + " added remotes: " + added.join(", "));
-      }
-      if (removed.length > 0) {
-        console.log("[Colony] " + this.roomName + " removed remotes: " + removed.join(", "));
-      }
+    if (added.length > 0) {
+      console.log("[Colony] " + this.roomName + " added remotes: " + added.join(", "));
     }
   }
 
@@ -768,16 +845,135 @@ export class ColonyManager {
   }
 
   /**
-   * Get remote mining target rooms.
+   * Get remote mining target rooms (active only).
    * Reads from Memory.colonies — the single source of truth.
-   * Falls back to derivation if colonies not yet initialized.
    */
   getRemoteMiningTargets(): string[] {
-    if (Memory.colonies && Memory.colonies[this.roomName]) {
-      return Memory.colonies[this.roomName].remoteRooms;
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem || !mem.remotes) {
+      return this.deriveRemoteTargets();
     }
-    // Fallback: derive (should not happen after initializeColonyMemory)
-    return this.deriveRemoteTargets();
+
+    var targets: string[] = [];
+    for (var roomName in mem.remotes) {
+      var config = mem.remotes[roomName];
+      if (config.active) {
+        targets.push(roomName);
+      }
+    }
+    return targets;
+  }
+
+  /**
+   * Get all remote room configurations (for spawning calculations).
+   */
+  getRemoteConfigs(): Record<string, RemoteRoomConfig> {
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem || !mem.remotes) return {};
+    return mem.remotes;
+  }
+
+  /**
+   * Get a specific remote room configuration.
+   */
+  getRemoteConfig(roomName: string): RemoteRoomConfig | null {
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem || !mem.remotes || !mem.remotes[roomName]) return null;
+    return mem.remotes[roomName];
+  }
+
+  /**
+   * Add a remote room to this colony.
+   */
+  addRemote(roomName: string, distance: number, via?: string): boolean {
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem) return false;
+
+    if (!mem.remotes) mem.remotes = {};
+    if (mem.remotes[roomName]) return false; // Already exists
+
+    var intel = Memory.intel && Memory.intel[roomName];
+    var sources = intel && intel.sources ? intel.sources.length : 2;
+
+    mem.remotes[roomName] = {
+      room: roomName,
+      homeColony: this.roomName,
+      distance: distance,
+      via: via,
+      sources: sources,
+      active: true,
+      activatedAt: Game.time,
+      miners: [],
+      haulers: [],
+    };
+
+    console.log("[Colony] " + this.roomName + " added remote " + roomName + " (distance: " + distance + (via ? ", via: " + via : "") + ")");
+    return true;
+  }
+
+  /**
+   * Remove a remote room from this colony.
+   */
+  removeRemote(roomName: string): boolean {
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem || !mem.remotes || !mem.remotes[roomName]) return false;
+
+    delete mem.remotes[roomName];
+    console.log("[Colony] " + this.roomName + " removed remote " + roomName);
+    return true;
+  }
+
+  /**
+   * Pause/unpause a remote room.
+   */
+  toggleRemote(roomName: string, reason?: string): boolean {
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem || !mem.remotes || !mem.remotes[roomName]) return false;
+
+    var config = mem.remotes[roomName];
+    config.active = !config.active;
+
+    if (!config.active) {
+      config.pausedUntil = Game.time + 5000;
+      config.pauseReason = reason || "Manual pause";
+      console.log("[Colony] " + this.roomName + " paused remote " + roomName);
+    } else {
+      delete config.pausedUntil;
+      delete config.pauseReason;
+      console.log("[Colony] " + this.roomName + " unpaused remote " + roomName);
+    }
+
+    return true;
+  }
+
+  /**
+   * Update creep assignments for remotes.
+   * Called periodically to track which creeps are assigned to which remote.
+   */
+  updateRemoteAssignments(): void {
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem || !mem.remotes) return;
+
+    // Clear existing assignments
+    for (var roomName in mem.remotes) {
+      mem.remotes[roomName].miners = [];
+      mem.remotes[roomName].haulers = [];
+    }
+
+    // Reassign based on current creeps
+    for (var name in Game.creeps) {
+      var creep = Game.creeps[name];
+      if (creep.memory.room !== this.roomName) continue;
+
+      var targetRoom = creep.memory.targetRoom;
+      if (!targetRoom || !mem.remotes[targetRoom]) continue;
+
+      if (creep.memory.role === "REMOTE_MINER") {
+        mem.remotes[targetRoom].miners.push(name);
+      } else if (creep.memory.role === "REMOTE_HAULER") {
+        mem.remotes[targetRoom].haulers.push(name);
+      }
+    }
   }
 
   /**
@@ -799,7 +995,6 @@ export class ColonyManager {
       };
     }
 
-    const phase = this.getPhase();
     const sources = state.sources.length;
     const rcl = state.room.controller?.level || 0;
     const constructionSites = state.constructionSites.length;
@@ -840,26 +1035,33 @@ export class ColonyManager {
       if (totalThreat > 300) defenders = 3;
     }
 
-    // Remote mining (RCL 4+)
+    // Remote mining (RCL 4+) - use new remote config format
     let remoteMiners = 0;
     let remoteHaulers = 0;
     let reservers = 0;
 
     if (rcl >= 4) {
-      const remoteTargets = this.getRemoteMiningTargets();
+      var remoteConfigs = this.getRemoteConfigs();
+      var activeRemoteCount = 0;
 
-      // 1 remote miner per source in remote rooms
-      for (const roomName of remoteTargets) {
-        const intel = Memory.intel && Memory.intel[roomName];
-        const sourcesInRoom = intel && intel.sources ? intel.sources.length : 0;
-        remoteMiners += sourcesInRoom;
+      for (var roomName in remoteConfigs) {
+        var config = remoteConfigs[roomName];
+        if (!config.active) continue;
+
+        activeRemoteCount++;
+
+        // 1 remote miner per source
+        remoteMiners += config.sources || 2;
+
+        // Haulers scale with distance
+        // Distance 1: 2 haulers per remote
+        // Distance 2: 3 haulers per remote (longer round trip)
+        var haulersForRemote = config.distance >= 2 ? 3 : 2;
+        remoteHaulers += haulersForRemote;
       }
 
-      // 1 reserver per remote room (reservation requires constant presence)
-      reservers = remoteTargets.length;
-
-      // 2 remote haulers per remote room
-      remoteHaulers = remoteTargets.length * 2;
+      // 1 reserver per active remote room
+      reservers = activeRemoteCount;
     }
 
     // Scouts (RCL 4+): 1 if any adjacent room needs intel

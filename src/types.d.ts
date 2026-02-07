@@ -219,12 +219,106 @@ interface BootstrapHaulerMemory extends CreepMemory {
   bootstrapState: "LOADING" | "TRAVELING_TO_TARGET" | "DELIVERING" | "RETURNING";
 }
 
+/**
+ * Performance metrics for a remote room.
+ * Updated periodically by EconomyTracker.
+ */
+interface RemoteRoomMetrics {
+  lastUpdated: number;             // Game.time of last update
+
+  // Energy flow
+  estimatedIncome: number;         // Energy/tick this remote provides
+  actualIncome: number;            // Measured income
+  efficiency: number;              // actualIncome / estimatedIncome (0-1)
+
+  // Hauler performance
+  avgHaulDistance: number;         // Measured average path length
+  haulerUtilization: number;       // % of time haulers are carrying vs empty
+  energyDecay: number;             // Energy lost to decay in containers
+
+  // Threats
+  hostilesSeen: number;            // Count in last 1000 ticks
+  lastHostileTick: number;         // Game.time of last hostile
+  creepLosses: number;             // Creeps killed in this room (lifetime)
+}
+
+/**
+ * Scoring data for remote room evaluation.
+ * Used for automated remote selection (future feature).
+ */
+interface RemoteRoomScore {
+  lastCalculated: number;          // Game.time of score calculation
+
+  // Component scores (0-100 each)
+  profitability: number;           // Net energy gain after hauler costs
+  safety: number;                  // Inverse of threat frequency
+  accessibility: number;           // Path quality, chokepoints
+
+  // Derived
+  totalScore: number;              // Weighted combination
+  rank: number;                    // Rank among all candidates for this colony
+
+  // Recommendation
+  recommended: boolean;            // Should this room be mined?
+  reason: string;                  // Why or why not
+}
+
+/**
+ * Configuration for a remote mining room.
+ * Designed for future extension with scoring/automation.
+ */
+interface RemoteRoomConfig {
+  // === Core Identity ===
+  room: string;                    // Room name (e.g., "E47N38")
+  homeColony: string;              // Parent colony (e.g., "E46N37")
+
+  // === Pathing ===
+  distance: number;                // Tile distance: 1 = adjacent, 2 = one room away
+  via?: string;                    // For distance 2+: intermediate room to path through
+
+  // === Source Data (populated on first scout) ===
+  sources: number;                 // Number of sources (1 or 2)
+  sourceIds?: Id<Source>[];        // Actual source IDs once scouted
+
+  // === Operational State ===
+  active: boolean;                 // Currently being mined
+  activatedAt?: number;            // Game.time when activated
+  pausedUntil?: number;            // Temporarily paused (e.g., hostile activity)
+  pauseReason?: string;            // Why paused
+
+  // === Assigned Creeps (for tracking) ===
+  miners: string[];                // Names of assigned REMOTE_MINERs
+  haulers: string[];               // Names of assigned REMOTE_HAULERs
+
+  // === Performance Metrics (updated periodically) ===
+  metrics?: RemoteRoomMetrics;
+
+  // === Future: Scoring (populated by evaluator) ===
+  score?: RemoteRoomScore;
+}
+
+/**
+ * Remote mining settings for a colony.
+ */
+interface RemoteSettings {
+  maxDistance: number;             // Max distance to consider (default: 2)
+  maxRemotes: number;              // Max simultaneous remotes (default: 4)
+  minScoreThreshold: number;       // Minimum score to activate (future)
+  autoExpand: boolean;             // Automatically add profitable remotes (future)
+}
+
 // Colony configuration (explicit registry for per-colony settings)
 interface ColonyMemory {
-  /** Explicit list of remote mining target rooms */
-  remoteRooms: string[];
+  /** @deprecated Use remotes instead */
+  remoteRooms?: string[];
   /** Game.time when remoteRooms was last auto-populated */
-  remoteRoomsLastSync: number;
+  remoteRoomsLastSync?: number;
+
+  /** Structured remote room configuration (keyed by room name) */
+  remotes?: Record<string, RemoteRoomConfig>;
+
+  /** Remote mining settings */
+  remoteSettings?: RemoteSettings;
 }
 
 // Extend Memory for advisor data, traffic, intel, and colonies

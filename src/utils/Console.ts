@@ -59,8 +59,9 @@ remote()         - Remote mining status and targets
 remoteAudit()    - Detailed remote infrastructure audit
 remotes()        - List remote rooms from colony registry
 remotes("W1N1")  - List remotes for specific colony
-addRemote(h, r)  - Add remote room r to colony h
+addRemote(h, r, d, v) - Add remote (h=home, r=remote, d=distance, v=via)
 removeRemote(h, r) - Remove remote room r from colony h
+pauseRemote(h, r)  - Pause/unpause remote room r
 syncRemotes()    - Force re-derive remote rooms from intel
 threats()        - Show hostile creeps and threat levels
 safemode()       - Show safe mode status and threat assessment
@@ -578,7 +579,7 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     return "OK";
   };
 
-  // Remote room management - list remotes
+  // Remote room management - list remotes (new format with distance support)
   global.remotes = (roomName?: string) => {
     var targetRoom = roomName || Object.keys(Game.rooms).find(function(r) {
       return Game.rooms[r].controller && Game.rooms[r].controller.my;
@@ -595,59 +596,101 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
 
     var colony = Memory.colonies[targetRoom];
     console.log("=== Remote Rooms for " + targetRoom + " ===");
-    console.log("Last sync: " + (Game.time - colony.remoteRoomsLastSync) + " ticks ago");
 
-    for (var i = 0; i < colony.remoteRooms.length; i++) {
-      var remote = colony.remoteRooms[i];
-      var ri = Memory.intel && Memory.intel[remote];
-      var sources = ri && ri.sources ? ri.sources.length : 0;
-      var hostiles = ri ? (ri.hostiles || 0) : "?";
-      var lastScan = ri ? (Game.time - ri.lastScanned) + " ticks ago" : "never";
-      console.log("  " + remote + ": " + sources + " sources, " + hostiles + " hostiles, scanned " + lastScan);
+    if (!colony.remotes) {
+      console.log("No remotes configured");
+      return "0 remotes";
     }
 
-    return colony.remoteRooms.length + " remotes";
+    var count = 0;
+    for (var remoteName in colony.remotes) {
+      var config = colony.remotes[remoteName];
+      var status = config.active ? "ACTIVE" : "PAUSED";
+      var distance = "D" + config.distance;
+      var via = config.via ? " via " + config.via : "";
+      var sources = config.sources + "src";
+
+      // Count assigned creeps
+      var miners = config.miners ? config.miners.length : 0;
+      var haulers = config.haulers ? config.haulers.length : 0;
+
+      // Get threat info from intel
+      var ri = Memory.intel && Memory.intel[remoteName];
+      var hostiles = ri ? (ri.hostiles || 0) : "?";
+
+      var eff = "";
+      if (config.metrics && config.metrics.efficiency > 0) {
+        eff = " eff:" + Math.round(config.metrics.efficiency * 100) + "%";
+      }
+
+      console.log("  " + remoteName + ": " + status + " " + distance + via + " " + sources + " [" + miners + "m/" + haulers + "h] hostiles:" + hostiles + eff);
+      count++;
+    }
+
+    return count + " remotes";
   };
 
-  // Add a remote room manually
-  global.addRemote = (homeRoom: string, remoteRoom: string) => {
+  // Add a remote room manually (supports distance-2 with via room)
+  global.addRemote = (homeRoom: string, remoteRoom: string, distance?: number, via?: string) => {
     if (!homeRoom || !remoteRoom) {
-      console.log("Usage: addRemote('E46N37', 'E45N37')");
+      console.log("Usage: addRemote('E46N37', 'E47N38', 2, 'E47N37')");
+      console.log("  distance: 1 (default) or 2");
+      console.log("  via: intermediate room for distance-2");
       return "Error";
     }
-    if (!Memory.colonies || !Memory.colonies[homeRoom]) {
-      console.log("Colony not initialized for " + homeRoom);
+
+    var dist = distance || 1;
+    if (dist >= 2 && !via) {
+      console.log("Distance-2+ remotes require a 'via' room");
+      console.log("Usage: addRemote('" + homeRoom + "', '" + remoteRoom + "', 2, 'INTERMEDIATE_ROOM')");
       return "Error";
     }
-    var colony = Memory.colonies[homeRoom];
-    if (colony.remoteRooms.indexOf(remoteRoom) !== -1) {
-      console.log(remoteRoom + " already in remote list");
-      return "Already exists";
+
+    var manager = ColonyManager.getInstance(homeRoom);
+    var success = manager.addRemote(remoteRoom, dist, via);
+
+    if (success) {
+      return "Added " + remoteRoom + " to " + homeRoom;
+    } else {
+      console.log("Failed to add remote (already exists or colony not found)");
+      return "Error";
     }
-    colony.remoteRooms.push(remoteRoom);
-    console.log("Added " + remoteRoom + " to " + homeRoom + " remotes");
-    return "OK";
   };
 
   // Remove a remote room manually
   global.removeRemote = (homeRoom: string, remoteRoom: string) => {
     if (!homeRoom || !remoteRoom) {
-      console.log("Usage: removeRemote('E46N37', 'E45N37')");
+      console.log("Usage: removeRemote('E46N37', 'E47N38')");
       return "Error";
     }
-    if (!Memory.colonies || !Memory.colonies[homeRoom]) {
-      console.log("Colony not initialized for " + homeRoom);
+
+    var manager = ColonyManager.getInstance(homeRoom);
+    var success = manager.removeRemote(remoteRoom);
+
+    if (success) {
+      return "Removed " + remoteRoom + " from " + homeRoom;
+    } else {
+      console.log("Failed to remove remote (not found or colony not found)");
       return "Error";
     }
-    var colony = Memory.colonies[homeRoom];
-    var idx = colony.remoteRooms.indexOf(remoteRoom);
-    if (idx === -1) {
-      console.log(remoteRoom + " not in remote list");
-      return "Not found";
+  };
+
+  // Pause/unpause a remote room
+  global.pauseRemote = (homeRoom: string, remoteRoom: string, reason?: string) => {
+    if (!homeRoom || !remoteRoom) {
+      console.log("Usage: pauseRemote('E46N37', 'E47N38', 'hostiles')");
+      return "Error";
     }
-    colony.remoteRooms.splice(idx, 1);
-    console.log("Removed " + remoteRoom + " from " + homeRoom + " remotes");
-    return "OK";
+
+    var manager = ColonyManager.getInstance(homeRoom);
+    var success = manager.toggleRemote(remoteRoom, reason);
+
+    if (success) {
+      return "Toggled " + remoteRoom + " status";
+    } else {
+      console.log("Failed to toggle remote (not found)");
+      return "Error";
+    }
   };
 
   // Force re-sync remote rooms from intel

@@ -706,13 +706,28 @@ export class AWSExporter {
         remoteDefense: this.getRemoteDefenseStatus(roomName),
         mineral: this.getMineralStatus(room, roomName),
         economy: new EconomyTracker(room).getMetrics(),
-        remoteRooms: Memory.colonies && Memory.colonies[roomName]
-          ? Memory.colonies[roomName].remoteRooms
-          : [],
+        remoteRooms: this.getActiveRemoteRooms(roomName),
       });
     }
 
     return colonies;
+  }
+
+  /**
+   * Get active remote room names for a colony.
+   */
+  private static getActiveRemoteRooms(roomName: string): string[] {
+    if (!Memory.colonies) return [];
+    var colonyMem = Memory.colonies[roomName];
+    if (!colonyMem || !colonyMem.remotes) return [];
+
+    var activeRooms: string[] = [];
+    for (var remoteName in colonyMem.remotes) {
+      if (colonyMem.remotes[remoteName].active) {
+        activeRooms.push(remoteName);
+      }
+    }
+    return activeRooms;
   }
 
   /**

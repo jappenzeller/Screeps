@@ -12,6 +12,7 @@ import { getHostileCount } from "../utils/remoteIntel";
 import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 import { LinkManager } from "../structures/LinkManager";
 import { getMilestones } from "../core/ColonyMilestones";
+import { ColonyManager } from "../core/ColonyManager";
 import { buildBody as buildBodyFromConfig, ROLE_MIN_COST } from "./bodyBuilder";
 import { CONFIG } from "../config";
 import { combineUtilities } from "../utils/smoothing";
@@ -539,7 +540,6 @@ function getColonyState(room: Room): ColonyState {
 function getCreepTargets(room: Room, totalSites: number): Record<string, number> {
   const rcl = room.controller?.level || 0;
   const sources = room.find(FIND_SOURCES).length;
-  const remoteRooms = getRemoteMiningTargets(room.name);
   const m = getMilestones(room);
 
   // Early colony (RCL 1-3 without storage): milestone-driven targets
@@ -691,16 +691,30 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
 
   // Remote operations at RCL 4+
   if (rcl >= 4) {
-    // Count remote sources
-    let remoteSources = 0;
-    for (const roomName of remoteRooms) {
-      const intel = Memory.intel && Memory.intel[roomName];
-      remoteSources += (intel && intel.sources) ? intel.sources.length : 0;
+    // Use new remote config format for distance-aware calculations
+    var manager = ColonyManager.getInstance(room.name);
+    var remoteConfigs = manager.getRemoteConfigs();
+    var remoteSources = 0;
+    var remoteHaulers = 0;
+    var activeRemotes = 0;
+
+    for (var remoteName in remoteConfigs) {
+      var config = remoteConfigs[remoteName];
+      if (!config.active) continue;
+
+      activeRemotes++;
+      remoteSources += config.sources || 2;
+
+      // Distance-aware hauler calculation
+      // Distance 1: ~50 tiles round trip, 2 haulers per remote
+      // Distance 2: ~100 tiles round trip, 3 haulers per remote
+      var haulersForRemote = config.distance >= 2 ? 3 : 2;
+      remoteHaulers += haulersForRemote;
     }
 
     targets.REMOTE_MINER = remoteSources;
-    targets.REMOTE_HAULER = Math.ceil(remoteSources * 1.5); // 1.5 haulers per miner
-    targets.RESERVER = remoteRooms.length;
+    targets.REMOTE_HAULER = remoteHaulers;
+    targets.RESERVER = activeRemotes;
     targets.SCOUT = needsScout(room.name) ? 1 : 0;
   }
 
@@ -1922,38 +1936,9 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
 // ============================================
 
 function getRemoteMiningTargets(homeRoom: string): string[] {
-  // Read from colony registry — single source of truth
-  if (Memory.colonies && Memory.colonies[homeRoom]) {
-    return Memory.colonies[homeRoom].remoteRooms;
-  }
-
-  // Fallback: derive from exits + intel (pre-initialization or missing colony)
-  const exits = Game.map.describeExits(homeRoom);
-  if (!exits) return [];
-
-  const intel = Memory.intel || {};
-  const firstSpawn = Object.values(Game.spawns)[0];
-  const myUsername = firstSpawn && firstSpawn.owner
-    ? firstSpawn.owner.username
-    : "";
-  const targets: string[] = [];
-
-  for (const dir in exits) {
-    const roomName = exits[dir as ExitKey];
-    if (!roomName) continue;
-
-    const ri = intel[roomName];
-    if (!ri || !ri.lastScanned) continue;
-
-    if (!ri.sources || ri.sources.length === 0) continue;
-    if (ri.roomType === "sourceKeeper") continue;
-    if (ri.owner && ri.owner !== myUsername) continue;
-    if (ri.reservation && ri.reservation.username !== myUsername) continue;
-
-    targets.push(roomName);
-  }
-
-  return targets;
+  // Use ColonyManager as single source of truth
+  var manager = ColonyManager.getInstance(homeRoom);
+  return manager.getRemoteMiningTargets();
 }
 
 function getRemoteThreats(homeRoom: string): Record<string, number> {
