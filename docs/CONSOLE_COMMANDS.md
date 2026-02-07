@@ -257,6 +257,27 @@ fetchAdvisor("W1N1")
 // Shows: Recommendations from AWS
 ```
 
+## Pathfinding Debug Commands
+
+### analyzeRoute(fromRoom, toRoom)
+
+Analyze routes between two rooms, showing both direct and safe paths.
+
+```javascript
+analyzeRoute("E46N37", "E44N37")
+// Shows: Direct route, Safe route, SK room detection
+// If no safe route, suggests waypoints
+```
+
+### checkSK(roomName)
+
+Check if a room is a Source Keeper room.
+
+```javascript
+checkSK("E45N36")
+// Shows: Whether room is SK, coordinate calculation
+```
+
 ## Quick Reference
 
 | Category | Command | Purpose |
@@ -276,5 +297,7 @@ fetchAdvisor("W1N1")
 | Defense | `threats()` | Hostiles |
 | Defense | `safemode()` | Safe mode |
 | Debug | `moveStats()` | Movement |
+| Debug | `analyzeRoute(from, to)` | Route analysis |
+| Debug | `checkSK("room")` | SK room check |
 | AWS | `segmentSize()` | Size breakdown |
 | AWS | `advisor()` | API info |

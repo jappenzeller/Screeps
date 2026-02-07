@@ -1,7 +1,24 @@
 /**
  * Movement utilities for cross-room travel
- * With stuck detection and alternative exit finding
+ * With stuck detection, safe pathfinding, and border handling
  */
+
+/**
+ * Parse room name into x/y coordinates.
+ */
+function parseRoomName(roomName: string): { x: number; y: number; wx: number; wy: number } | null {
+  const match = roomName.match(/^([WE])(\d+)([NS])(\d+)$/);
+  if (!match) return null;
+
+  const wx = parseInt(match[2], 10);
+  const wy = parseInt(match[4], 10);
+
+  // Convert to world coordinates (W/S are negative)
+  const x = match[1] === "W" ? -wx - 1 : wx;
+  const y = match[3] === "S" ? -wy - 1 : wy;
+
+  return { x, y, wx, wy };
+}
 
 /**
  * Check if a room is a Source Keeper room based on coordinates.
@@ -9,77 +26,191 @@
  * Examples: W5N5, E15N25, W45N15
  */
 export function isSourceKeeperRoom(roomName: string): boolean {
-  const parsed = /^[WE](\d+)[NS](\d+)$/.exec(roomName);
+  const parsed = parseRoomName(roomName);
   if (!parsed) return false;
 
-  const x = parseInt(parsed[1], 10) % 10;
-  const y = parseInt(parsed[2], 10) % 10;
+  const xMod = parsed.wx % 10;
+  const yMod = parsed.wy % 10;
 
   // SK rooms have coordinates 4-6 in both x and y
-  return x >= 4 && x <= 6 && y >= 4 && y <= 6;
+  return xMod >= 4 && xMod <= 6 && yMod >= 4 && yMod <= 6;
 }
 
 /**
  * Check if a room is a highway (coordinates 0 in x or y mod 10).
  */
 export function isHighwayRoom(roomName: string): boolean {
-  const parsed = /^[WE](\d+)[NS](\d+)$/.exec(roomName);
+  const parsed = parseRoomName(roomName);
   if (!parsed) return false;
 
-  const x = parseInt(parsed[1], 10) % 10;
-  const y = parseInt(parsed[2], 10) % 10;
-
-  return x === 0 || y === 0;
+  return parsed.wx % 10 === 0 || parsed.wy % 10 === 0;
 }
 
 /**
- * Get a safe route callback that avoids dangerous rooms.
- * Use this with Game.map.findRoute() to get safe cross-room paths.
+ * Get the cost for routing through a room.
+ * Returns Infinity for rooms that should be avoided entirely.
  */
-export function getSafeRouteCallback(): (
-  roomName: string,
-  fromRoomName: string
-) => number {
-  return (roomName: string, _fromRoomName: string): number => {
-    // Block Source Keeper rooms (too dangerous for unarmed creeps)
-    if (isSourceKeeperRoom(roomName)) {
+function getSafeRouteCost(roomName: string, allowedRooms: string[]): number {
+  // Always allow explicitly permitted rooms (start/end)
+  if (allowedRooms.indexOf(roomName) !== -1) return 1;
+
+  // Block Source Keeper rooms
+  if (isSourceKeeperRoom(roomName)) {
+    return Infinity;
+  }
+
+  // Check intel for additional info
+  const intel = Memory.intel && Memory.intel[roomName];
+  if (intel) {
+    // Block rooms owned by hostiles
+    if (intel.owner && intel.owner !== "me") {
       return Infinity;
     }
 
-    // Check intel for hostile ownership or invaders
-    const intel = Memory.intel && Memory.intel[roomName];
-    if (intel) {
-      // Block rooms owned by hostiles
-      if (intel.owner && intel.owner !== "me") {
-        return Infinity;
-      }
-
-      // Penalize rooms with invader cores (but don't block)
-      if (intel.invaderCore) {
-        return 5; // Higher cost but still passable
-      }
-
-      // Penalize rooms with recent hostiles
-      if (intel.hostiles && intel.hostiles > 0) {
-        const age = Game.time - (intel.lastScanned || 0);
-        if (age < 500) {
-          return 3; // Penalize recent hostile activity
-        }
-      }
+    // Penalize rooms with invader cores
+    if (intel.invaderCore) {
+      return 5;
     }
 
-    // Prefer highways (cost 1) over normal rooms (cost 2)
-    if (isHighwayRoom(roomName)) {
-      return 1;
+    // Penalize rooms with recent hostiles
+    if (intel.hostiles && intel.hostiles > 0) {
+      const age = Game.time - (intel.lastScanned || 0);
+      if (age < 500) {
+        return 3;
+      }
     }
+  }
 
-    return 2; // Default cost for normal rooms
+  // Prefer highways
+  if (isHighwayRoom(roomName)) {
+    return 1;
+  }
+
+  return 2; // Default cost
+}
+
+/**
+ * Get a safe route callback for Game.map.findRoute().
+ */
+export function getSafeRouteCallback(allowedRooms?: string[]): (roomName: string, fromRoomName: string) => number {
+  const allowed = allowedRooms || [];
+  return (roomName: string, _fromRoomName: string): number => {
+    return getSafeRouteCost(roomName, allowed);
   };
 }
 
 /**
- * Alias for moveToRoom with safe pathfinding (deprecated - moveToRoom is now safe by default).
- * Kept for backward compatibility.
+ * Find a safe intermediate waypoint when direct route is blocked.
+ * Looks for safe rooms adjacent to current room that get closer to target.
+ */
+function findSafeWaypoint(fromRoom: string, targetRoom: string): string | null {
+  const exits = Game.map.describeExits(fromRoom);
+  if (!exits) return null;
+
+  const targetCoords = parseRoomName(targetRoom);
+  const fromCoords = parseRoomName(fromRoom);
+  if (!targetCoords || !fromCoords) return null;
+
+  const fromDistToTarget = Math.abs(fromCoords.x - targetCoords.x) + Math.abs(fromCoords.y - targetCoords.y);
+
+  interface Candidate {
+    room: string;
+    distance: number;
+    cost: number;
+  }
+
+  const candidates: Candidate[] = [];
+
+  // Check all adjacent rooms
+  for (const dir in exits) {
+    const neighborRoom = exits[dir as unknown as ExitKey];
+    if (!neighborRoom) continue;
+
+    const cost = getSafeRouteCost(neighborRoom, [fromRoom, targetRoom]);
+    if (cost === Infinity) continue; // Skip dangerous rooms
+
+    const neighborCoords = parseRoomName(neighborRoom);
+    if (!neighborCoords) continue;
+
+    // Calculate Manhattan distance to target
+    const distToTarget = Math.abs(neighborCoords.x - targetCoords.x) + Math.abs(neighborCoords.y - targetCoords.y);
+
+    // Prefer rooms that get us closer, but also consider lateral moves
+    if (distToTarget <= fromDistToTarget) {
+      candidates.push({ room: neighborRoom, distance: distToTarget, cost: cost });
+    }
+  }
+
+  // If no progress possible, try any safe neighbor (for going around obstacles)
+  if (candidates.length === 0) {
+    for (const dir in exits) {
+      const neighborRoom = exits[dir as unknown as ExitKey];
+      if (!neighborRoom) continue;
+
+      const cost = getSafeRouteCost(neighborRoom, [fromRoom, targetRoom]);
+      if (cost === Infinity) continue;
+
+      candidates.push({ room: neighborRoom, distance: 999, cost: cost });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  // Sort by distance first, then by cost
+  candidates.sort((a, b) => {
+    if (a.distance !== b.distance) return a.distance - b.distance;
+    return a.cost - b.cost;
+  });
+
+  return candidates[0].room;
+}
+
+/**
+ * Debug function to analyze a route between two rooms.
+ * Call from console: analyzeRoute("W1N1", "W3N3")
+ */
+export function analyzeRoute(fromRoom: string, toRoom: string): void {
+  console.log(`[Route Analysis] ${fromRoom} -> ${toRoom}`);
+
+  // Check direct route
+  const directRoute = Game.map.findRoute(fromRoom, toRoom);
+  if (directRoute === ERR_NO_PATH) {
+    console.log("  Direct route: NO PATH");
+  } else {
+    console.log(`  Direct route: ${directRoute.length} rooms`);
+    for (const step of directRoute) {
+      const isSK = isSourceKeeperRoom(step.room);
+      const isHW = isHighwayRoom(step.room);
+      console.log(`    -> ${step.room} (SK: ${isSK}, Highway: ${isHW})`);
+    }
+  }
+
+  // Check safe route
+  const safeRoute = Game.map.findRoute(fromRoom, toRoom, {
+    routeCallback: getSafeRouteCallback([fromRoom, toRoom]),
+  });
+  if (safeRoute === ERR_NO_PATH) {
+    console.log("  Safe route: NO PATH (blocked by SK/hostile rooms)");
+
+    // Try finding waypoint
+    const waypoint = findSafeWaypoint(fromRoom, toRoom);
+    if (waypoint) {
+      console.log(`  Suggested waypoint: ${waypoint}`);
+    } else {
+      console.log("  No safe waypoint found");
+    }
+  } else {
+    console.log(`  Safe route: ${safeRoute.length} rooms`);
+    for (const step of safeRoute) {
+      const isSK = isSourceKeeperRoom(step.room);
+      const isHW = isHighwayRoom(step.room);
+      console.log(`    -> ${step.room} (SK: ${isSK}, Highway: ${isHW})`);
+    }
+  }
+}
+
+/**
+ * Alias for moveToRoom (deprecated - kept for compatibility).
  */
 export function moveToRoomSafe(
   creep: Creep,
@@ -93,8 +224,7 @@ export function moveToRoomSafe(
  * Check if creep is on a room border tile.
  */
 export function isOnBorder(creep: Creep): boolean {
-  const pos = creep.pos;
-  return pos.x === 0 || pos.x === 49 || pos.y === 0 || pos.y === 49;
+  return isPositionOnBorder(creep.pos);
 }
 
 /**
@@ -105,7 +235,7 @@ function isPositionOnBorder(pos: RoomPosition): boolean {
 }
 
 /**
- * Check if creep is on the border that leads to the desired exit.
+ * Check if position is on the border that leads to the desired exit.
  */
 function isOnCorrectBorder(pos: RoomPosition, exitDir: ExitConstant): boolean {
   switch (exitDir) {
@@ -129,11 +259,43 @@ function getBorderCrossDirection(pos: RoomPosition): DirectionConstant {
 }
 
 /**
- * Move creep off the border when already in target room.
- * Uses PathFinder directly with maxRooms:1 to avoid routeCallback interference.
+ * Move creep off the border toward room interior.
+ * Uses PathFinder with maxRooms:1 to avoid routeCallback interference.
  */
-function moveOffBorderInRoom(creep: Creep, target: RoomPosition, color?: string): ScreepsReturnCode {
+function moveOffBorderInRoom(creep: Creep, color?: string): ScreepsReturnCode {
+  // Find a position 5 tiles into the room
+  let targetX = creep.pos.x;
+  let targetY = creep.pos.y;
+
+  if (creep.pos.x === 0) targetX = 5;
+  else if (creep.pos.x === 49) targetX = 44;
+
+  if (creep.pos.y === 0) targetY = 5;
+  else if (creep.pos.y === 49) targetY = 44;
+
+  const targetPos = new RoomPosition(targetX, targetY, creep.room.name);
+
   // Use PathFinder with maxRooms: 1 to guarantee same-room path
+  const result = PathFinder.search(creep.pos, { pos: targetPos, range: 1 }, {
+    maxRooms: 1,
+  });
+
+  if (result.path.length > 0) {
+    if (color) {
+      creep.room.visual.poly(result.path.map(p => [p.x, p.y]), { stroke: color });
+    }
+    return creep.moveByPath(result.path);
+  }
+
+  // Fallback: just move away from border
+  return creep.move(getBorderCrossDirection(creep.pos));
+}
+
+/**
+ * Move creep off the border toward a specific target.
+ * Uses PathFinder with maxRooms:1 to avoid routeCallback interference.
+ */
+function moveOffBorderToTarget(creep: Creep, target: RoomPosition, color?: string): ScreepsReturnCode {
   const result = PathFinder.search(creep.pos, { pos: target, range: 1 }, {
     maxRooms: 1,
   });
@@ -146,8 +308,7 @@ function moveOffBorderInRoom(creep: Creep, target: RoomPosition, color?: string)
   }
 
   // Fallback: just move away from border
-  const dir = getBorderCrossDirection(creep.pos);
-  return creep.move(dir);
+  return creep.move(getBorderCrossDirection(creep.pos));
 }
 
 /**
@@ -159,7 +320,7 @@ export function stepOffBorder(creep: Creep): boolean {
   const terrain = creep.room.getTerrain();
 
   // Define primary and fallback directions for each border
-  var directions: DirectionConstant[] = [];
+  let directions: DirectionConstant[] = [];
 
   if (pos.x === 0) {
     directions = [RIGHT, TOP_RIGHT, BOTTOM_RIGHT];
@@ -174,10 +335,9 @@ export function stepOffBorder(creep: Creep): boolean {
   }
 
   // Try each direction until one works
-  for (var i = 0; i < directions.length; i++) {
-    var dir = directions[i];
-    var newX = pos.x;
-    var newY = pos.y;
+  for (const dir of directions) {
+    let newX = pos.x;
+    let newY = pos.y;
 
     // Calculate target position based on direction
     if (dir === TOP || dir === TOP_LEFT || dir === TOP_RIGHT) newY--;
@@ -192,10 +352,10 @@ export function stepOffBorder(creep: Creep): boolean {
     if (terrain.get(newX, newY) === TERRAIN_MASK_WALL) continue;
 
     // Check for blocking creeps
-    var look = creep.room.lookAt(newX, newY);
-    var blocked = false;
-    for (var j = 0; j < look.length; j++) {
-      if (look[j].type === LOOK_CREEPS) {
+    const look = creep.room.lookAt(newX, newY);
+    let blocked = false;
+    for (const item of look) {
+      if (item.type === LOOK_CREEPS) {
         blocked = true;
         break;
       }
@@ -211,8 +371,8 @@ export function stepOffBorder(creep: Creep): boolean {
 }
 
 /**
- * Move creep toward a target room, handling border edge cases and stuck detection.
- * By default uses safe pathfinding to avoid Source Keeper and hostile rooms.
+ * Move creep toward a target room safely, avoiding SK and hostile rooms.
+ * Handles border edge cases and computes safe waypoints when needed.
  *
  * @param creep - The creep to move
  * @param targetRoom - Destination room name
@@ -227,29 +387,88 @@ export function moveToRoom(
   opts?: { avoidDanger?: boolean }
 ): boolean {
   if (creep.spawning) return false;
-  if (creep.room.name === targetRoom) return false;
 
   const avoidDanger = !opts || opts.avoidDanger !== false;
 
-  // Use safe route finding by default
-  let exitDir: ExitConstant | ERR_NO_PATH | ERR_INVALID_ARGS;
+  // CASE 1: Already in target room
+  if (creep.room.name === targetRoom) {
+    // If on border, move off using PathFinder to avoid routeCallback issues
+    if (isOnBorder(creep)) {
+      moveOffBorderInRoom(creep, visualStroke);
+      return true;
+    }
+    // Already in room and not on border - done
+    return false;
+  }
 
+  // CASE 2: Check for stored waypoint from previous tick
+  if (creep.memory._safeWaypoint) {
+    if (creep.room.name === creep.memory._safeWaypoint) {
+      // Reached waypoint, clear it and continue to target
+      delete creep.memory._safeWaypoint;
+      // Fall through to re-route
+    } else {
+      // Still heading to waypoint - route there instead
+      return moveToRoomInternal(creep, creep.memory._safeWaypoint, visualStroke, avoidDanger);
+    }
+  }
+
+  // CASE 3: Try to find safe route to target
   if (avoidDanger) {
-    // Find route using safe callback
     const route = Game.map.findRoute(creep.room.name, targetRoom, {
-      routeCallback: getSafeRouteCallback(),
+      routeCallback: getSafeRouteCallback([creep.room.name, targetRoom]),
     });
 
     if (route === ERR_NO_PATH || route.length === 0) {
-      // No safe path - try regular pathfinding as fallback
-      creep.say("NOPATH");
-      exitDir = creep.room.findExitTo(targetRoom);
-    } else {
-      // Use the first room in safe route
-      exitDir = route[0].exit;
+      // No safe direct route - find intermediate waypoint
+      const waypoint = findSafeWaypoint(creep.room.name, targetRoom);
+      if (waypoint) {
+        creep.memory._safeWaypoint = waypoint;
+        creep.say("REROUTE");
+        return moveToRoomInternal(creep, waypoint, visualStroke, true);
+      } else {
+        // No safe path at all
+        creep.say("NOSAFE");
+        console.log(`[Movement] ${creep.name}: No safe path from ${creep.room.name} to ${targetRoom}`);
+        return false;
+      }
     }
+  }
+
+  // CASE 4: Normal routing
+  return moveToRoomInternal(creep, targetRoom, visualStroke, avoidDanger);
+}
+
+/**
+ * Internal movement function - handles the actual pathfinding and movement.
+ */
+function moveToRoomInternal(
+  creep: Creep,
+  targetRoom: string,
+  visualStroke?: string,
+  avoidDanger?: boolean
+): boolean {
+  // Already in target room - shouldn't happen but handle it
+  if (creep.room.name === targetRoom) {
+    if (isOnBorder(creep)) {
+      moveOffBorderInRoom(creep, visualStroke);
+    }
+    return false;
+  }
+
+  // Find the exit direction to use
+  let exitDir: ExitConstant | ERR_NO_PATH | ERR_INVALID_ARGS;
+
+  if (avoidDanger) {
+    const route = Game.map.findRoute(creep.room.name, targetRoom, {
+      routeCallback: getSafeRouteCallback([creep.room.name, targetRoom]),
+    });
+
+    if (route === ERR_NO_PATH || route.length === 0) {
+      return false;
+    }
+    exitDir = route[0].exit;
   } else {
-    // Opt-out: use direct pathfinding
     exitDir = creep.room.findExitTo(targetRoom);
   }
 
@@ -257,13 +476,8 @@ export function moveToRoom(
 
   const pos = creep.pos;
 
-  // If on the correct border, step across
-  if (
-    (exitDir === FIND_EXIT_LEFT && pos.x === 0) ||
-    (exitDir === FIND_EXIT_RIGHT && pos.x === 49) ||
-    (exitDir === FIND_EXIT_TOP && pos.y === 0) ||
-    (exitDir === FIND_EXIT_BOTTOM && pos.y === 49)
-  ) {
+  // If on the correct border for this exit, step across
+  if (isOnCorrectBorder(pos, exitDir)) {
     const dirMap: Record<number, DirectionConstant> = {
       [FIND_EXIT_LEFT]: LEFT,
       [FIND_EXIT_RIGHT]: RIGHT,
@@ -279,23 +493,27 @@ export function moveToRoom(
     return true;
   }
 
-  // If on wrong border, step off first
+  // If on wrong border, step off first using PathFinder
   if (isOnBorder(creep)) {
-    stepOffBorder(creep);
+    // Find the exit and path to it with maxRooms:1
+    const exit = findBestExit(creep, exitDir);
+    if (exit) {
+      moveOffBorderToTarget(creep, exit, visualStroke);
+    } else {
+      stepOffBorder(creep);
+    }
     return true;
   }
 
-  // Stuck detection: track last position
+  // Stuck detection
   const lastPos = creep.memory._lastPos;
   const currentPos = `${pos.x},${pos.y}`;
 
   if (lastPos === currentPos) {
-    // Stuck in same position - increment counter
     const stuckCount = (creep.memory._stuckCount || 0) + 1;
     creep.memory._stuckCount = stuckCount;
 
     if (stuckCount > 2) {
-      // Stuck for 3+ ticks - find alternative exit
       const alternativeExit = findAlternativeExit(creep, exitDir);
       if (alternativeExit) {
         creep.moveTo(alternativeExit, {
@@ -305,7 +523,6 @@ export function moveToRoom(
         return true;
       }
 
-      // No alternative - try random movement to break deadlock
       if (stuckCount > 5) {
         const directions: DirectionConstant[] = [TOP, TOP_RIGHT, RIGHT, BOTTOM_RIGHT, BOTTOM, BOTTOM_LEFT, LEFT, TOP_LEFT];
         const randomDir = directions[Math.floor(Math.random() * directions.length)];
@@ -315,14 +532,12 @@ export function moveToRoom(
       }
     }
   } else {
-    // Moving - reset stuck counter
     creep.memory._stuckCount = 0;
   }
   creep.memory._lastPos = currentPos;
 
-  // Find exit tile
+  // Find exit tile and move to it
   const exit = findBestExit(creep, exitDir);
-
   if (!exit) {
     return false;
   }
@@ -335,11 +550,10 @@ export function moveToRoom(
 }
 
 /**
- * Find the best exit tile, avoiding tiles with creeps
+ * Find the best exit tile, avoiding tiles with creeps.
  */
 function findBestExit(creep: Creep, exitDir: ExitConstant): RoomPosition | null {
   const exits = creep.room.find(exitDir);
-
   if (exits.length === 0) return null;
 
   // Filter out exits with creeps on them
@@ -348,10 +562,9 @@ function findBestExit(creep: Creep, exitDir: ExitConstant): RoomPosition | null 
     return creeps.length === 0;
   });
 
-  // If all exits blocked, just use any exit
   const candidates = freeExits.length > 0 ? freeExits : exits;
 
-  // Find closest by range (not path - faster)
+  // Find closest by range
   let closest: RoomPosition | null = null;
   let closestDist = Infinity;
 
@@ -367,29 +580,24 @@ function findBestExit(creep: Creep, exitDir: ExitConstant): RoomPosition | null 
 }
 
 /**
- * When blocked at border, find and move to nearest unblocked exit tile
+ * When blocked at border, find and move to nearest unblocked exit tile.
  */
 function tryAdjacentExit(creep: Creep, exitDir: ExitConstant): void {
-  const pos = creep.pos;
   const exits = creep.room.find(exitDir);
-
   if (exits.length === 0) return;
 
-  // Find exit tiles that aren't blocked by creeps
-  const freeExits = exits.filter(function (exitPos) {
+  const freeExits = exits.filter((exitPos) => {
     const creeps = exitPos.lookFor(LOOK_CREEPS);
     return creeps.length === 0 || creeps[0].id === creep.id;
   });
 
   const candidates = freeExits.length > 0 ? freeExits : exits;
 
-  // Find closest unblocked exit tile
-  var closest: RoomPosition | null = null;
-  var closestDist = Infinity;
+  let closest: RoomPosition | null = null;
+  let closestDist = Infinity;
 
-  for (var i = 0; i < candidates.length; i++) {
-    var exit = candidates[i];
-    var dist = pos.getRangeTo(exit);
+  for (const exit of candidates) {
+    const dist = creep.pos.getRangeTo(exit);
     if (dist < closestDist) {
       closestDist = dist;
       closest = exit;
@@ -397,18 +605,16 @@ function tryAdjacentExit(creep: Creep, exitDir: ExitConstant): void {
   }
 
   if (closest && closestDist > 0) {
-    // Move toward the closest unblocked exit tile
     creep.moveTo(closest, { reusePath: 3 });
   }
 }
 
 /**
- * Find an alternative exit tile when stuck
+ * Find an alternative exit tile when stuck.
  */
 function findAlternativeExit(creep: Creep, exitDir: ExitConstant): RoomPosition | null {
   const exits = creep.room.find(exitDir);
 
-  // Sort by distance, skip the closest one (that's where we're stuck)
   const sorted = exits
     .filter((e) => {
       const creeps = e.lookFor(LOOK_CREEPS);
@@ -421,25 +627,8 @@ function findAlternativeExit(creep: Creep, exitDir: ExitConstant): RoomPosition 
 }
 
 /**
- * Get direction constant from dx/dy
- */
-function getDirection(dx: number, dy: number): DirectionConstant {
-  if (dx === 0 && dy === -1) return TOP;
-  if (dx === 1 && dy === -1) return TOP_RIGHT;
-  if (dx === 1 && dy === 0) return RIGHT;
-  if (dx === 1 && dy === 1) return BOTTOM_RIGHT;
-  if (dx === 0 && dy === 1) return BOTTOM;
-  if (dx === -1 && dy === 1) return BOTTOM_LEFT;
-  if (dx === -1 && dy === 0) return LEFT;
-  if (dx === -1 && dy === -1) return TOP_LEFT;
-  return TOP; // fallback
-}
-
-/**
- * Smart moveTo wrapper with stuck detection and dynamic ignoreCreeps.
- * Uses Screeps' built-in pathfinder with sensible defaults.
- * For cross-room movement, uses safe pathfinding by default.
- * Handles border tile edge cases to prevent creeps from bouncing back.
+ * Smart moveTo wrapper with stuck detection and border handling.
+ * Uses safe pathfinding for cross-room movement by default.
  */
 export function smartMoveTo(
   creep: Creep,
@@ -451,13 +640,13 @@ export function smartMoveTo(
 
   // Same room movement
   if (targetPos.roomName === creep.room.name) {
-    // If on border in same room, use PathFinder directly to avoid routeCallback issues
+    // If on border, use PathFinder directly to avoid routeCallback issues
     if (isOnBorder(creep)) {
-      return moveOffBorderInRoom(creep, targetPos, opts?.visualizePathStyle?.stroke);
+      return moveOffBorderToTarget(creep, targetPos, opts?.visualizePathStyle?.stroke);
     }
 
-    // Stuck detection: track position
-    const currentPos = creep.pos.x + "," + creep.pos.y;
+    // Stuck detection
+    const currentPos = `${creep.pos.x},${creep.pos.y}`;
     if (creep.memory._lastPos === currentPos) {
       creep.memory._stuckCount = (creep.memory._stuckCount || 0) + 1;
     } else {
@@ -476,7 +665,7 @@ export function smartMoveTo(
       return OK;
     }
 
-    // Build move options - same-room doesn't need routeCallback
+    // Build move options
     const range = creep.pos.getRangeTo(targetPos);
     const moveOpts: MoveToOpts = {
       reusePath: 10,
@@ -488,9 +677,7 @@ export function smartMoveTo(
     if (stuckCount > 2) {
       moveOpts.reusePath = 0;
       moveOpts.ignoreCreeps = true;
-    }
-    // Short-range ignoreCreeps: when target is 3 tiles or less, path through creeps
-    else if (range <= 3) {
+    } else if (range <= 3) {
       moveOpts.ignoreCreeps = true;
     }
 
@@ -498,12 +685,12 @@ export function smartMoveTo(
   }
 
   // Cross-room movement
-  // If on border heading to target room, check if we should just push through
+  // If on border heading to target room, check if we should push through
   if (isOnBorder(creep)) {
     const exitDir = creep.room.findExitTo(targetPos.roomName);
     if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
       if (isOnCorrectBorder(creep.pos, exitDir as ExitConstant)) {
-        // We're on the correct border - just push through
+        // On correct border - just push through
         return creep.move(getBorderCrossDirection(creep.pos));
       }
     }

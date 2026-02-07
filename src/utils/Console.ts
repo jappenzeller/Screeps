@@ -8,6 +8,7 @@ import { getSafeModeStatus } from "../defense/AutoSafeMode";
 import { TrafficMonitor } from "../core/TrafficMonitor";
 import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
+import { analyzeRoute, isSourceKeeperRoom } from "./movement";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -91,6 +92,8 @@ expansion.debug()    - Show raw Memory.empire data
 expansion.candidates() - Show expansion candidate rooms
 expansion.readiness() - Check parent colony readiness
 expansion.auto(bool) - Toggle auto-expansion
+analyzeRoute(from, to) - Analyze safe/unsafe routes between rooms
+checkSK("roomName")  - Check if a room is a Source Keeper room
 `);
   };
 
@@ -1464,6 +1467,26 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     auto: function(enable?: boolean) {
       return empireExpansion.auto(enable);
     },
+  };
+
+  // Route analysis for debugging safe pathfinding
+  global.analyzeRoute = analyzeRoute;
+
+  // Check if a room is a Source Keeper room
+  global.checkSK = (roomName: string) => {
+    const isSK = isSourceKeeperRoom(roomName);
+    console.log(`${roomName}: ${isSK ? "IS a Source Keeper room" : "NOT a Source Keeper room"}`);
+
+    // Show the calculation
+    const parsed = /^[WE](\d+)[NS](\d+)$/.exec(roomName);
+    if (parsed) {
+      const x = parseInt(parsed[1], 10) % 10;
+      const y = parseInt(parsed[2], 10) % 10;
+      console.log(`  Coordinates: ${parsed[1]}, ${parsed[2]}`);
+      console.log(`  x mod 10 = ${x}, y mod 10 = ${y}`);
+      console.log(`  SK check: x in [4,5,6]=${x >= 4 && x <= 6}, y in [4,5,6]=${y >= 4 && y <= 6}`);
+    }
+    return isSK ? "SK" : "NOT SK";
   };
 
   // Emergency rescue: dispatch pioneer from one colony to bootstrap another

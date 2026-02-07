@@ -29,6 +29,7 @@ interface CreepMemory {
   // Movement stuck detection
   _lastPos?: string;
   _stuckCount?: number;
+  _safeWaypoint?: string; // Intermediate room for safe multi-hop routing
 
   // Hauler container targeting (dynamic per-trip selection)
   targetContainer?: Id<StructureContainer> | null;
