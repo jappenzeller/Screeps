@@ -46,22 +46,23 @@ export class LinkManager {
     const storage = this.state?.structures.storage ?? this.room.storage;
 
     for (const link of this.links) {
-      // Check if near a source (within 2 tiles)
+      // Check if near a source (within 2 tiles) - these SEND energy
       const nearSource = sources.some((s) => link.pos.inRangeTo(s, 2));
       if (nearSource) {
         this.sourceLinks.push(link);
         continue;
       }
 
-      // Check if near controller (within 4 tiles)
-      if (controller && link.pos.inRangeTo(controller, 4)) {
-        this.controllerLink = link;
+      // Check storage BEFORE controller (storage has stricter range, and controller range 4 might overlap)
+      // Storage link is the hub for colony distribution
+      if (storage && link.pos.inRangeTo(storage, 2)) {
+        this.storageLink = link;
         continue;
       }
 
-      // Check if near storage (within 2 tiles)
-      if (storage && link.pos.inRangeTo(storage, 2)) {
-        this.storageLink = link;
+      // Check if near controller (within 4 tiles) - receives energy for upgraders
+      if (controller && link.pos.inRangeTo(controller, 4)) {
+        this.controllerLink = link;
         continue;
       }
     }
