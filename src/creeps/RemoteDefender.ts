@@ -184,10 +184,92 @@ function runRetreat(creep: Creep): boolean {
 }
 
 // ============================================
+// Border Crossing Logic
+// ============================================
+
+/**
+ * Check if creep is on a room border tile.
+ */
+function isOnBorder(creep: Creep): boolean {
+  var x = creep.pos.x;
+  var y = creep.pos.y;
+  return x === 0 || x === 49 || y === 0 || y === 49;
+}
+
+/**
+ * Handle border crossing - push through if we have a target room.
+ * Returns true if we handled this tick.
+ */
+function handleBorderCrossing(creep: Creep, mem: RemoteDefenderMemory): boolean {
+  // If we have a target room and we're on the border, push through
+  if (mem.targetRoom) {
+    // Move toward target room center
+    var targetPos = new RoomPosition(25, 25, mem.targetRoom);
+    creep.moveTo(targetPos, { reusePath: 5 });
+    creep.say("CROSS");
+    return true;
+  }
+
+  // No target room - step off border toward room interior
+  var x = creep.pos.x;
+  var y = creep.pos.y;
+  var direction: DirectionConstant;
+
+  if (y === 0) direction = BOTTOM;
+  else if (y === 49) direction = TOP;
+  else if (x === 0) direction = RIGHT;
+  else direction = LEFT;
+
+  creep.move(direction);
+  return true;
+}
+
+/**
+ * Update target tracking based on visibility.
+ * Persists targetRoom even when target isn't directly visible.
+ */
+function updateTargetTracking(creep: Creep, mem: RemoteDefenderMemory): void {
+  // If we have a targetId, check if it's still valid
+  if (mem.targetId) {
+    var target = Game.getObjectById(mem.targetId);
+    if (target) {
+      // Target still visible - update tracking
+      mem.lastTargetSeen = Game.time;
+      mem.targetRoom = target.pos.roomName;
+      return;
+    }
+
+    // Target not visible - could have moved or died
+    // Keep targetRoom but clear targetId, will re-acquire in room
+    delete mem.targetId;
+
+    // If we haven't seen target in 100 ticks, clear everything
+    if (mem.lastTargetSeen && Game.time - mem.lastTargetSeen > 100) {
+      // Only clear if we're IN the target room and confirmed clear
+      if (creep.room.name === mem.targetRoom) {
+        var hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
+        if (hostiles.length === 0) {
+          delete mem.targetRoom;
+          delete mem.lastTargetSeen;
+        }
+      }
+    }
+  }
+}
+
+// ============================================
 // Main Remote Defender Logic
 // ============================================
 export function runRemoteDefender(creep: Creep): void {
-  var homeRoom = creep.memory.room;
+  var mem = creep.memory as RemoteDefenderMemory;
+  var homeRoom = mem.room;
+
+  // Priority 0: Handle border stuck (always check first)
+  if (isOnBorder(creep) && mem.targetRoom) {
+    handleBorderCrossing(creep, mem);
+    alwaysAttackAndHeal(creep);
+    return;
+  }
 
   // Priority 1: If no RANGED_ATTACK parts, retreat immediately (can't fight)
   if (creep.getActiveBodyparts(RANGED_ATTACK) === 0) {
@@ -196,94 +278,146 @@ export function runRemoteDefender(creep: Creep): void {
   }
 
   // Priority 2: Check if we need to retreat (per-tick, no sticky flag)
-  // Only retreat when critically wounded - see shouldRetreat() for logic
   if (shouldRetreat(creep)) {
     runRetreat(creep);
     return;
   }
 
   // Clear any stale retreating flag from old logic
-  if (creep.memory.retreating) {
-    delete creep.memory.retreating;
+  if (mem.retreating) {
+    delete mem.retreating;
   }
 
-  var targetRoom = creep.memory.targetRoom;
+  // Update target tracking (handles cross-room persistence)
+  updateTargetTracking(creep, mem);
 
-  // Check if target room still has threats (read from Memory.intel)
-  var targetIntel = targetRoom && Memory.intel && Memory.intel[targetRoom]
-    ? Memory.intel[targetRoom]
-    : null;
-  var targetHasThreats = targetIntel && targetIntel.hostiles && targetIntel.hostiles > 0;
+  // Step 1: If we have a target room and aren't there, travel to it
+  if (mem.targetRoom && creep.room.name !== mem.targetRoom) {
+    travelToTargetRoom(creep, mem);
+    alwaysAttackAndHeal(creep);
+    return;
+  }
 
-  if (!targetHasThreats) {
-    // Look for another room that needs defenders
-    var newTarget = findRoomNeedingDefender(homeRoom);
-    if (newTarget) {
-      creep.memory.targetRoom = newTarget;
-      targetRoom = newTarget;
-      creep.memory.renewing = false; // Cancel renewal for combat
-      creep.say("NEW");
-    } else {
-      // No threats anywhere - move home and handle renewal/idle
-      if (creep.room.name !== homeRoom) {
-        moveToRoom(creep, homeRoom, "#888888");
-        // Still attack anything in range while going home
-        alwaysAttackAndHeal(creep);
-        creep.say("HOME");
-        return;
+  // Step 2: If in target room, try to acquire/engage target
+  if (mem.targetRoom && creep.room.name === mem.targetRoom) {
+    // Try to find a target if we don't have one
+    if (!mem.targetId) {
+      var hostile = findHostileInRoom(creep);
+      if (hostile) {
+        mem.targetId = hostile.id;
+        mem.lastTargetSeen = Game.time;
       }
+    }
 
-      // At home - check for renewal
-      if (shouldGoRenew(creep) || creep.memory.renewing) {
-        creep.memory.renewing = true;
-        if (runRenewal(creep)) return;
-        creep.memory.renewing = false;
-      }
+    // Engage if we have a visible target
+    var target = mem.targetId ? Game.getObjectById(mem.targetId) : null;
+    if (target) {
+      kiteAndAttack(creep);
+      return;
+    }
 
-      // Idle at center position (away from spawn)
-      var idlePos = getIdlePosition(creep);
-      if (creep.pos.getRangeTo(idlePos) > 2) {
-        smartMoveTo(creep, idlePos, { visualizePathStyle: { stroke: "#888888" } });
+    // In target room but no hostiles visible - check if room is clear
+    var remainingHostiles = creep.room.find(FIND_HOSTILE_CREEPS).length;
+    var remainingCores = creep.room.find(FIND_HOSTILE_STRUCTURES, {
+      filter: function(s) { return s.structureType === STRUCTURE_INVADER_CORE; },
+    }).length;
+
+    if (remainingHostiles === 0 && remainingCores === 0) {
+      // Room is clear - disband squad and clear assignment
+      console.log("[" + creep.name + "] " + mem.targetRoom + " clear, returning home");
+      var homeRoomObj = Game.rooms[homeRoom];
+      if (homeRoomObj) {
+        var squadManager = new RemoteSquadManager(homeRoomObj);
+        squadManager.disbandSquad(mem.targetRoom);
       }
-      creep.say("IDLE");
+      delete mem.targetRoom;
+      delete mem.targetId;
+      delete mem.lastTargetSeen;
+    } else if (remainingCores > 0) {
+      // Attack invader core
+      kiteAndAttack(creep);
       return;
     }
   }
 
-  if (!targetRoom) {
-    creep.say("?");
-    return;
-  }
-
-  // Move to target room
-  if (creep.room.name !== targetRoom) {
-    moveToRoom(creep, targetRoom, "#ff0000");
-    // Attack anything in range while traveling
-    alwaysAttackAndHeal(creep);
-    creep.say("GO");
-    return;
-  }
-
-  // In target room - kite and attack hostiles
-  kiteAndAttack(creep);
-
-  // Check if room is clear - update memory
-  var remainingHostiles = creep.room.find(FIND_HOSTILE_CREEPS).length;
-  var remainingCores = creep.room.find(FIND_HOSTILE_STRUCTURES, {
-    filter: function(s) { return s.structureType === STRUCTURE_INVADER_CORE; },
-  }).length;
-
-  if (remainingHostiles === 0 && remainingCores === 0) {
-    // NOTE: Intel will be updated automatically by gatherRoomIntel() next tick
-    // Disband the squad for this room
-    var homeRoomObj = Game.rooms[creep.memory.room];
-    if (homeRoomObj) {
-      var squadManager = new RemoteSquadManager(homeRoomObj);
-      squadManager.disbandSquad(targetRoom);
+  // Step 3: No active target room - check intel for hostile activity
+  if (!mem.targetRoom) {
+    var newTarget = findRoomNeedingDefender(homeRoom);
+    if (newTarget) {
+      mem.targetRoom = newTarget;
+      mem.renewing = false; // Cancel renewal for combat
+      console.log("[" + creep.name + "] Intel reports hostiles in " + newTarget);
+      creep.say("NEW");
+      return;
     }
-    // Clear assignment so we can find new threats
-    creep.memory.targetRoom = undefined;
   }
+
+  // Step 4: No threats - return home and handle renewal/idle
+  if (creep.room.name !== homeRoom) {
+    moveToRoom(creep, homeRoom, "#888888");
+    alwaysAttackAndHeal(creep);
+    creep.say("HOME");
+    return;
+  }
+
+  // At home - check for renewal
+  if (shouldGoRenew(creep) || mem.renewing) {
+    mem.renewing = true;
+    if (runRenewal(creep)) return;
+    mem.renewing = false;
+  }
+
+  // Idle at center position (away from spawn)
+  var idlePos = getIdlePosition(creep);
+  if (creep.pos.getRangeTo(idlePos) > 2) {
+    smartMoveTo(creep, idlePos, { visualizePathStyle: { stroke: "#888888" } });
+  }
+  creep.say("IDLE");
+}
+
+/**
+ * Travel to the target room with cross-room pathing.
+ */
+function travelToTargetRoom(creep: Creep, mem: RemoteDefenderMemory): void {
+  if (!mem.targetRoom) return;
+
+  var targetPos = new RoomPosition(25, 25, mem.targetRoom);
+
+  var result = creep.moveTo(targetPos, {
+    visualizePathStyle: { stroke: "#ff0000" },
+    reusePath: 10,
+    maxRooms: 3,
+  });
+
+  // If pathing fails, try direct move toward exit
+  if (result === ERR_NO_PATH) {
+    var exitDir = creep.room.findExitTo(mem.targetRoom);
+    if (exitDir !== ERR_NO_PATH && exitDir !== ERR_INVALID_ARGS) {
+      var exit = creep.pos.findClosestByPath(exitDir as ExitConstant);
+      if (exit) {
+        creep.moveTo(exit);
+      }
+    }
+  }
+
+  creep.say("GO");
+}
+
+/**
+ * Find a hostile creep in the current room.
+ * Prioritizes dangerous hostiles (ATTACK, RANGED, HEAL parts).
+ */
+function findHostileInRoom(creep: Creep): Creep | null {
+  var hostiles = creep.room.find(FIND_HOSTILE_CREEPS);
+
+  if (hostiles.length === 0) return null;
+
+  // Sort by threat level (highest first)
+  hostiles.sort(function(a, b) {
+    return getTargetPriority(b) - getTargetPriority(a);
+  });
+
+  return hostiles[0];
 }
 
 /**
@@ -428,13 +562,49 @@ function getTargetPriority(hostile: Creep): number {
 
 /**
  * Find a remote room that needs defenders
- * Checks adjacent rooms for threats based on Memory.intel
+ * Checks all remote rooms (including distance-2) from Memory.colonies
+ * Falls back to adjacent rooms via exits
  */
 function findRoomNeedingDefender(homeRoom: string): string | null {
+  const SCAN_AGE_THRESHOLD = 200;
+
+  // Priority 1: Check all registered remote rooms (includes distance-2)
+  var colonyMem = Memory.colonies && Memory.colonies[homeRoom];
+  if (colonyMem && colonyMem.remotes) {
+    for (var remoteName in colonyMem.remotes) {
+      var config = colonyMem.remotes[remoteName];
+      if (!config.active) continue;
+
+      // Check intel for this remote
+      var intel = Memory.intel && Memory.intel[remoteName];
+      if (!intel) continue;
+
+      // Skip source keeper rooms
+      if (intel.roomType === "sourceKeeper") continue;
+
+      // Check scan age
+      var scanAge = Game.time - (intel.lastScanned || 0);
+      if (scanAge > SCAN_AGE_THRESHOLD) continue;
+
+      var hostileCount = intel.hostiles || 0;
+      if (hostileCount > 0 || intel.invaderCore) {
+        return remoteName;
+      }
+
+      // Also check direct visibility
+      var room = Game.rooms[remoteName];
+      if (room) {
+        var hostiles = room.find(FIND_HOSTILE_CREEPS);
+        if (hostiles.length > 0) {
+          return remoteName;
+        }
+      }
+    }
+  }
+
+  // Priority 2: Fallback - check adjacent rooms via exits
   const exits = Game.map.describeExits(homeRoom);
   if (!exits) return null;
-
-  const SCAN_AGE_THRESHOLD = 200;
 
   for (const dir in exits) {
     const roomName = exits[dir as ExitKey];
@@ -465,6 +635,15 @@ function findRoomNeedingDefender(homeRoom: string): string | null {
       if (hasDangerous) {
         return roomName;
       }
+    }
+  }
+
+  // Priority 3: Check home room itself
+  var homeRoomObj = Game.rooms[homeRoom];
+  if (homeRoomObj) {
+    var homeHostiles = homeRoomObj.find(FIND_HOSTILE_CREEPS);
+    if (homeHostiles.length > 0) {
+      return homeRoom;
     }
   }
 

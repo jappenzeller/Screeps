@@ -228,6 +228,18 @@ interface RemoteBuilderMemory extends CreepMemory {
   targetSiteId?: Id<ConstructionSite>;  // Current build target
 }
 
+// Remote defender creep memory
+interface RemoteDefenderMemory extends CreepMemory {
+  role: "REMOTE_DEFENDER";
+  room: string;                    // Home room
+  targetId?: Id<Creep>;            // Current hostile target (may be null if no vision)
+  targetRoom?: string;             // Room with hostiles (persists even without vision)
+  lastTargetSeen?: number;         // Game.time when target was last visible
+  patrolRoom?: string;             // Assigned patrol room (optional)
+  renewing?: boolean;              // Currently renewing at spawn
+  retreating?: boolean;            // Currently retreating (legacy, cleared)
+}
+
 /**
  * Performance metrics for a remote room.
  * Updated periodically by EconomyTracker.
