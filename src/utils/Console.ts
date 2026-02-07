@@ -71,6 +71,7 @@ safemode("W1N1") - Safe mode status for specific room
 stats()          - Show collected stats for AWS monitoring
 clearStats()     - Clear all collected stats
 awsExport()      - Show AWS memory segment export status
+segmentSize()    - Show segment 90 size breakdown and shedding status
 construction()   - Show construction status and priorities
 advisor()        - Show AI Advisor API endpoints
 fetchAdvisor("W1N1") - Show cached recommendations for room
@@ -863,6 +864,87 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       console.log(`  Total creeps: ${parsed.global.totalCreeps}`);
 
       return "OK";
+    } catch (e) {
+      console.log("Parse error:", e);
+      return "Parse error";
+    }
+  };
+
+  // Show segment 90 size breakdown for AWS export monitoring
+  global.segmentSize = () => {
+    const data = RawMemory.segments[90];
+    if (!data) {
+      console.log("No segment 90 data. Wait for next export (every 20 ticks).");
+      return "No data";
+    }
+
+    const totalSize = data.length;
+    const totalKB = Math.round(totalSize / 1000);
+    const pctUsed = Math.round((totalSize / 100000) * 100);
+
+    console.log("=== Segment 90 Size Analysis ===");
+    console.log(`Total: ${totalSize} bytes (${totalKB}KB, ${pctUsed}% of 100KB limit)`);
+
+    try {
+      const parsed = JSON.parse(data);
+
+      // Measure individual sections
+      const sections: { name: string; size: number }[] = [
+        { name: "colonies", size: JSON.stringify(parsed.colonies || []).length },
+        { name: "intel", size: JSON.stringify(parsed.intel || {}).length },
+        { name: "diagnostics", size: JSON.stringify(parsed.diagnostics || {}).length },
+        { name: "empire", size: JSON.stringify(parsed.empire || null).length },
+        { name: "global", size: JSON.stringify(parsed.global || {}).length },
+        { name: "exportMeta", size: JSON.stringify(parsed.exportMeta || {}).length },
+      ];
+
+      // Sort by size descending
+      sections.sort((a, b) => b.size - a.size);
+
+      console.log("\nBreakdown by section:");
+      for (const section of sections) {
+        const kb = (section.size / 1000).toFixed(1);
+        const pct = Math.round((section.size / totalSize) * 100);
+        const bar = "█".repeat(Math.min(20, Math.round(pct / 5)));
+        console.log(`  ${section.name.padEnd(12)} ${kb.padStart(5)}KB (${pct.toString().padStart(2)}%) ${bar}`);
+      }
+
+      // Show shedding info if available
+      if (parsed.exportMeta) {
+        const meta = parsed.exportMeta;
+        console.log("\nExport metadata:");
+        console.log(`  Last export tick: ${meta.lastExportTick}`);
+        console.log(`  Delta intel: ${meta.deltaIntelCount}/${meta.totalIntelCount} rooms`);
+        if (meta.shedLevel !== undefined && meta.shedLevel > 0) {
+          console.log(`  Shed level: ${meta.shedLevel} (original: ${Math.round((meta.originalSize || 0) / 1000)}KB)`);
+        }
+      }
+
+      // Show intel breakdown
+      const intelEntries = Object.keys(parsed.intel || {}).length;
+      if (intelEntries > 0) {
+        console.log(`\nIntel: ${intelEntries} rooms exported this tick`);
+      }
+
+      // Show colony creep details breakdown
+      let totalCreepDetails = 0;
+      for (const colony of parsed.colonies || []) {
+        totalCreepDetails += (colony.creeps?.details || []).length;
+      }
+      if (totalCreepDetails > 0) {
+        const creepDetailsSize = parsed.colonies.reduce((sum: number, c: any) =>
+          sum + JSON.stringify(c.creeps?.details || []).length, 0);
+        console.log(`Creep details: ${totalCreepDetails} creeps (${(creepDetailsSize / 1000).toFixed(1)}KB)`);
+      }
+
+      // Warning thresholds
+      if (totalSize > 90000) {
+        console.log("\n⚠️  WARNING: Near size limit, shedding may occur");
+      } else if (totalSize > 80000) {
+        console.log("\n⚠️  CAUTION: Approaching size warning threshold");
+      }
+
+      return `${totalKB}KB used (${pctUsed}%)`;
     } catch (e) {
       console.log("Parse error:", e);
       return "Parse error";

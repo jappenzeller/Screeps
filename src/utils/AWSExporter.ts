@@ -432,6 +432,172 @@ interface SourceDiagnostic {
   ticksToRegeneration: number;
 }
 
+interface ExportMeta {
+  lastExportTick: number;
+  deltaIntelCount: number;
+  totalIntelCount: number;
+  shedLevel?: number;
+  originalSize?: number;
+  finalSize?: number;
+}
+
+// Size thresholds for segment 90 (100KB limit)
+const SIZE_LIMIT = 100000;   // Hard limit - must not exceed
+const SIZE_TARGET = 90000;   // Aim to stay below this
+const SIZE_WARNING = 80000;  // Start shedding above this
+
+/**
+ * Shedding Tier 1: Remove diagnostics (least critical, on-demand available)
+ */
+function shedDiagnostics(payload: AWSExportData): void {
+  payload.diagnostics = {};
+}
+
+/**
+ * Shedding Tier 2: Remove stale intel (older than threshold)
+ */
+function shedStaleIntel(payload: AWSExportData, maxAge: number): number {
+  let removed = 0;
+  const now = Game.time;
+  for (const roomName in payload.intel) {
+    const intel = payload.intel[roomName];
+    if (!intel.lastScanned || now - intel.lastScanned > maxAge) {
+      delete payload.intel[roomName];
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Shedding Tier 3: Trim creep data to counts only (remove details array)
+ */
+function trimCreepData(payload: AWSExportData): void {
+  for (const colony of payload.colonies) {
+    colony.creeps.details = [];
+  }
+}
+
+/**
+ * Shedding Tier 4: Keep only operationally critical intel
+ * (owned rooms, active remotes, active expansions, adjacent rooms)
+ */
+function shedDistantIntel(payload: AWSExportData): number {
+  const essentialRooms = new Set<string>();
+
+  // Owned rooms - always keep
+  for (const colony of payload.colonies) {
+    essentialRooms.add(colony.roomName);
+
+    // Adjacent rooms - need for threat awareness
+    for (const adj of colony.adjacentRooms) {
+      essentialRooms.add(adj.roomName);
+    }
+
+    // Active remote targets - always keep
+    for (const remote of colony.remoteRooms || []) {
+      essentialRooms.add(remote);
+    }
+  }
+
+  // Active expansion targets - always keep
+  if (payload.empire?.expansion?.active) {
+    for (const exp of payload.empire.expansion.active) {
+      essentialRooms.add(exp.roomName);
+    }
+  }
+
+  // Queued expansions
+  if (payload.empire?.expansion?.queue) {
+    for (const q of payload.empire.expansion.queue) {
+      essentialRooms.add(q.target);
+    }
+  }
+
+  let removed = 0;
+  for (const roomName in payload.intel) {
+    if (!essentialRooms.has(roomName)) {
+      delete payload.intel[roomName];
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Build payload with tiered shedding to stay under size limit
+ */
+function buildAndShedPayload(payload: AWSExportData): { json: string; shedLevel: number; originalSize: number } {
+  let json = JSON.stringify(payload);
+  const originalSize = json.length;
+  let shedLevel = 0;
+
+  // Tier 1: Shed diagnostics if over warning threshold
+  if (json.length > SIZE_WARNING) {
+    shedDiagnostics(payload);
+    json = JSON.stringify(payload);
+    shedLevel = 1;
+    if (Game.time % 100 === 0) {
+      console.log("[AWSExporter] Tier 1: Shed diagnostics. Size: " + json.length);
+    }
+  }
+
+  // Tier 2: Shed stale intel (>5000 ticks old)
+  if (json.length > SIZE_TARGET) {
+    const removed = shedStaleIntel(payload, 5000);
+    json = JSON.stringify(payload);
+    shedLevel = 2;
+    if (removed > 0 && Game.time % 100 === 0) {
+      console.log("[AWSExporter] Tier 2: Shed " + removed + " stale intel entries. Size: " + json.length);
+    }
+  }
+
+  // Tier 3: Trim creep details to just counts
+  if (json.length > SIZE_TARGET) {
+    trimCreepData(payload);
+    json = JSON.stringify(payload);
+    shedLevel = 3;
+    if (Game.time % 100 === 0) {
+      console.log("[AWSExporter] Tier 3: Trimmed creep details. Size: " + json.length);
+    }
+  }
+
+  // Tier 4: Shed older intel (>1000 ticks old)
+  if (json.length > SIZE_TARGET) {
+    const removed = shedStaleIntel(payload, 1000);
+    json = JSON.stringify(payload);
+    shedLevel = 4;
+    if (removed > 0 && Game.time % 100 === 0) {
+      console.log("[AWSExporter] Tier 4: Shed " + removed + " older intel entries. Size: " + json.length);
+    }
+  }
+
+  // Tier 5: Keep only essential intel (owned + adjacent + remotes + expansions)
+  if (json.length > SIZE_TARGET) {
+    const removed = shedDistantIntel(payload);
+    json = JSON.stringify(payload);
+    shedLevel = 5;
+    if (removed > 0 && Game.time % 100 === 0) {
+      console.log("[AWSExporter] Tier 5: Shed " + removed + " distant intel entries. Size: " + json.length);
+    }
+  }
+
+  // Tier 6: Drop all intel as last resort
+  if (json.length > SIZE_LIMIT) {
+    payload.intel = {};
+    json = JSON.stringify(payload);
+    shedLevel = 6;
+    console.log("[AWSExporter] Tier 6: CRITICAL - Dropped all intel. Size: " + json.length);
+  }
+
+  // Final check - if still over limit, we have a serious problem
+  if (json.length > SIZE_LIMIT) {
+    console.log("[AWSExporter] CRITICAL: Payload still " + json.length + " bytes after all shedding!");
+  }
+
+  return { json, shedLevel, originalSize };
+}
+
 export class AWSExporter {
   /**
    * Export colony data to memory segment for AWS Lambda
@@ -499,64 +665,22 @@ export class AWSExporter {
       },
     };
 
-    // Serialize and check size
-    let json = JSON.stringify(payload);
+    // Apply tiered shedding to stay under segment size limit
+    const { json, shedLevel, originalSize } = buildAndShedPayload(payload);
 
-    // Screeps segment limit is 100KB - gracefully degrade if over budget
-    if (json.length > 95000) {
-      // First: drop diagnostics (can be fetched on-demand via commands)
-      payload.diagnostics = {};
-      json = JSON.stringify(payload);
-      console.log("[AWSExporter] Over budget, dropped diagnostics. Size: " + json.length);
+    // Update exportMeta with shedding info
+    if (payload.exportMeta) {
+      payload.exportMeta.shedLevel = shedLevel;
+      payload.exportMeta.originalSize = originalSize;
+      payload.exportMeta.finalSize = json.length;
     }
 
-    if (json.length > 95000) {
-      // Second: reduce delta intel to only operationally critical rooms
-      const essentialIntel: Record<string, RoomIntel> = {};
-      const essentialRooms = new Set<string>();
-
-      // Owned rooms - always keep
-      for (var i = 0; i < payload.colonies.length; i++) {
-        essentialRooms.add(payload.colonies[i].roomName);
-      }
-
-      // Active remote targets - always keep
-      for (var j = 0; j < payload.colonies.length; j++) {
-        var remotes = payload.colonies[j].remoteRooms || [];
-        for (var k = 0; k < remotes.length; k++) {
-          essentialRooms.add(remotes[k]);
-        }
-      }
-
-      // Active expansion targets - always keep
-      if (payload.empire && payload.empire.expansion && payload.empire.expansion.active) {
-        var active = payload.empire.expansion.active;
-        for (var m = 0; m < active.length; m++) {
-          essentialRooms.add(active[m].roomName);
-        }
-      }
-
-      for (var name in payload.intel) {
-        if (essentialRooms.has(name)) {
-          essentialIntel[name] = payload.intel[name];
-        }
-      }
-      payload.intel = essentialIntel;
-      json = JSON.stringify(payload);
-      console.log("[AWSExporter] Over budget, reduced intel to essential. Size: " + json.length);
-    }
-
-    if (json.length > 100000) {
-      console.log("[AWSExporter] CRITICAL: Payload still " + json.length + " bytes, truncating intel");
-      payload.intel = {};
-      json = JSON.stringify(payload);
-    }
-
-    // Log size periodically with delta info
+    // Log size periodically with shedding info
     if (Game.time % 100 === 0) {
+      const shedInfo = shedLevel > 0 ? ` (shed level ${shedLevel}, was ${Math.round(originalSize / 1000)}KB)` : "";
       console.log("[AWSExporter] Segment 90: " + json.length + " bytes (" +
         Math.round(json.length / 1000) + "KB), delta intel: " + deltaCount +
-        "/" + totalIntelCount + " rooms");
+        "/" + totalIntelCount + " rooms" + shedInfo);
     }
 
     // Write to segment
