@@ -234,6 +234,15 @@ awsExport()
 // Shows: Segment size, Last export tick
 ```
 
+### segmentSize()
+Detailed segment 90 size breakdown.
+```javascript
+segmentSize()
+// Shows: Total size, Section breakdown, Shedding status
+// Sections: colonies, intel, diagnostics, empire, global
+// Warns if approaching 100KB limit
+```
+
 ### advisor()
 Show AI Advisor API endpoints.
 ```javascript
@@ -267,4 +276,5 @@ fetchAdvisor("W1N1")
 | Defense | `threats()` | Hostiles |
 | Defense | `safemode()` | Safe mode |
 | Debug | `moveStats()` | Movement |
+| AWS | `segmentSize()` | Size breakdown |
 | AWS | `advisor()` | API info |
