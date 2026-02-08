@@ -10,6 +10,14 @@ interface EconomyPanelProps {
   error?: Error | null;
 }
 
+const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
+  CRITICAL: { bg: '#ff444433', text: '#ff4444' },
+  STRUGGLING: { bg: '#ff884433', text: '#ff8844' },
+  STABLE: { bg: '#ffcc0033', text: '#ffcc00' },
+  THRIVING: { bg: '#00ff8833', text: '#00ff88' },
+  SURPLUS: { bg: '#4488ff33', text: '#4488ff' },
+};
+
 export function EconomyPanel({ economy, links, containers, spawns, loading, error }: EconomyPanelProps) {
   if (loading) {
     return (
@@ -31,30 +39,112 @@ export function EconomyPanel({ economy, links, containers, spawns, loading, erro
     );
   }
 
-  const trendIcon = economy?.storageTrend === 'rising' ? '↑' : economy?.storageTrend === 'falling' ? '↓' : '→';
-  const trendColor = economy?.storageTrend === 'rising' ? '#00ff88' : economy?.storageTrend === 'falling' ? '#ff4444' : '#888';
+  const statusConfig = economy?.status ? STATUS_COLORS[economy.status] : null;
+  const netFlowPositive = (economy?.netFlow ?? 0) >= 0;
 
   return (
     <div className="space-y-6">
+      {/* Economy Summary */}
+      <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-4">
+        <div className="flex flex-wrap items-center gap-4 mb-4">
+          {/* Status Badge */}
+          {economy?.status && statusConfig && (
+            <span
+              className="px-3 py-1 rounded-full text-sm font-medium"
+              style={{ backgroundColor: statusConfig.bg, color: statusConfig.text }}
+            >
+              {economy.status}
+            </span>
+          )}
+          {/* Health Score */}
+          {economy?.healthScore !== undefined && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[#888]">Health:</span>
+              <span className="text-lg font-bold text-[#eee]">{economy.healthScore}</span>
+              <span className="text-xs text-[#888]">/ 100</span>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          {/* Total Income */}
+          <div>
+            <div className="text-xs text-[#888] mb-1">Total Income</div>
+            <div className="text-lg font-bold text-[#00ff88]">
+              +{(economy?.totalIncome ?? 0).toFixed(2)}
+              <span className="text-xs text-[#888] ml-1">e/tick</span>
+            </div>
+          </div>
+
+          {/* Total Burn */}
+          <div>
+            <div className="text-xs text-[#888] mb-1">Total Burn</div>
+            <div className="text-lg font-bold text-[#ff4444]">
+              -{(economy?.totalBurn ?? 0).toFixed(2)}
+              <span className="text-xs text-[#888] ml-1">e/tick</span>
+            </div>
+          </div>
+
+          {/* Net Flow */}
+          <div>
+            <div className="text-xs text-[#888] mb-1">Net Flow</div>
+            <div
+              className="text-lg font-bold"
+              style={{ color: netFlowPositive ? '#00ff88' : '#ff4444' }}
+            >
+              {netFlowPositive ? '+' : ''}{(economy?.netFlow ?? 0).toFixed(2)}
+              <span className="text-xs text-[#888] ml-1">e/tick</span>
+            </div>
+          </div>
+
+          {/* Runway */}
+          <div>
+            <div className="text-xs text-[#888] mb-1">Runway</div>
+            <div className="text-lg font-bold text-[#eee]">
+              {economy?.runway === -1 || economy?.runway === undefined
+                ? '∞'
+                : formatNumber(economy.runway)}
+              {economy?.runway !== -1 && economy?.runway !== undefined && (
+                <span className="text-xs text-[#888] ml-1">ticks</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Rate Metrics */}
       <div>
         <h4 className="text-sm font-medium text-[#888] mb-3 uppercase tracking-wider">Energy Rates (per tick)</h4>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <RateCard label="Harvest" value={economy?.harvestRate ?? 0} color="#00ff88" />
-          <RateCard label="Upgrade" value={economy?.upgradeRate ?? 0} color="#4488ff" />
-          <RateCard label="Build" value={economy?.buildRate ?? 0} color="#ff8844" />
-          <RateCard label="Repair" value={economy?.repairRate ?? 0} color="#ffcc00" />
-          <RateCard label="Spawn" value={economy?.spawnRate ?? 0} color="#aa88ff" />
-          <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-3">
-            <div className="text-xs text-[#888] mb-1">Storage</div>
-            <div className="flex items-center gap-2">
-              <span className="text-xl font-bold text-[#eee]">
-                {formatNumber(economy?.storageLevel ?? 0)}
-              </span>
-              <span style={{ color: trendColor }} className="text-lg">
-                {trendIcon}
-              </span>
-            </div>
+          <RateCard label="Harvest (Local)" value={economy?.harvestIncome ?? 0} color="#00ff88" isIncome />
+          <RateCard label="Harvest (Remote)" value={economy?.remoteIncome ?? 0} color="#00ff88" isIncome />
+          <RateCard label="Upgrade" value={economy?.upgradeBurn ?? 0} color="#8844ff" />
+          <RateCard label="Build" value={economy?.buildBurn ?? 0} color="#ffcc00" />
+          <RateCard label="Spawn" value={economy?.spawnBurn ?? 0} color="#4488ff" />
+          <RateCard label="Towers" value={economy?.towerBurn ?? 0} color="#ff4444" />
+        </div>
+      </div>
+
+      {/* Storage Card */}
+      <div>
+        <h4 className="text-sm font-medium text-[#888] mb-3 uppercase tracking-wider">Storage</h4>
+        <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-2xl font-bold text-[#00ff88]">
+              {formatNumber(economy?.stored ?? 0)}
+            </span>
+            <span className="text-sm text-[#888]">
+              {economy?.available ?? 0} / {economy?.capacity ?? 0} spawn energy
+            </span>
+          </div>
+          <div className="h-2 bg-[#333] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-[#00ff88] to-[#00cc66] transition-all"
+              style={{ width: `${Math.min(((economy?.stored ?? 0) / 500000) * 100, 100)}%` }}
+            />
+          </div>
+          <div className="text-xs text-[#666] mt-1">
+            {(((economy?.stored ?? 0) / 500000) * 100).toFixed(1)}% of max storage (500K)
           </div>
         </div>
       </div>
@@ -98,12 +188,23 @@ export function EconomyPanel({ economy, links, containers, spawns, loading, erro
   );
 }
 
-function RateCard({ label, value, color }: { label: string; value: number; color: string }) {
+function RateCard({
+  label,
+  value,
+  color,
+  isIncome = false,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  isIncome?: boolean;
+}) {
   return (
     <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-3">
       <div className="text-xs text-[#888] mb-1">{label}</div>
       <div className="text-xl font-bold" style={{ color }}>
-        {value.toFixed(1)}
+        {isIncome && value > 0 ? '+' : ''}{value.toFixed(2)}
+        <span className="text-xs text-[#888] ml-1">e/tick</span>
       </div>
     </div>
   );

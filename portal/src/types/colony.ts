@@ -119,13 +119,33 @@ export interface RemoteCreepExport {
 }
 
 export interface ColonyEconomyMetrics {
-  harvestRate: number;
-  upgradeRate: number;
-  buildRate: number;
-  repairRate: number;
-  spawnRate: number;
-  storageLevel: number;
-  storageTrend: 'rising' | 'falling' | 'stable';
+  // Energy levels
+  stored: number;
+  available: number;
+  capacity: number;
+
+  // Income rates (per tick)
+  harvestIncome: number;    // Local source harvest rate
+  remoteIncome: number;     // Remote mining income
+  totalIncome: number;      // harvestIncome + remoteIncome
+
+  // Burn rates (per tick)
+  spawnBurn: number;        // Energy spent spawning
+  upgradeBurn: number;      // Energy spent upgrading controller
+  buildBurn: number;        // Energy spent on construction
+  towerBurn: number;        // Energy spent by towers (repair + attack)
+  totalBurn: number;        // Sum of all burns
+
+  // Derived
+  netFlow: number;          // totalIncome - totalBurn
+  runway: number;           // Ticks until storage empty (-1 if positive flow)
+
+  // Health
+  healthScore: number;      // 0-100
+  status: 'CRITICAL' | 'STRUGGLING' | 'STABLE' | 'THRIVING' | 'SURPLUS';
+
+  // Legacy/optional for backwards compat
+  storageTrend?: 'rising' | 'falling' | 'stable';
 }
 
 // Response from GET /metrics/{room}?hours=N
