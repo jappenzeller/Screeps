@@ -10,6 +10,7 @@ import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
 import * as DuoManager from "../combat/DuoManager";
+import { getUtilityScores } from "../spawning/utilitySpawning";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -52,6 +53,8 @@ energy()         - Energy status per room
 cpu()            - CPU and bucket status
 spawn("ROLE")    - Force spawn a creep
 spawn("ROLE", "W1N1") - Force spawn in specific room
+spawnScores()    - Show utility scores for all spawn roles
+spawnScores("W1N1") - Spawn scores for specific room
 kill("name")     - Kill a creep by name
 resetCreeps()    - Reset all creep states (fixes stuck creeps)
 tasks()          - Show ColonyManager task queue
@@ -325,6 +328,46 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     } else {
       console.log(`Failed to spawn: ${result}`);
     }
+  };
+
+  // Show utility scores for all spawn roles
+  global.spawnScores = (roomName?: string) => {
+    var targetRoom: Room | undefined;
+
+    if (roomName) {
+      targetRoom = Game.rooms[roomName];
+    } else {
+      // Find first owned room
+      for (var name in Game.rooms) {
+        var room = Game.rooms[name];
+        if (room.controller && room.controller.my) {
+          targetRoom = room;
+          break;
+        }
+      }
+    }
+
+    if (!targetRoom) {
+      console.log("Error: No owned room found");
+      return "Error";
+    }
+
+    var scores = getUtilityScores(targetRoom);
+    var lines: string[] = [];
+    lines.push("=== Spawn Utility Scores for " + targetRoom.name + " ===");
+    lines.push("Role                Utility   Deficit");
+    lines.push("----------------------------------------");
+
+    for (var i = 0; i < scores.length; i++) {
+      var s = scores[i];
+      var rolePad = s.role.padEnd(18);
+      var utilityStr = s.utility.toFixed(1).padStart(8);
+      var deficitStr = String(s.deficit).padStart(8);
+      lines.push(rolePad + utilityStr + deficitStr);
+    }
+
+    console.log(lines.join("\n"));
+    return "OK";
   };
 
   // Kill a creep

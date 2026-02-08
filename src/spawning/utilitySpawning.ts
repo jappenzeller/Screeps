@@ -2227,3 +2227,34 @@ function findRemoteRoomNeedingReserver(state: ColonyState): string | null {
 
   return null;
 }
+
+/**
+ * Get utility scores for all roles, sorted by utility descending
+ * Used for debugging spawn decisions via console command
+ */
+export function getUtilityScores(room: Room): Array<{ role: string; utility: number; deficit: number }> {
+  var state = getColonyState(room);
+  var results: Array<{ role: string; utility: number; deficit: number }> = [];
+
+  for (var i = 0; i < ALL_ROLES.length; i++) {
+    var role = ALL_ROLES[i];
+    var utility = calculateUtility(role, state);
+    var current = state.counts[role] || 0;
+    var target = state.targets[role] || 0;
+    var dying = state.dyingSoon[role] || 0;
+    var deficit = target - current + dying;
+
+    results.push({
+      role: role,
+      utility: utility,
+      deficit: deficit,
+    });
+  }
+
+  // Sort by utility descending
+  results.sort(function(a, b) {
+    return b.utility - a.utility;
+  });
+
+  return results;
+}

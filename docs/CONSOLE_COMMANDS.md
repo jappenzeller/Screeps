@@ -65,6 +65,14 @@ spawn("HARVESTER")           // In first available room
 spawn("BUILDER", "W1N1")     // In specific room
 ```
 
+### spawnScores(roomName?)
+Show utility scores for all spawn roles, sorted highest to lowest.
+```javascript
+spawnScores()            // First owned room
+spawnScores("W1N1")      // Specific room
+// Shows: Role, Utility score, Deficit (target - current + dying)
+```
+
 ### kill(creepName)
 Kill a specific creep.
 ```javascript
@@ -288,6 +296,7 @@ checkSK("E45N36")
 | Creeps | `creeps()` | List creeps |
 | Creeps | `tasks()` | Task queue |
 | Creeps | `spawn("ROLE")` | Force spawn |
+| Creeps | `spawnScores()` | Utility scores |
 | Construction | `construction()` | Build status |
 | Construction | `traffic("room")` | Heatmap |
 | Remote | `remote()` | Mining status |
