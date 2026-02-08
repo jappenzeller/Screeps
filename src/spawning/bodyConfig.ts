@@ -226,6 +226,18 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
   },
 
   /**
+   * ROAD_BUILDER - Specialized road construction
+   * Same pattern as BUILDER - needs to travel across room
+   */
+  ROAD_BUILDER: {
+    pattern: [WORK, CARRY, MOVE],
+    maxRepeats: 10,
+    minEnergy: 200,
+    fallback: [WORK, CARRY, MOVE],
+    moveMode: "pattern",
+  },
+
+  /**
    * RANGED_ATTACKER - Ranged DPS for combat duos
    * Kiting-optimized: RANGED_ATTACK + MOVE for plains mobility
    * Prefix TOUGH for damage buffer, extra MOVE suffix for kiting

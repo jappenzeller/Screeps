@@ -142,6 +142,7 @@ type SpawnRole =
   | "MINERAL_HARVESTER"
   | "CLAIMER"
   | "PIONEER"
+  | "ROAD_BUILDER"
   | "RANGED_ATTACKER"
   | "COMBAT_HEALER";
 
@@ -161,6 +162,7 @@ const ALL_ROLES: SpawnRole[] = [
   "LINK_FILLER",
   "MINERAL_HARVESTER",
   "CLAIMER",
+  "ROAD_BUILDER",
   "RANGED_ATTACKER",
   "COMBAT_HEALER",
 ];
@@ -782,6 +784,14 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     }
   }
 
+  // Road builder: 1 if road construction sites exist and colony has storage
+  if (room.storage) {
+    var roadSites = room.find(FIND_CONSTRUCTION_SITES, {
+      filter: function(s) { return s.structureType === STRUCTURE_ROAD; },
+    });
+    targets.ROAD_BUILDER = roadSites.length > 0 ? 1 : 0;
+  }
+
   // Remote operations at RCL 4+
   if (rcl >= 4) {
     // Use new remote config format for distance-aware calculations
@@ -858,6 +868,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return linkFillerUtility(effectiveDeficit, state);
     case "MINERAL_HARVESTER":
       return mineralHarvesterUtility(effectiveDeficit, state);
+    case "ROAD_BUILDER":
+      return roadBuilderUtility(effectiveDeficit, state);
     case "CLAIMER":
       return claimerUtility(state);
     case "RANGED_ATTACKER":
@@ -1519,6 +1531,35 @@ function mineralHarvesterUtility(deficit: number, state: ColonyState): number {
   if (state.energyStored < 50000) {
     return 0;
   }
+
+  return utility;
+}
+
+/**
+ * Road builder utility - spawns when road construction sites exist
+ * Low priority — roads are efficiency improvements, not critical infrastructure
+ * Only spawn when colony has stable economy (storage > 10000)
+ */
+function roadBuilderUtility(deficit: number, state: ColonyState): number {
+  if (deficit <= 0) return 0;
+
+  // Need storage for efficient collection
+  if (!state.room.storage) return 0;
+  if (state.energyStored < 10000) return 0;
+
+  // Count road construction sites in home room
+  var roadSites = state.room.find(FIND_CONSTRUCTION_SITES, {
+    filter: function(s) { return s.structureType === STRUCTURE_ROAD; },
+  });
+
+  if (roadSites.length === 0) return 0;
+
+  // Low priority utility — roads are nice-to-have, not critical
+  var utility = 10;
+
+  // More sites = slightly more urgency
+  if (roadSites.length > 10) utility += 3;
+  if (roadSites.length > 20) utility += 3;
 
   return utility;
 }

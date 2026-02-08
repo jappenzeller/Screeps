@@ -13,6 +13,7 @@ import { runRemoteDefender } from "./RemoteDefender";
 import { runLinkFiller } from "./LinkFiller";
 import { runMineralHarvester } from "./MineralHarvester";
 import { runPioneer } from "./Pioneer";
+import { runRoadBuilder } from "./RoadBuilder";
 import { runRangedAttacker } from "../combat/roles/RangedAttacker";
 import { runCombatHealer } from "../combat/roles/CombatHealer";
 
@@ -39,6 +40,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   LINK_FILLER: runLinkFiller,
   MINERAL_HARVESTER: runMineralHarvester,
   PIONEER: runPioneer,
+  ROAD_BUILDER: runRoadBuilder,
   RANGED_ATTACKER: runRangedAttacker,
   COMBAT_HEALER: runCombatHealer,
 };

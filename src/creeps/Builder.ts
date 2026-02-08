@@ -101,9 +101,10 @@ function findConstructionSite(creep: Creep): ConstructionSite | null {
   }
 
   // Priority 4: Road sites in home room (lowest priority)
-  if (homeRoom) {
-    const roads = homeRoom.find(FIND_CONSTRUCTION_SITES, {
-      filter: (s) => s.structureType === STRUCTURE_ROAD,
+  // Skip if storage exists - road builder handles home room roads
+  if (homeRoom && !homeRoom.storage) {
+    var roads = homeRoom.find(FIND_CONSTRUCTION_SITES, {
+      filter: function(s) { return s.structureType === STRUCTURE_ROAD; },
     });
     if (roads.length > 0) {
       return creep.pos.findClosestByPath(roads) || roads[0];
