@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { fetchColony } from '../api/colonies';
 import type { ColonyDetail as ColonyDetailType } from '../types/colony';
@@ -96,9 +96,24 @@ export function ColonyDetail() {
               </span>
             )}
           </div>
-          {meta?.freshness !== undefined && (
-            <FreshnessIndicator freshness={meta.freshness} source={meta.source} />
-          )}
+          <div className="flex items-center gap-4">
+            {/* Cross-page navigation */}
+            <Link
+              to={`/intel?focus=${roomName}`}
+              className="text-sm text-[#4488ff] hover:text-[#66aaff] transition-colors"
+            >
+              View on Map →
+            </Link>
+            <Link
+              to={`/advisor?room=${roomName}`}
+              className="text-sm text-[#aa88ff] hover:text-[#ccaaff] transition-colors"
+            >
+              AI Analysis →
+            </Link>
+            {meta?.freshness !== undefined && (
+              <FreshnessIndicator freshness={meta.freshness} source={meta.source} />
+            )}
+          </div>
         </div>
 
         {/* Overview Cards */}

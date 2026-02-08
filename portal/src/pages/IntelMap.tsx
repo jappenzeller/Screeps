@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Header } from '../components/layout/Header';
 import { FilterPanel } from '../components/intel/FilterPanel';
 import { RoomDetail } from '../components/intel/RoomDetail';
@@ -23,8 +24,17 @@ const DEFAULT_FILTERS: IntelFilters = {
 };
 
 export function IntelMap() {
+  const [searchParams] = useSearchParams();
   const [filters, setFilters] = useState<IntelFilters>(DEFAULT_FILTERS);
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
+
+  // Handle focus query parameter
+  useEffect(() => {
+    const focusRoom = searchParams.get('focus');
+    if (focusRoom) {
+      setSelectedRoom(focusRoom);
+    }
+  }, [searchParams]);
 
   // Fetch intel data
   const {

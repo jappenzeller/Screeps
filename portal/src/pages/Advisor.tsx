@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Header } from '../components/layout/Header';
 import { ColonySelector } from '../components/advisor/ColonySelector';
 import { SummaryBar } from '../components/advisor/SummaryBar';
@@ -32,7 +33,7 @@ type StatusFilter = 'all' | 'pending' | 'applied' | 'dismissed';
 type SortOption = 'priority' | 'newest' | 'oldest';
 
 export function Advisor() {
-  // Parse room from URL hash
+  const [searchParams] = useSearchParams();
   const [selectedRoom, setSelectedRoom] = useState<string>('');
   const [signalHours, setSignalHours] = useState(24);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
@@ -51,19 +52,17 @@ export function Advisor() {
     [coloniesData]
   );
 
-  // Set default room when colonies load
+  // Set default room when colonies load or URL param changes
   useEffect(() => {
     if (colonies.length > 0 && !selectedRoom) {
-      // Check URL for room parameter
-      const hash = window.location.hash;
-      const roomMatch = hash.match(/room=([A-Za-z0-9]+)/);
-      if (roomMatch && colonies.includes(roomMatch[1])) {
-        setSelectedRoom(roomMatch[1]);
+      const roomFromUrl = searchParams.get('room');
+      if (roomFromUrl && colonies.includes(roomFromUrl)) {
+        setSelectedRoom(roomFromUrl);
       } else {
         setSelectedRoom(colonies[0]);
       }
     }
-  }, [colonies, selectedRoom]);
+  }, [colonies, selectedRoom, searchParams]);
 
   // Fetch analysis data for selected room
   const isAllRooms = selectedRoom === 'all';

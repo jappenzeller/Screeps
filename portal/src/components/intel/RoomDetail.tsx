@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { RoomIntel, ScoredCandidate } from '../../types/intel';
 import { formatFreshness } from '../../utils/formatting';
 import { getRoomType } from '../../utils/roomCoords';
@@ -62,7 +63,7 @@ export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
       <div className="p-4 space-y-4">
         {/* Ownership Status */}
         {(room.isOwned || room.isReserved) && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {room.isOwned && (
               <span
                 className={`px-2 py-1 text-xs rounded ${
@@ -84,6 +85,14 @@ export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
               >
                 Reserved: {room.reservedBy}
               </span>
+            )}
+            {room.isOwned && room.owner === 'Montblanc0' && (
+              <Link
+                to={`/colony/${room.roomName}`}
+                className="px-2 py-1 text-xs text-[#4488ff] hover:text-[#66aaff] transition-colors"
+              >
+                View Colony →
+              </Link>
             )}
           </div>
         )}
