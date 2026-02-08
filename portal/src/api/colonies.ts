@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import type { ColonyDetail, CreepDetail, ColonyEconomyMetrics, RemoteMiningExport } from '../types/colony';
 
 export interface ColonySummary {
   roomName: string;
@@ -33,17 +34,17 @@ export function fetchColonies() {
 }
 
 export function fetchColony(room: string) {
-  return apiFetch<unknown>(`/colonies/${room}`);
+  return apiFetch<ColonyDetail>(`/colonies/${room}`);
 }
 
 export function fetchColonyCreeps(room: string) {
-  return apiFetch<unknown>(`/colonies/${room}/creeps`);
+  return apiFetch<{ creeps: CreepDetail[] }>(`/colonies/${room}/creeps`);
 }
 
 export function fetchColonyEconomy(room: string) {
-  return apiFetch<unknown>(`/colonies/${room}/economy`);
+  return apiFetch<ColonyEconomyMetrics>(`/colonies/${room}/economy`);
 }
 
 export function fetchColonyRemotes(room: string) {
-  return apiFetch<unknown>(`/colonies/${room}/remotes`);
+  return apiFetch<RemoteMiningExport>(`/colonies/${room}/remotes`);
 }
