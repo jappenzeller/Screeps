@@ -107,7 +107,11 @@
       "Bash(choco list:*)",
       "Bash(npm test:*)",
       "Bash(aws cloudformation update-stack:*)",
-      "Bash(aws cloudformation wait:*)"
+      "Bash(aws cloudformation wait:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -File:*)",
+      "Bash(aws cloudformation describe-stack-events:*)",
+      "Bash(npm create:*)",
+      "Bash(aws s3 sync:*)"
     ]
   }
 }

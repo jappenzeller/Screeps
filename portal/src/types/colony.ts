@@ -119,10 +119,8 @@ export interface RemoteCreepExport {
 }
 
 // Response from GET /colonies/{room}/remotes
+// Note: source, freshness, gameTick are stripped by apiFetch and put in meta
 export interface RemotesResponse {
-  source: string;
-  freshness: number;
-  gameTick: number;
   roomName: string;
   remoteRooms: string[];
   remoteMining: RemoteMiningExport | null;
