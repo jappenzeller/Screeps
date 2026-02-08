@@ -22,11 +22,11 @@ export interface ColonySummary {
   } | null;
 }
 
+// Note: source, freshness, gameTick are stripped by apiFetch and put in meta
 export interface ColoniesResponse {
   global: unknown;
   colonies: ColonySummary[];
   colonyCount: number;
-  gameTick: number;
 }
 
 export function fetchColonies() {

@@ -6,9 +6,9 @@ export interface GclData {
   progressTotal: number;
 }
 
+// Note: source, freshness, gameTick are stripped by apiFetch and put in meta
 export interface EmpireResponse {
   live: boolean;
-  gameTick: number;
   timestamp: number;
   shard: string;
   gcl?: GclData;
@@ -28,9 +28,9 @@ export interface ExpansionEntry {
   phase?: string;
 }
 
+// Note: source, freshness, gameTick are stripped by apiFetch and put in meta
 export interface ExpansionResponse {
   live: boolean;
-  gameTick: number;
   active: ExpansionEntry[];
   queue: ExpansionEntry[];
 }

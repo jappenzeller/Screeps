@@ -46,10 +46,7 @@ export interface ColonyDetail {
   economy: ColonyEconomyMetrics;
   remoteRooms: string[];
   phase?: string;
-  // Metadata from API envelope
-  source?: string;
-  freshness?: number;
-  gameTick?: number;
+  // Note: source, freshness, gameTick are stripped by apiFetch and put in meta
 }
 
 export interface CreepDetail {

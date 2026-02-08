@@ -20,6 +20,7 @@ export function EmpireOverview() {
 
   const {
     data: empireData,
+    meta: empireMeta,
     loading: empireLoading,
   } = useApi<EmpireResponse>(fetchEmpire, [], { pollInterval: POLL_INTERVALS.EMPIRE });
 
@@ -37,7 +38,7 @@ export function EmpireOverview() {
       <Header
         title="Empire Overview"
         gcl={empireData?.gcl}
-        gameTick={coloniesMeta?.gameTick || empireData?.gameTick}
+        gameTick={coloniesMeta?.gameTick ?? empireMeta?.gameTick}
         freshness={coloniesMeta?.freshness}
         source={coloniesMeta?.source}
       />
