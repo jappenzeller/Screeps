@@ -9,7 +9,11 @@ import { EconomyTracker, ColonyEconomyMetrics } from "../core/EconomyTracker";
 import { RoomEvaluator, RoomScore } from "../empire/RoomEvaluator";
 import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/ExpansionReadiness";
 
-const AWS_SEGMENT = 90;
+// Segment allocation for AWS export
+const SEGMENT_COLONIES = 90;    // Colony snapshots (≤50KB target)
+const SEGMENT_INTEL = 91;       // Intel delta (≤50KB target)
+const SEGMENT_POSITIONS = 92;   // Existing - creep positions
+const SEGMENT_DIAGNOSTICS = 93; // Detailed diagnostics (on-demand, 100KB)
 
 // Module-level cache for delta tracking (survives within tick, resets on global reset)
 let lastExportTick: number = 0;
@@ -105,6 +109,7 @@ interface EmpireExpansionExport {
   lastFailure: string | null;
 }
 
+// Legacy combined export (for backward compatibility during transition)
 interface AWSExportData {
   timestamp: number;
   gameTick: number;
@@ -117,6 +122,35 @@ interface AWSExportData {
   intel: Record<string, RoomIntel>;
   empire: EmpireExport | null;
   exportMeta?: ExportMeta;
+}
+
+// Segment 90: Colony data (primary monitoring payload)
+interface ColonyPayload {
+  timestamp: number;
+  gameTick: number;
+  shard: string;
+  username: string;
+  homeRoom: string;
+  colonies: ColonyExport[];
+  global: GlobalExport;
+  empire: EmpireExport | null;
+  exportMeta: ExportMeta;
+}
+
+// Segment 91: Intel delta (room scanning data)
+interface IntelPayload {
+  timestamp: number;
+  gameTick: number;
+  intel: Record<string, RoomIntel>;
+  totalCount: number;
+  deltaCount: number;
+}
+
+// Segment 93: Detailed diagnostics (on-demand, every 100 ticks)
+interface DiagnosticsPayload {
+  timestamp: number;
+  gameTick: number;
+  diagnostics: Record<string, DiagnosticsExport>;
 }
 
 interface CreepDetail {
@@ -712,14 +746,111 @@ function buildAndShedPayload(payload: AWSExportData): { json: string; shedLevel:
   return { json, shedLevel, originalSize };
 }
 
+/**
+ * Build colony payload with tiered shedding (simplified for segment 90 only)
+ * Since intel and diagnostics are now in separate segments, shedding is simpler.
+ */
+function buildAndShedColonyPayload(payload: ColonyPayload): { json: string; shedLevel: number; originalSize: number } {
+  var json = JSON.stringify(payload);
+  var originalSize = json.length;
+  var shedLevel = 0;
+
+  // Segment 90 target: 50KB (half of old combined limit since data is split)
+  var COLONY_SIZE_TARGET = 50000;
+  var COLONY_SIZE_LIMIT = 60000;
+
+  // Tier 1: Trim creep details
+  if (json.length > COLONY_SIZE_TARGET) {
+    for (var i = 0; i < payload.colonies.length; i++) {
+      payload.colonies[i].creeps.details = null;
+    }
+    json = JSON.stringify(payload);
+    shedLevel = 1;
+  }
+
+  // Tier 2: Trim structure details
+  if (json.length > COLONY_SIZE_TARGET) {
+    for (var j = 0; j < payload.colonies.length; j++) {
+      payload.colonies[j].structureDetails = {
+        links: null,
+        containers: null,
+        spawns: null,
+      };
+    }
+    json = JSON.stringify(payload);
+    shedLevel = 2;
+  }
+
+  // Tier 3: Trim remote/scouting/traffic data
+  if (json.length > COLONY_SIZE_TARGET) {
+    for (var k = 0; k < payload.colonies.length; k++) {
+      var colony = payload.colonies[k];
+      if (colony.remoteMining && colony.remoteMining.targetRooms) {
+        colony.remoteMining = {
+          targetRooms: null,
+          totalMiners: colony.remoteMining.totalMiners,
+          totalHaulers: colony.remoteMining.totalHaulers,
+          totalReservers: colony.remoteMining.totalReservers,
+        };
+      }
+      colony.scouting = null;
+      colony.remoteDefense = null;
+      colony.traffic = null;
+      colony.adjacentRooms = null;
+    }
+    json = JSON.stringify(payload);
+    shedLevel = 3;
+  }
+
+  // Tier 4: Minimal colony data
+  if (json.length > COLONY_SIZE_TARGET) {
+    for (var m = 0; m < payload.colonies.length; m++) {
+      var col = payload.colonies[m];
+      col.structureDetails = { links: null, containers: null, spawns: null };
+      col.adjacentRooms = null;
+      col.remoteMining = {
+        targetRooms: null,
+        totalMiners: col.remoteMining ? col.remoteMining.totalMiners : 0,
+        totalHaulers: col.remoteMining ? col.remoteMining.totalHaulers : 0,
+        totalReservers: col.remoteMining ? col.remoteMining.totalReservers : 0,
+      };
+      col.scouting = null;
+      col.remoteDefense = null;
+      col.traffic = null;
+      col.creeps.details = null;
+    }
+    json = JSON.stringify(payload);
+    shedLevel = 4;
+  }
+
+  // Tier 5: Drop empire data as last resort
+  if (json.length > COLONY_SIZE_LIMIT) {
+    payload.empire = null;
+    json = JSON.stringify(payload);
+    shedLevel = 5;
+    console.log("[AWSExporter] CRITICAL: Dropped empire data. Size: " + json.length);
+  }
+
+  if (json.length > COLONY_SIZE_LIMIT) {
+    console.log("[AWSExporter] CRITICAL: Colony payload still " + json.length + " bytes after shedding!");
+  }
+
+  return { json: json, shedLevel: shedLevel, originalSize: originalSize };
+}
+
 export class AWSExporter {
   /**
-   * Export colony data to memory segment for AWS Lambda
-   * Call this every 100 ticks or so
+   * Export colony data to memory segments for AWS Lambda
+   * Splits data across multiple segments:
+   * - Segment 90: Colony snapshots (primary)
+   * - Segment 91: Intel delta
+   * - Segment 93: Diagnostics (every 100 ticks)
+   *
+   * Call this every 20 ticks or so
    */
   static export(): void {
-    // Request segment for next tick
-    RawMemory.setActiveSegments([AWS_SEGMENT]);
+    // Request multiple segments for next tick
+    RawMemory.setActiveSegments([SEGMENT_COLONIES, SEGMENT_INTEL, SEGMENT_DIAGNOSTICS]);
 
     // Read persisted lastExportTick from Memory.settings
     if (!Memory.settings) Memory.settings = {} as SettingsFlags;
@@ -727,80 +858,108 @@ export class AWSExporter {
       lastExportTick = Memory.settings.lastExportTick;
     }
 
-    // Collect diagnostics for all owned rooms
-    const diagnostics: Record<string, DiagnosticsExport> = {};
-    for (const roomName in Game.rooms) {
-      const room = Game.rooms[roomName];
+    // Get username from first spawn
+    var username = "unknown";
+    var spawns = Object.values(Game.spawns);
+    if (spawns.length > 0 && spawns[0].owner) {
+      username = spawns[0].owner.username;
+    }
+
+    // Get home room (first owned room)
+    var homeRoom = "E46N37";
+    for (var roomName in Game.rooms) {
+      var room = Game.rooms[roomName];
       if (room.controller && room.controller.my) {
-        const diag = this.getDiagnostics(roomName);
-        if (diag) diagnostics[roomName] = diag;
+        homeRoom = roomName;
+        break;
       }
     }
 
-    // Get username from first spawn
-    const username = Object.values(Game.spawns)[0]?.owner?.username || "unknown";
-
-    // Get home room (first owned room)
-    const homeRoom = Object.keys(Game.rooms).find(
-      (name) => Game.rooms[name].controller && Game.rooms[name].controller.my
-    ) || "E46N37";
-
     // Delta-based: only export intel scanned since last export
-    const deltaIntel: Record<string, RoomIntel> = {};
-    let deltaCount = 0;
-    const allIntel = Memory.intel || {};
-    for (const roomName in allIntel) {
-      const intel = allIntel[roomName];
+    var deltaIntel: Record<string, RoomIntel> = {};
+    var deltaCount = 0;
+    var allIntel = Memory.intel || {};
+    for (var intelRoom in allIntel) {
+      var intel = allIntel[intelRoom];
       if (!intel || !intel.lastScanned) continue;
       if (intel.lastScanned > lastExportTick) {
-        deltaIntel[roomName] = intel;
+        deltaIntel[intelRoom] = intel;
         deltaCount++;
       }
     }
+    var totalIntelCount = Object.keys(allIntel).length;
 
-    const colonies = this.getColonies();
-    const totalIntelCount = Object.keys(allIntel).length;
+    var colonies = this.getColonies();
+    var timestamp = Date.now();
+    var gameTick = Game.time;
+    var shard = Game.shard ? Game.shard.name : "unknown";
 
-    const payload: AWSExportData = {
-      timestamp: Date.now(),
-      gameTick: Game.time,
-      shard: Game.shard?.name || "unknown",
-      username,
-      homeRoom,
-      colonies,
+    // === SEGMENT 90: Colony Data ===
+    var colonyPayload: ColonyPayload = {
+      timestamp: timestamp,
+      gameTick: gameTick,
+      shard: shard,
+      username: username,
+      homeRoom: homeRoom,
+      colonies: colonies,
       global: this.getGlobalStats(),
-      diagnostics,
-      intel: deltaIntel,
       empire: this.getEmpireStatus(),
       exportMeta: {
         lastExportTick: lastExportTick,
         deltaIntelCount: deltaCount,
         totalIntelCount: totalIntelCount,
-        complete: true,  // Will be updated to false if shedding occurs
+        complete: true,
       },
     };
 
-    // Apply tiered shedding to stay under segment size limit
-    const { json, shedLevel, originalSize } = buildAndShedPayload(payload);
+    // Apply tiered shedding to colony payload only
+    var shedResult = buildAndShedColonyPayload(colonyPayload);
+    colonyPayload.exportMeta.shedLevel = shedResult.shedLevel;
+    colonyPayload.exportMeta.originalSize = shedResult.originalSize;
+    colonyPayload.exportMeta.finalSize = shedResult.json.length;
+    colonyPayload.exportMeta.complete = shedResult.shedLevel === 0;
 
-    // Update exportMeta with shedding info
-    if (payload.exportMeta) {
-      payload.exportMeta.shedLevel = shedLevel;
-      payload.exportMeta.originalSize = originalSize;
-      payload.exportMeta.finalSize = json.length;
-      payload.exportMeta.complete = shedLevel === 0;  // Complete only if no shedding occurred
-    }
+    RawMemory.segments[SEGMENT_COLONIES] = shedResult.json;
 
-    // Log size periodically with shedding info
+    // === SEGMENT 91: Intel Delta ===
+    var intelPayload: IntelPayload = {
+      timestamp: timestamp,
+      gameTick: gameTick,
+      intel: deltaIntel,
+      totalCount: totalIntelCount,
+      deltaCount: deltaCount,
+    };
+    var intelJson = JSON.stringify(intelPayload);
+    RawMemory.segments[SEGMENT_INTEL] = intelJson;
+
+    // === SEGMENT 93: Diagnostics (every 100 ticks to save CPU) ===
     if (Game.time % 100 === 0) {
-      const shedInfo = shedLevel > 0 ? ` (shed level ${shedLevel}, was ${Math.round(originalSize / 1000)}KB)` : "";
-      console.log("[AWSExporter] Segment 90: " + json.length + " bytes (" +
-        Math.round(json.length / 1000) + "KB), delta intel: " + deltaCount +
-        "/" + totalIntelCount + " rooms" + shedInfo);
+      var diagnostics: Record<string, DiagnosticsExport> = {};
+      for (var diagRoom in Game.rooms) {
+        var diagRoomObj = Game.rooms[diagRoom];
+        if (diagRoomObj.controller && diagRoomObj.controller.my) {
+          var diag = this.getDiagnostics(diagRoom);
+          if (diag) diagnostics[diagRoom] = diag;
+        }
+      }
+
+      var diagnosticsPayload: DiagnosticsPayload = {
+        timestamp: timestamp,
+        gameTick: gameTick,
+        diagnostics: diagnostics,
+      };
+      var diagJson = JSON.stringify(diagnosticsPayload);
+      RawMemory.segments[SEGMENT_DIAGNOSTICS] = diagJson;
     }
 
-    // Write to segment
-    RawMemory.segments[AWS_SEGMENT] = json;
+    // Log sizes periodically
+    if (Game.time % 100 === 0) {
+      var shedInfo = shedResult.shedLevel > 0
+        ? " (shed " + shedResult.shedLevel + ", was " + Math.round(shedResult.originalSize / 1000) + "KB)"
+        : "";
+      console.log("[AWSExporter] Seg90: " + Math.round(shedResult.json.length / 1000) + "KB" + shedInfo +
+        ", Seg91: " + Math.round(intelJson.length / 1000) + "KB (" + deltaCount + " delta)");
+    }
 
     // Persist lastExportTick after successful write
     Memory.settings.lastExportTick = Game.time;
@@ -1679,12 +1838,55 @@ export class AWSExporter {
   /**
    * Read the current export data (for debugging)
    */
+  /**
+   * Read colony data from segment 90 (for debugging)
+   */
+  static readColonies(): ColonyPayload | null {
+    var raw = RawMemory.segments[SEGMENT_COLONIES];
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as ColonyPayload;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Read intel data from segment 91 (for debugging)
+   */
+  static readIntel(): IntelPayload | null {
+    var raw = RawMemory.segments[SEGMENT_INTEL];
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as IntelPayload;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Read diagnostics from segment 93 (for debugging)
+   */
+  static readDiagnostics(): DiagnosticsPayload | null {
+    var raw = RawMemory.segments[SEGMENT_DIAGNOSTICS];
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as DiagnosticsPayload;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Read combined data (legacy format, for backward compatibility)
+   * @deprecated Use readColonies(), readIntel(), or readDiagnostics() instead
+   */
   static read(): AWSExportData | null {
-    const raw = RawMemory.segments[AWS_SEGMENT];
+    var raw = RawMemory.segments[SEGMENT_COLONIES];
     if (!raw) return null;
     try {
       return JSON.parse(raw) as AWSExportData;
-    } catch {
+    } catch (e) {
       return null;
     }
   }
