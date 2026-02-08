@@ -102,11 +102,19 @@ export function diagnoseColony(room: Room, state: EmpireExpansionState): ColonyD
     var allZero = scores.every(function(s) { return s.utility <= 0; });
 
     if (allZero) {
-      stalledReason = "All utility scores zero - complete deadlock";
-    } else if (upgraders === 0 && controllerDowngradeTimer < 15000) {
-      stalledReason = "No upgrader, controller at risk";
-    } else if (upgraders === 0 && hasSpawn) {
-      stalledReason = "No upgrader, spawn idle";
+      // All scores zero could mean:
+      // 1. True deadlock - missing essential roles (needs intervention)
+      // 2. Fully staffed - all roles at target (NOT a deadlock)
+      // Only flag as deadlock if essential roles are missing
+      var hasEssentialRoles = harvesters > 0 && haulers > 0 && (upgraders > 0 || pioneers > 0);
+      if (!hasEssentialRoles) {
+        stalledReason = "All utility scores zero - missing essential roles";
+      }
+      // If has essential roles, NOT a deadlock - just fully staffed
+    } else if ((upgraders === 0 && pioneers === 0) && controllerDowngradeTimer < 15000) {
+      stalledReason = "No upgrader/pioneer, controller at risk";
+    } else if ((upgraders === 0 && pioneers === 0) && hasSpawn) {
+      stalledReason = "No upgrader/pioneer, spawn idle";
     }
   }
 
@@ -188,17 +196,36 @@ function generateDirectives(room: Room, diag: ColonyDiagnostic): SpawnDirective[
   }
 
   // Priority 3: No upgrader - RCL stuck
-  if (diag.upgraders === 0) {
-    directives.push({
-      source: "INTEGRATION_MANAGER",
-      roomName: diag.roomName,
-      role: "UPGRADER",
-      priority: DIRECTIVE_PRIORITY,
-      reason: "INTEGRATING: no upgrader, RCL stuck at " + rcl,
-      body: [WORK, CARRY, MOVE],  // Minimal body that can fetch and upgrade
-      maxActive: 1,
-    });
-    console.log("[Integration] " + diag.roomName + " generating UPGRADER directive");
+  // Check if colony has controller infrastructure (container, link, or storage)
+  // If not, spawn PIONEER instead - it's self-sufficient and can harvest directly
+  if (diag.upgraders === 0 && diag.pioneers === 0) {
+    var hasControllerInfra = diag.hasControllerContainer || diag.hasControllerLink || diag.hasStorage;
+
+    if (hasControllerInfra) {
+      // Normal upgrader directive - infrastructure exists for collection
+      directives.push({
+        source: "INTEGRATION_MANAGER",
+        roomName: diag.roomName,
+        role: "UPGRADER",
+        priority: DIRECTIVE_PRIORITY,
+        reason: "INTEGRATING: no upgrader, RCL stuck at " + rcl,
+        body: [WORK, CARRY, MOVE],  // Minimal body that can fetch and upgrade
+        maxActive: 1,
+      });
+      console.log("[Integration] " + diag.roomName + " generating UPGRADER directive");
+    } else {
+      // No controller infrastructure - spawn pioneer instead
+      // Pioneers are self-sufficient and can harvest directly
+      directives.push({
+        source: "INTEGRATION_MANAGER",
+        roomName: diag.roomName,
+        role: "PIONEER",
+        priority: DIRECTIVE_PRIORITY,
+        reason: "INTEGRATING: no upgrader and no controller infra, spawning pioneer",
+        maxActive: 1,
+      });
+      console.log("[Integration] " + diag.roomName + " generating PIONEER directive (no controller infra)");
+    }
     return directives;
   }
 

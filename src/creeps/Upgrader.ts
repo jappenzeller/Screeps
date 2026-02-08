@@ -176,13 +176,52 @@ function getEnergy(creep: Creep): void {
   }
 
   // Priority 3: Dropped energy near controller
-  const droppedEnergy = controller.pos.findInRange(FIND_DROPPED_RESOURCES, 5, {
-    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
+  var droppedEnergy = controller.pos.findInRange(FIND_DROPPED_RESOURCES, 5, {
+    filter: function(r) { return r.resourceType === RESOURCE_ENERGY && r.amount >= 50; },
   })[0];
 
   if (droppedEnergy) {
     if (creep.pickup(droppedEnergy) === ERR_NOT_IN_RANGE) {
       smartMoveTo(creep, droppedEnergy, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // === FALLBACK for integrating colonies with no controller infrastructure ===
+
+  // Priority 4: Any container in room (source containers)
+  var anyContainer = creep.room.find(FIND_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_CONTAINER &&
+        (s as StructureContainer).store[RESOURCE_ENERGY] > 0;
+    },
+  })[0] as StructureContainer | undefined;
+
+  if (anyContainer) {
+    if (creep.withdraw(anyContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, anyContainer, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // Priority 5: Dropped energy anywhere in room
+  var anyDropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
+    filter: function(r) { return r.resourceType === RESOURCE_ENERGY && r.amount >= 30; },
+  });
+
+  if (anyDropped) {
+    if (creep.pickup(anyDropped) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, anyDropped, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // Priority 6: Direct harvest from source (last resort for integrating colonies)
+  var source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
+  if (source) {
+    var harvestResult = creep.harvest(source);
+    if (harvestResult === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 10 });
     }
     return;
   }
