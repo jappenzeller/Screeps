@@ -47,13 +47,42 @@ export class ContainerPlanner {
     // Skip if controller already has a container
     if (!plan.controller && this.room.controller && this.room.controller.level >= 2) {
       if (!ContainerPlanner.getControllerContainer(this.room)) {
-        const controllerPos = this.findControllerContainerPosition();
+        var controllerPos = this.findControllerContainerPosition();
         if (controllerPos) {
           plan.controller = { x: controllerPos.x, y: controllerPos.y };
           Memory.rooms[this.room.name].containerPlan = plan;
           logger.info("ContainerPlanner", `Added controller container to plan for ${this.room.name}`);
         }
       }
+    }
+
+    // Clean up stale plan entries for sources that now have containers
+    var planChanged = false;
+    for (var sourceId in plan.sources) {
+      var source = Game.getObjectById(sourceId as Id<Source>);
+      if (!source) {
+        // Source doesn't exist anymore, remove from plan
+        delete plan.sources[sourceId];
+        planChanged = true;
+        continue;
+      }
+      if (ContainerPlanner.getSourceContainer(source)) {
+        // Source already has container, remove from plan
+        delete plan.sources[sourceId];
+        planChanged = true;
+        logger.debug("ContainerPlanner", `Removed ${sourceId} from plan - container exists`);
+      }
+    }
+
+    // Clean up controller plan entry if container exists
+    if (plan.controller && ContainerPlanner.getControllerContainer(this.room)) {
+      delete plan.controller;
+      planChanged = true;
+      logger.debug("ContainerPlanner", `Removed controller from plan - container exists`);
+    }
+
+    if (planChanged) {
+      Memory.rooms[this.room.name].containerPlan = plan;
     }
 
     // Always try to place sites - check each position individually
@@ -193,15 +222,25 @@ export class ContainerPlanner {
    * Idempotent - safe to call repeatedly, will skip already placed
    */
   private placeConstructionSites(plan: ContainerPlan): void {
-    // Place source containers
-    for (const sourceId in plan.sources) {
-      const pos = plan.sources[sourceId];
+    // Place source containers - only if source doesn't already have a container
+    for (var sourceId in plan.sources) {
+      var source = Game.getObjectById(sourceId as Id<Source>);
+      if (!source) continue; // Source gone (shouldn't happen)
+
+      // Check if source already has a container nearby (anywhere adjacent)
+      if (ContainerPlanner.getSourceContainer(source)) {
+        continue; // Source already has container, skip
+      }
+
+      var pos = plan.sources[sourceId];
       this.placeContainerSite(pos.x, pos.y);
     }
 
-    // Place controller container (RCL 2+)
+    // Place controller container (RCL 2+) - only if controller doesn't already have one
     if (plan.controller && this.room.controller && this.room.controller.level >= 2) {
-      this.placeContainerSite(plan.controller.x, plan.controller.y);
+      if (!ContainerPlanner.getControllerContainer(this.room)) {
+        this.placeContainerSite(plan.controller.x, plan.controller.y);
+      }
     }
   }
 
