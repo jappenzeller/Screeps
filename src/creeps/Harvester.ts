@@ -180,14 +180,30 @@ function runStaticMiner(creep: Creep, source: Source, container: StructureContai
     creep.memory.renewing = false; // done or gave up
   }
 
-  // Check for source link (RCL 5+)
-  const sourceLink = source.pos.findInRange(FIND_MY_STRUCTURES, 2, {
-    filter: (s) => s.structureType === STRUCTURE_LINK,
-  })[0] as StructureLink | undefined;
+  // Check spawn energy ratio - when low, deposit to container for direct hauler delivery
+  // This bypasses link network to prioritize refilling spawns/extensions
+  var room = creep.room;
+  var spawnEnergyRatio = room.energyCapacityAvailable > 0
+    ? room.energyAvailable / room.energyCapacityAvailable
+    : 1;
+  var useLink = spawnEnergyRatio >= 0.8;
 
-  // Determine deposit target: link > container
-  const depositTarget =
-    sourceLink && sourceLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0 ? sourceLink : container;
+  // Check for source link (RCL 5+) - only use when spawn energy is healthy
+  var sourceLink: StructureLink | undefined = undefined;
+  if (useLink) {
+    var links = source.pos.findInRange(FIND_MY_STRUCTURES, 2, {
+      filter: function(s) { return s.structureType === STRUCTURE_LINK; },
+    });
+    if (links.length > 0) {
+      sourceLink = links[0] as StructureLink;
+    }
+  }
+
+  // Determine deposit target: link (if using and has space) > container
+  var depositTarget: StructureLink | StructureContainer = container;
+  if (sourceLink && sourceLink.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+    depositTarget = sourceLink;
+  }
 
   // Move to container if not there (optimal position for both harvesting and link transfer)
   if (!creep.pos.isEqualTo(container.pos)) {
