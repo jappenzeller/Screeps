@@ -12,13 +12,6 @@ const LOG_LEVEL_NAMES: Record<LogLevel, string> = {
   [LogLevel.DEBUG]: "DEBUG",
 };
 
-const LOG_LEVEL_COLORS: Record<LogLevel, string> = {
-  [LogLevel.ERROR]: "#ff4444",
-  [LogLevel.WARN]: "#ffaa00",
-  [LogLevel.INFO]: "#44ff44",
-  [LogLevel.DEBUG]: "#888888",
-};
-
 class Logger {
   private level: LogLevel = LogLevel.INFO;
 
@@ -29,14 +22,13 @@ class Logger {
   private log(level: LogLevel, context: string, message: string, ...args: unknown[]): void {
     if (level > this.level) return;
 
-    const color = LOG_LEVEL_COLORS[level];
-    const levelName = LOG_LEVEL_NAMES[level];
-    const tick = Game.time;
+    var levelName = LOG_LEVEL_NAMES[level];
+    var tick = Game.time;
 
-    let formattedMessage = `[${tick}] <span style="color:${color}">[${levelName}]</span> [${context}] ${message}`;
+    var formattedMessage = "[" + tick + "] [" + levelName + "] [" + context + "] " + message;
 
     if (args.length > 0) {
-      formattedMessage += " " + args.map((a) => JSON.stringify(a)).join(" ");
+      formattedMessage += " " + args.map(function(a) { return JSON.stringify(a); }).join(" ");
     }
 
     console.log(formattedMessage);

@@ -41,7 +41,7 @@ export class ContainerPlanner {
     // Check that plan covers all sources - regenerate if any source is missing
     if (plan && plan.sources) {
       var sources = this.room.find(FIND_SOURCES);
-      var missingSources = sources.filter(function(s) { return !plan!.sources[s.id]; });
+      var missingSources = sources.filter(function(s) { return !plan!.sources[s.id] && !ContainerPlanner.getSourceContainer(s); });
       if (missingSources.length > 0) {
         logger.info("ContainerPlanner", `Plan missing ${missingSources.length} source(s), regenerating for ${this.room.name}`);
         plan = this.createPlan();
