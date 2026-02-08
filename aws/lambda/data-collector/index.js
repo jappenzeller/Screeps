@@ -500,12 +500,48 @@ async function writeSignalsToS3(roomName, metrics, deltas, signalEvents, gameTic
   );
 }
 
+/**
+ * Store decision log data to S3
+ */
+async function storeDecisions(decisionData, gameTick) {
+  if (!ANALYTICS_BUCKET || !decisionData) return 0;
+
+  const now = new Date();
+  const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+  const hourStr = now.toISOString().split("T")[1].split(":")[0]; // HH
+
+  // Write decision log to S3 under decisions/ prefix
+  const key = `decisions/dt=${dateStr}/hour=${hourStr}/decisions_${gameTick || Date.now()}.json`;
+
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: ANALYTICS_BUCKET,
+      Key: key,
+      Body: JSON.stringify(decisionData),
+      ContentType: "application/json",
+    })
+  );
+
+  const totalDecisions = (decisionData.spawn?.length || 0) +
+    (decisionData.taskGen?.length || 0) +
+    (decisionData.taskAssign?.length || 0) +
+    (decisionData.creep?.length || 0);
+
+  console.log(`Stored ${totalDecisions} decisions to S3`);
+  return totalDecisions;
+}
+
 export async function handler(event) {
   console.log("Data collector starting...");
 
   try {
     const token = await getScreepsToken();
-    const data = await fetchMemorySegment(token, 90);
+
+    // Fetch segment 90 (colony data) and segment 93 (decisions) in parallel
+    const [data, decisionData] = await Promise.all([
+      fetchMemorySegment(token, 90),
+      fetchMemorySegment(token, 93),
+    ]);
 
     if (!data) {
       console.log("No data in segment 90");
@@ -526,6 +562,16 @@ export async function handler(event) {
     // Store events if present
     if (data.events && data.events.length > 0) {
       await storeEvents(data.events, data.colonies?.[0]?.roomName);
+    }
+
+    // Store decision logs to S3
+    let decisionsStored = 0;
+    if (decisionData) {
+      console.log(`Received decision data: ${decisionData.spawn?.length || 0} spawn, ` +
+        `${decisionData.taskGen?.length || 0} taskGen, ` +
+        `${decisionData.taskAssign?.length || 0} taskAssign, ` +
+        `${decisionData.creep?.length || 0} creep decisions`);
+      decisionsStored = await storeDecisions(decisionData, data.gameTick);
     }
 
     // Process signal layer for each colony
@@ -558,6 +604,7 @@ export async function handler(event) {
         colonies: data.colonies?.length || 0,
         intelStored: intelStored,
         signalEvents: totalSignalEvents,
+        decisionsStored: decisionsStored,
       }),
     };
   } catch (error) {

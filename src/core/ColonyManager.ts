@@ -4,6 +4,7 @@
  */
 
 import { ColonyStateManager, CachedColonyState } from "./ColonyState";
+import { DecisionLogger } from "../logging/DecisionLogger";
 
 /**
  * Colony development phases
@@ -540,6 +541,29 @@ export class ColonyManager {
 
     // Store back to memory
     Memory.rooms[this.roomName].tasks = tasks;
+
+    // Log task generation decision
+    const phase = this.getPhase() as "BOOTSTRAP" | "DEVELOPING" | "STABLE" | "EMERGENCY";
+    const state = this.getState();
+    const tasksByType: Record<string, number> = {};
+    const priorities: Record<string, number> = {};
+
+    for (const task of tasks) {
+      tasksByType[task.type] = (tasksByType[task.type] || 0) + 1;
+      // Track min priority for each type
+      if (priorities[task.type] === undefined || task.priority < priorities[task.type]) {
+        priorities[task.type] = task.priority;
+      }
+    }
+
+    DecisionLogger.logTaskGeneration(
+      this.roomName,
+      phase,
+      state ? state.energy.available : 0,
+      state ? state.energy.capacity : 0,
+      tasksByType,
+      priorities
+    );
   }
 
   /**
@@ -585,7 +609,20 @@ export class ColonyManager {
       return this.canDoTask(creep, task.type);
     });
 
-    if (suitableTasks.length === 0) return null;
+    if (suitableTasks.length === 0) {
+      // Log no suitable tasks found
+      DecisionLogger.logTaskAssignment(
+        this.roomName,
+        creep.name,
+        creep.memory.role || "UNKNOWN",
+        null,
+        null,
+        0,
+        0,
+        0
+      );
+      return null;
+    }
 
     // Sort by priority first, then by distance
     suitableTasks.sort((a, b) => {
@@ -606,8 +643,26 @@ export class ColonyManager {
       return distA - distB;
     });
 
-    // Return the best match
-    return suitableTasks[0];
+    // Get the best match
+    const selected = suitableTasks[0];
+
+    // Calculate distance to selected target
+    const target = Game.getObjectById(selected.targetId);
+    const distance = target ? creep.pos.getRangeTo(target.pos) : 0;
+
+    // Log task assignment decision
+    DecisionLogger.logTaskAssignment(
+      this.roomName,
+      creep.name,
+      creep.memory.role || "UNKNOWN",
+      selected.type,
+      selected.id,
+      selected.priority,
+      distance,
+      suitableTasks.length - 1  // Alternative count (excluding selected)
+    );
+
+    return selected;
   }
 
   /**

@@ -375,6 +375,127 @@ interface Memory {
   combat?: CombatMemory;
 }
 
+// ==================== Decision Logging Types ====================
+
+/**
+ * Spawn decision - captures why a particular role was chosen
+ */
+interface SpawnDecision {
+  tick: number;
+  room: string;
+  decision: "SPAWN" | "WAIT_ENERGY" | "QUEUE_FULL" | "NO_CANDIDATES";
+  selectedRole: string | null;
+  selectedUtility: number;
+  selectedCost: number;
+  energyAvailable: number;
+  energyCapacity: number;
+  phase: "BOOTSTRAP" | "DEVELOPING" | "STABLE" | "EMERGENCY";
+  candidates: SpawnCandidate[];  // All roles considered, sorted by utility
+}
+
+/**
+ * Individual spawn candidate with utility breakdown
+ */
+interface SpawnCandidate {
+  role: string;
+  utility: number;
+  cost: number;
+  deficit: number;           // How many more needed vs current count
+  factors: Record<string, number>;  // Named factors that went into utility
+}
+
+/**
+ * Task generation decision - captures phase-based task creation
+ */
+interface TaskGenDecision {
+  tick: number;
+  room: string;
+  phase: "BOOTSTRAP" | "DEVELOPING" | "STABLE" | "EMERGENCY";
+  energyAvailable: number;
+  energyCapacity: number;
+  tasksGenerated: number;
+  tasksByType: Record<string, number>;  // e.g., { HARVEST: 2, BUILD: 3 }
+  priorities: Record<string, number>;   // Adjusted priorities by type
+}
+
+/**
+ * Task assignment decision - captures creep-task matching
+ */
+interface TaskAssignDecision {
+  tick: number;
+  room: string;
+  creepName: string;
+  creepRole: string;
+  selectedTask: string | null;  // Task type or null if none
+  selectedTaskId: string | null;
+  selectedPriority: number;
+  selectedDistance: number;
+  alternativeCount: number;     // How many other tasks were available
+}
+
+/**
+ * Creep role decision - captures in-role state transitions
+ */
+interface CreepDecision {
+  tick: number;
+  room: string;
+  creepName: string;
+  creepRole: string;
+  decisionType: "STATE_CHANGE" | "TARGET_SELECT" | "RENEWAL" | "ACTION";
+  previousState: string | null;
+  newState: string | null;
+  targetId: string | null;
+  targetType: string | null;
+  reason: string;               // Human-readable explanation
+  factors?: Record<string, number | string | boolean>;  // Decision inputs
+}
+
+/**
+ * Aggregated decision log for segment export
+ */
+interface DecisionLog {
+  exportedAt: number;           // Game.time
+  windowStart: number;          // First tick in this batch
+  windowEnd: number;            // Last tick in this batch
+  spawn: SpawnDecision[];       // Spawn decisions (max ~50 per export)
+  taskGen: TaskGenDecision[];   // Task generation (1 per room per tick)
+  taskAssign: TaskAssignDecision[];  // Task assignments (sampled)
+  creep: CreepDecision[];       // Creep decisions (sampled, high-value only)
+}
+
+/**
+ * Decision logging memory storage
+ */
+interface DecisionMemory {
+  enabled: boolean;
+  lastExport: number;           // Game.time of last segment write
+  windowSize: number;           // Ticks between exports (default: 100)
+  sampleRate: number;           // 0-1, fraction of creep decisions to log
+
+  // Rolling buffers (cleared on export)
+  spawn: SpawnDecision[];
+  taskGen: TaskGenDecision[];
+  taskAssign: TaskAssignDecision[];
+  creep: CreepDecision[];
+
+  // Stats
+  totalSpawnDecisions: number;
+  totalTaskAssigns: number;
+  totalCreepDecisions: number;
+}
+
+// Extend Memory to include decision logging
+interface Memory {
+  advisor?: AdvisorData;
+  traffic?: { [roomName: string]: TrafficMemory };
+  intel?: { [roomName: string]: RoomIntel };
+  colonies?: { [roomName: string]: ColonyMemory };
+  debug?: DebugFlags;
+  settings?: SettingsFlags;
+  combat?: CombatMemory;
+  decisions?: DecisionMemory;
+}
+
 // Global console declaration for Screeps
 declare const console: {
   log(...args: unknown[]): void;

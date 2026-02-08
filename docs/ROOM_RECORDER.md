@@ -536,3 +536,127 @@ Features:
 - Analysis overlays (heatmap, oscillations, stuck, roads, bottlenecks)
 - Zoom/pan with mouse wheel and drag
 - Hover tooltips for creeps and structures
+
+## Decision Logging (Phase 3)
+
+The Decision Logging system captures decision-making context from the game code for correlation with recording analysis. This enables understanding *why* creeps behaved the way they did during a recording.
+
+### Decision Flow
+
+1. **In-Game Logging**: The bot logs key decisions:
+   - **Spawn decisions**: Which role was selected, utility scores, alternatives considered
+   - **Task generation**: Phase-based priorities, task counts by type
+   - **Task assignment**: Which task was assigned to which creep
+   - **Creep decisions**: Container selection, renewal decisions, state changes
+
+2. **Segment Export**: Decision data is written to `RawMemory.segments[93]` every 100 ticks
+
+3. **AWS Collection**: The data-collector Lambda fetches segment 93 and stores to S3 under `decisions/`
+
+### Console Commands
+
+```javascript
+decisions.stats()           // Show current logging stats
+decisions.enable()          // Enable logging
+decisions.disable()         // Disable logging
+decisions.setWindow(100)    // Set export window (ticks between exports)
+decisions.setSampleRate(0.1)// Set creep decision sample rate (0-1)
+decisions.read()            // Read last export from segment
+decisions.clear()           // Clear all buffers
+decisions.help()            // Show help
+```
+
+### Decision Log Schema
+
+```json
+{
+  "exportedAt": 48231050,
+  "windowStart": 48230950,
+  "windowEnd": 48231050,
+  "spawn": [
+    {
+      "tick": 48231000,
+      "room": "E46N37",
+      "decision": "SPAWN",
+      "selectedRole": "HAULER",
+      "selectedUtility": 85.3,
+      "selectedCost": 450,
+      "energyAvailable": 600,
+      "energyCapacity": 800,
+      "phase": "STABLE",
+      "candidates": [
+        { "role": "HAULER", "utility": 85.3, "cost": 450, "deficit": 1, "factors": {} },
+        { "role": "UPGRADER", "utility": 45.2, "cost": 550, "deficit": 1, "factors": {} }
+      ]
+    }
+  ],
+  "taskGen": [
+    {
+      "tick": 48231000,
+      "room": "E46N37",
+      "phase": "STABLE",
+      "energyAvailable": 600,
+      "energyCapacity": 800,
+      "tasksGenerated": 8,
+      "tasksByType": { "HARVEST": 2, "BUILD": 3, "UPGRADE": 2, "HAUL": 1 },
+      "priorities": { "HARVEST": 2, "BUILD": 4, "UPGRADE": 5, "HAUL": 6 }
+    }
+  ],
+  "taskAssign": [
+    {
+      "tick": 48231001,
+      "room": "E46N37",
+      "creepName": "HAULER_1234",
+      "creepRole": "HAULER",
+      "selectedTask": "HAUL",
+      "selectedTaskId": "haul_abc123",
+      "selectedPriority": 6,
+      "selectedDistance": 15,
+      "alternativeCount": 3
+    }
+  ],
+  "creep": [
+    {
+      "tick": 48231002,
+      "room": "E46N37",
+      "creepName": "HAULER_1234",
+      "creepRole": "HAULER",
+      "decisionType": "TARGET_SELECT",
+      "previousState": null,
+      "newState": "COLLECTING",
+      "targetId": "container_xyz",
+      "targetType": "container",
+      "reason": "Selected container with score 250, 1200 energy",
+      "factors": {
+        "selectedScore": 250,
+        "selectedEnergy": 1200,
+        "selectedDistance": 8,
+        "competitors": 1,
+        "alternativeCount": 2
+      }
+    }
+  ]
+}
+```
+
+### S3 Storage
+
+Decision logs are stored under the `decisions/` prefix in the analytics bucket:
+
+```
+decisions/
+  dt=2026-02-07/
+    hour=15/
+      decisions_48231050.json
+      decisions_48231150.json
+```
+
+### Correlating with Analysis
+
+When reviewing recording analysis results:
+
+1. **Oscillations detected?** Check `creep` decisions for state changes during that time window
+2. **Stuck creeps?** Check `taskAssign` to see if tasks were available
+3. **Traffic bottlenecks?** Check `spawn` decisions to see workforce distribution
+
+This correlation enables understanding whether observed behaviors were intentional (correct decision) or indicate bugs in the decision-making logic.

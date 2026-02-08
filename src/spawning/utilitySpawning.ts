@@ -26,6 +26,7 @@ import { roleCountUtility, getEffectiveCount, getCreepEffectiveness } from "./ut
 import { getPioneerBody } from "../creeps/Pioneer";
 import { ExpansionManager } from "../empire";
 import * as DuoManager from "../combat/DuoManager";
+import { DecisionLogger } from "../logging/DecisionLogger";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
@@ -202,6 +203,42 @@ interface ColonyState {
 }
 
 /**
+ * Helper to log spawn decisions for Phase 3 Decision Logging
+ */
+function logSpawnDecision(
+  room: Room,
+  state: ColonyState,
+  decision: "SPAWN" | "WAIT_ENERGY" | "QUEUE_FULL" | "NO_CANDIDATES",
+  result: SpawnCandidate | null,
+  allCandidates: SpawnCandidate[]
+): void {
+  // Get phase from ColonyManager
+  const manager = ColonyManager.getInstance(room.name);
+  const phase = manager.getPhase() as "BOOTSTRAP" | "DEVELOPING" | "STABLE" | "EMERGENCY";
+
+  // Convert candidates to logging format (using the types.d.ts SpawnCandidate for logging)
+  const logCandidates = allCandidates.map((c) => ({
+    role: c.role as string,
+    utility: Math.round(c.utility * 10) / 10,
+    cost: c.cost,
+    deficit: (state.targets[c.role] || 0) - (state.counts[c.role] || 0),
+    factors: {} as Record<string, number>,
+  }));
+
+  DecisionLogger.logSpawnDecision(
+    room.name,
+    decision,
+    phase,
+    result ? result.role : null,
+    result ? result.utility : 0,
+    result ? result.cost : 0,
+    state.energyAvailable,
+    state.energyCapacity,
+    logCandidates
+  );
+}
+
+/**
  * Get the best spawn candidate based on utility scoring
  *
  * Key behavior: If economy has income, we WAIT for the highest utility role
@@ -240,7 +277,10 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
     candidates.push({ role, utility, body, memory, cost });
   }
 
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    logSpawnDecision(room, state, "NO_CANDIDATES", null, candidates);
+    return null;
+  }
 
   // Sort by utility descending
   candidates.sort((a, b) => b.utility - a.utility);
@@ -278,6 +318,7 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
       if (safeCandidate) {
         // Found a role we can spawn while keeping reserve
         if (safeCandidate.cost <= room.energyAvailable) {
+          logSpawnDecision(room, state, "SPAWN", safeCandidate, candidates);
           return safeCandidate;
         }
       }
@@ -287,12 +328,14 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
       if (harvesterCount >= 1 && best.cost <= room.energyAvailable) {
         var SAFE_ECONOMY: SpawnRole[] = ['HAULER', 'BUILDER', 'UPGRADER', 'DEFENDER'];
         if (SAFE_ECONOMY.indexOf(best.role) === -1) {
+          logSpawnDecision(room, state, "WAIT_ENERGY", null, candidates);
           return null; // Don't spend on non-economy roles
         }
         // Allow economy roles if at least 1 harvester exists
         // (the reserve is mainly to prevent 0-harvester deadlock)
       } else if (harvesterCount === 0) {
         // 0 harvesters — absolutely do not spend energy on anything else
+        logSpawnDecision(room, state, "WAIT_ENERGY", null, candidates);
         return null;
       }
     }
@@ -300,6 +343,7 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
 
   // Can we afford the highest utility role?
   if (best.cost <= room.energyAvailable) {
+    logSpawnDecision(room, state, "SPAWN", best, candidates);
     return best;
   }
 
@@ -320,11 +364,13 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
         (c) => c.role === "HAULER" && c.cost <= room.energyAvailable
       );
       if (haulerCandidates.length > 0) {
+        logSpawnDecision(room, state, "SPAWN", haulerCandidates[0], candidates);
         return haulerCandidates[0];
       }
     }
 
     // Economy is working. Wait for energy to accumulate.
+    logSpawnDecision(room, state, "WAIT_ENERGY", null, candidates);
     return null;
   }
 
@@ -336,11 +382,13 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
   );
 
   if (economyCandidates.length > 0) {
+    logSpawnDecision(room, state, "SPAWN", economyCandidates[0], candidates);
     return economyCandidates[0]; // Already sorted by utility desc
   }
 
   // No economy roles affordable. Don't waste energy on non-economy roles.
   // Wait for remote haulers to deliver more energy to spawn.
+  logSpawnDecision(room, state, "WAIT_ENERGY", null, candidates);
   return null;
 }
 

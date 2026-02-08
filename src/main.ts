@@ -32,6 +32,7 @@ import { PositionLogger } from "./logging/PositionLogger";
 import { ExpansionManager, eventBus, initializeEmpireMemory } from "./empire";
 import { getMilestones, getMilestonePhase } from "./core/ColonyMilestones";
 import * as DuoManager from "./combat/DuoManager";
+import { DecisionLogger, registerDecisionCommands } from "./logging/DecisionLogger";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -39,6 +40,7 @@ declare const global: { [key: string]: unknown };
 if (!global._initialized) {
   logger.setLevel(CONFIG.LOG_LEVEL);
   registerConsoleCommands();
+  registerDecisionCommands();
   global._initialized = true;
   console.log("=== Screeps Bot Initialized ===");
 }
@@ -105,6 +107,9 @@ export function loop(): void {
   if (Game.time % 20 === 0) {
     AWSExporter.export();
   }
+
+  // Export decision logs to segment 93 (according to DecisionLogger.windowSize)
+  DecisionLogger.export();
 
   // End stats tracking for this tick
   StatsCollector.endTick();

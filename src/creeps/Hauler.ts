@@ -1,5 +1,6 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
+import { DecisionLogger } from "../logging/DecisionLogger";
 
 // Extend CreepMemory for renewal wait tracking
 declare global {
@@ -53,12 +54,37 @@ function selectContainer(creep: Creep): StructureContainer | null {
     // Higher energy = better, more competitors = worse, closer = better
     const score = energy / (competitors + 1) / (distance + 1);
 
-    return { container, score };
+    return { container, score, energy, distance, competitors };
   });
 
   // Pick highest score
   scored.sort((a, b) => b.score - a.score);
-  return scored[0]?.container || null;
+  const selected = scored[0]?.container || null;
+
+  // Log the container selection decision
+  if (selected) {
+    const top = scored[0];
+    DecisionLogger.logCreepDecision(
+      creep.room.name,
+      creep.name,
+      "HAULER",
+      "TARGET_SELECT",
+      creep.memory.state || null,
+      "COLLECTING",
+      selected.id,
+      "container",
+      `Selected container with score ${Math.round(top.score)}, ${top.energy} energy`,
+      {
+        selectedScore: Math.round(top.score),
+        selectedEnergy: top.energy,
+        selectedDistance: top.distance,
+        competitors: top.competitors,
+        alternativeCount: scored.length - 1,
+      }
+    );
+  }
+
+  return selected;
 }
 
 /**
@@ -96,6 +122,20 @@ function shouldRenew(creep: Creep): "critical" | "opportunistic" | false {
     // Even in critical mode, don't bother if spawn is too far and we'll die anyway
     const distToSpawn = creep.pos.getRangeTo(spawn);
     if (distToSpawn > ttl) return false; // Can't make it
+
+    // Log critical renewal decision
+    DecisionLogger.logCreepDecision(
+      creep.room.name,
+      creep.name,
+      "HAULER",
+      "RENEWAL",
+      creep.memory.state || null,
+      "RENEWING",
+      spawn.id,
+      "spawn",
+      `Critical renewal: TTL ${ttl} <= threshold ${criticalThreshold}`,
+      { ttl, threshold: criticalThreshold, distToSpawn, bodyCost }
+    );
     return "critical";
   }
 
