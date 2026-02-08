@@ -830,6 +830,9 @@ function findTerminalPosition(
  * Labs must be placed in a cluster where all labs are within range 2 of each other.
  * Uses a pre-validated 10-lab pattern near storage/terminal.
  *
+ * IMPORTANT: Labs are placed OUTSIDE the base core to avoid blocking traffic.
+ * Exclusion zones: range 2 from spawns, range 1 from storage/terminal.
+ *
  * Stores the full 10-position plan in Memory.rooms[roomName].labPlan
  * Returns the next unbuilt position from the plan.
  */
@@ -839,9 +842,23 @@ function findLabPosition(
 ): { x: number; y: number } | null {
   var roomMem = Memory.rooms && Memory.rooms[room.name];
 
-  // Check if we already have a plan
+  // Check if we already have a plan - but validate it's still usable
   if (roomMem && roomMem.labPlan && roomMem.labPlan.length > 0) {
-    return getNextLabFromPlan(room, roomMem.labPlan);
+    var nextPos = getNextLabFromPlan(room, roomMem.labPlan, terrain);
+    if (nextPos) {
+      return nextPos;
+    }
+    // Plan is complete or invalid - check if we need to recompute
+    var existingLabCount = room.find(FIND_MY_STRUCTURES, {
+      filter: function(s) { return s.structureType === STRUCTURE_LAB; }
+    }).length;
+    var maxLabs = CONTROLLER_STRUCTURES[STRUCTURE_LAB][room.controller ? room.controller.level : 0] || 0;
+    if (existingLabCount >= maxLabs) {
+      return null; // All labs built
+    }
+    // Plan is stale, recompute
+    console.log("[Lab] Cached plan invalid for " + room.name + ", recomputing...");
+    delete Memory.rooms[room.name].labPlan;
   }
 
   // No plan exists - compute one
@@ -877,15 +894,17 @@ function findLabPosition(
     console.log("[Lab]   Position " + i + ": (" + bestPlan[i].x + ", " + bestPlan[i].y + ")");
   }
 
-  return getNextLabFromPlan(room, bestPlan);
+  return getNextLabFromPlan(room, bestPlan, terrain);
 }
 
 /**
  * Get the next unbuilt lab position from the plan.
+ * Validates that the position is still buildable.
  */
 function getNextLabFromPlan(
   room: Room,
-  plan: Array<{ x: number; y: number }>
+  plan: Array<{ x: number; y: number }>,
+  terrain: RoomTerrain
 ): { x: number; y: number } | null {
   for (var i = 0; i < plan.length; i++) {
     var pos = plan[i];
@@ -893,13 +912,25 @@ function getNextLabFromPlan(
     // Check if lab already exists at this position
     var structures = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
     var hasLab = false;
+    var hasBlockingStructure = false;
     for (var j = 0; j < structures.length; j++) {
       if (structures[j].structureType === STRUCTURE_LAB) {
         hasLab = true;
         break;
       }
+      // Check for non-road structures that would block building
+      if (structures[j].structureType !== STRUCTURE_ROAD &&
+          structures[j].structureType !== STRUCTURE_RAMPART) {
+        hasBlockingStructure = true;
+      }
     }
     if (hasLab) continue;
+
+    // If there's a blocking structure, plan is invalid
+    if (hasBlockingStructure) {
+      console.log("[Lab] Position " + i + " (" + pos.x + "," + pos.y + ") blocked by structure, plan invalid");
+      return null; // Signal to recompute plan
+    }
 
     // Check if construction site already exists
     var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y);
@@ -912,6 +943,12 @@ function getNextLabFromPlan(
     }
     if (hasSite) continue;
 
+    // Verify position is still valid for building
+    if (terrain.get(pos.x, pos.y) === TERRAIN_MASK_WALL) {
+      console.log("[Lab] Position " + i + " (" + pos.x + "," + pos.y + ") is wall, plan invalid");
+      return null;
+    }
+
     // This position needs a lab
     return pos;
   }
@@ -921,6 +958,7 @@ function getNextLabFromPlan(
 
 /**
  * Find the best lab plan by trying all rotations at all candidate anchor positions.
+ * Labs are placed OUTSIDE the base core (range 4-10 from storage).
  */
 function findBestLabPlan(
   room: Room,
@@ -932,8 +970,11 @@ function findBestLabPlan(
   var bestPlan: Array<{ x: number; y: number }> | null = null;
   var bestScore = -Infinity;
 
-  // Search anchor positions in range 3-8 from storage
-  for (var radius = 3; radius <= 8; radius++) {
+  // Get spawns for exclusion zone checks
+  var spawns = room.find(FIND_MY_SPAWNS);
+
+  // Search anchor positions in range 4-10 from storage (NOT too close to core)
+  for (var radius = 4; radius <= 10; radius++) {
     for (var dx = -radius; dx <= radius; dx++) {
       for (var dy = -radius; dy <= radius; dy++) {
         // Only check positions at this radius distance
@@ -951,11 +992,11 @@ function findBestLabPlan(
           var pattern = rotations[r];
           var plan = applyPattern(anchorX, anchorY, pattern);
 
-          // Check if ALL 10 positions are valid (forward-looking)
-          if (!allPositionsValid(room, plan, terrain)) continue;
+          // Check exclusion zones and validity
+          if (!allPositionsValidWithExclusions(room, plan, terrain, spawns, storage, terminal)) continue;
 
           // Score this placement
-          var score = scoreLabPlan(room, plan, storage, terminal, terrain);
+          var score = scoreLabPlan(room, plan, storage, terminal, terrain, spawns);
 
           if (score > bestScore) {
             bestScore = score;
@@ -964,6 +1005,10 @@ function findBestLabPlan(
         }
       }
     }
+  }
+
+  if (bestPlan) {
+    console.log("[Lab] Best plan score: " + bestScore);
   }
 
   return bestPlan;
@@ -989,12 +1034,20 @@ function applyPattern(
 
 /**
  * Check if all positions in the plan are valid for building.
- * Also checks bounds (must be buildable for all 10 positions).
+ * Includes exclusion zone checks to keep labs OUT of the base core.
+ *
+ * Exclusion zones:
+ * - Range 2 from any spawn (spawn fill area)
+ * - Range 1 from storage (hauler hub)
+ * - Range 1 from terminal (hauler hub)
  */
-function allPositionsValid(
+function allPositionsValidWithExclusions(
   room: Room,
   plan: Array<{ x: number; y: number }>,
-  terrain: RoomTerrain
+  terrain: RoomTerrain,
+  spawns: StructureSpawn[],
+  storage: StructureStorage,
+  terminal: StructureTerminal | undefined
 ): boolean {
   for (var i = 0; i < plan.length; i++) {
     var pos = plan[i];
@@ -1009,19 +1062,52 @@ function allPositionsValid(
       return false;
     }
 
-    // Check for existing structures (except roads which we can build on)
+    // EXCLUSION: Range 2 from any spawn
+    for (var s = 0; s < spawns.length; s++) {
+      var spawnDist = Math.max(
+        Math.abs(pos.x - spawns[s].pos.x),
+        Math.abs(pos.y - spawns[s].pos.y)
+      );
+      if (spawnDist <= 2) {
+        return false; // Too close to spawn
+      }
+    }
+
+    // EXCLUSION: Range 1 from storage
+    var storageDist = Math.max(
+      Math.abs(pos.x - storage.pos.x),
+      Math.abs(pos.y - storage.pos.y)
+    );
+    if (storageDist <= 1) {
+      return false; // Too close to storage
+    }
+
+    // EXCLUSION: Range 1 from terminal
+    if (terminal) {
+      var terminalDist = Math.max(
+        Math.abs(pos.x - terminal.pos.x),
+        Math.abs(pos.y - terminal.pos.y)
+      );
+      if (terminalDist <= 1) {
+        return false; // Too close to terminal
+      }
+    }
+
+    // Check for existing structures (except roads and ramparts which we can build on)
     var structures = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
     for (var j = 0; j < structures.length; j++) {
       var sType = structures[j].structureType;
-      if (sType !== STRUCTURE_ROAD) {
+      if (sType !== STRUCTURE_ROAD && sType !== STRUCTURE_RAMPART) {
         return false;
       }
     }
 
-    // Check for construction sites (any type)
+    // Check for construction sites (any type except road)
     var sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, pos.x, pos.y);
-    if (sites.length > 0) {
-      return false;
+    for (var k = 0; k < sites.length; k++) {
+      if (sites[k].structureType !== STRUCTURE_ROAD) {
+        return false;
+      }
     }
   }
 
@@ -1031,20 +1117,22 @@ function allPositionsValid(
 /**
  * Score a lab plan. Higher score = better placement.
  *
- * Factors:
- * - Closer to storage = better (hauler efficiency)
- * - Closer to terminal = bonus
- * - Plain terrain = better than swamp
- * - Not blocking roads = better
+ * Labs should be:
+ * - Near storage (but not TOO close - range 4-8 is ideal)
+ * - FAR from spawns (to avoid blocking spawn fill traffic)
+ * - On open terrain (plains preferred)
+ * - Not blocking existing roads
+ * - In an open area with adjacent walkable tiles
  */
 function scoreLabPlan(
   room: Room,
   plan: Array<{ x: number; y: number }>,
   storage: StructureStorage,
   terminal: StructureTerminal | undefined,
-  terrain: RoomTerrain
+  terrain: RoomTerrain,
+  spawns: StructureSpawn[]
 ): number {
-  var score = 0;
+  var score = 100; // Start with base score
 
   // Calculate centroid of the plan
   var centroidX = 0;
@@ -1056,26 +1144,53 @@ function scoreLabPlan(
   centroidX = Math.floor(centroidX / plan.length);
   centroidY = Math.floor(centroidY / plan.length);
 
-  // Distance from storage (closer = better)
+  // Distance from storage - ideal range is 4-8
   var storageDist = Math.max(
     Math.abs(centroidX - storage.pos.x),
     Math.abs(centroidY - storage.pos.y)
   );
-  score -= storageDist * 10; // Penalty for distance
+  if (storageDist >= 4 && storageDist <= 8) {
+    // Ideal range - bonus for being closer within this range
+    score += (9 - storageDist) * 3;
+  } else if (storageDist > 8) {
+    // Too far - penalty
+    score -= (storageDist - 8) * 5;
+  }
+  // If storageDist < 4, it should have been rejected by exclusion zones
 
-  // Terminal proximity bonus
+  // Distance from spawns - VERY important to be far from spawns
+  for (var s = 0; s < spawns.length; s++) {
+    var spawnDist = Math.max(
+      Math.abs(centroidX - spawns[s].pos.x),
+      Math.abs(centroidY - spawns[s].pos.y)
+    );
+    // Strong penalty for being near spawns (even if outside exclusion zone)
+    if (spawnDist < 5) {
+      score -= (5 - spawnDist) * 10;
+    } else {
+      // Bonus for being far from spawns
+      score += Math.min(spawnDist - 5, 5) * 2;
+    }
+  }
+
+  // Terminal proximity - minor factor
   if (terminal) {
     var terminalDist = Math.max(
       Math.abs(centroidX - terminal.pos.x),
       Math.abs(centroidY - terminal.pos.y)
     );
-    score -= terminalDist * 5;
+    if (terminalDist <= 6) {
+      score += (7 - terminalDist);
+    }
   }
 
   // Terrain quality (prefer plains)
   for (var j = 0; j < plan.length; j++) {
-    if (terrain.get(plan[j].x, plan[j].y) === TERRAIN_MASK_SWAMP) {
-      score -= 5; // Penalty for swamp
+    var t = terrain.get(plan[j].x, plan[j].y);
+    if (t === 0) {
+      score += 1; // Plain terrain bonus
+    } else if (t === TERRAIN_MASK_SWAMP) {
+      score -= 2; // Swamp penalty
     }
   }
 
@@ -1086,11 +1201,47 @@ function scoreLabPlan(
   for (var k = 0; k < plan.length; k++) {
     for (var l = 0; l < roads.length; l++) {
       if (roads[l].pos.x === plan[k].x && roads[l].pos.y === plan[k].y) {
-        score -= 3; // Small penalty for blocking a road
+        score -= 5; // Penalty for blocking a road
         break;
       }
     }
   }
+
+  // Bonus for open space around the lab cluster (easier for haulers to access)
+  var adjacentOpenCount = 0;
+  for (var m = 0; m < plan.length; m++) {
+    var p = plan[m];
+    for (var adx = -1; adx <= 1; adx++) {
+      for (var ady = -1; ady <= 1; ady++) {
+        if (adx === 0 && ady === 0) continue;
+        var ax = p.x + adx;
+        var ay = p.y + ady;
+        // Check if this adjacent tile is walkable and not part of the plan
+        var isInPlan = false;
+        for (var n = 0; n < plan.length; n++) {
+          if (plan[n].x === ax && plan[n].y === ay) {
+            isInPlan = true;
+            break;
+          }
+        }
+        if (!isInPlan && terrain.get(ax, ay) !== TERRAIN_MASK_WALL) {
+          var adjStructures = room.lookForAt(LOOK_STRUCTURES, ax, ay);
+          var isWalkable = true;
+          for (var o = 0; o < adjStructures.length; o++) {
+            var st = adjStructures[o].structureType;
+            if (st !== STRUCTURE_ROAD && st !== STRUCTURE_CONTAINER && st !== STRUCTURE_RAMPART) {
+              isWalkable = false;
+              break;
+            }
+          }
+          if (isWalkable) {
+            adjacentOpenCount++;
+          }
+        }
+      }
+    }
+  }
+  score += Math.min(adjacentOpenCount, 20); // Cap the bonus
 
   return score;
 }
