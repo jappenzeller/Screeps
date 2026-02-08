@@ -245,11 +245,24 @@ function harvest(creep: Creep): void {
 }
 
 function deliver(creep: Creep): void {
+  // Priority 0: Build own source container if construction site exists nearby
+  // Harvesters are already at the source with WORK parts - fastest way to get containers up
+  // This enables static mining which roughly doubles effective income
+  var containerSite = creep.pos.findInRange(FIND_CONSTRUCTION_SITES, 1, {
+    filter: function(s) { return s.structureType === STRUCTURE_CONTAINER; },
+  })[0];
+  if (containerSite) {
+    creep.build(containerSite);
+    creep.say("build");
+    return;
+  }
+
   // Priority 1: Spawn and Extensions (critical for spawning)
-  const spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: (s) =>
-      (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+  var spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+    filter: function(s) {
+      return (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+        (s as StructureSpawn | StructureExtension).store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+    },
   });
 
   if (spawnOrExtension) {
@@ -260,9 +273,11 @@ function deliver(creep: Creep): void {
   }
 
   // Priority 2: Towers
-  const tower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: (s) =>
-      s.structureType === STRUCTURE_TOWER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+  var tower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_TOWER &&
+        (s as StructureTower).store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+    },
   });
 
   if (tower) {
@@ -273,7 +288,7 @@ function deliver(creep: Creep): void {
   }
 
   // Priority 3: Storage
-  const storage = creep.room.storage;
+  var storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
     if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
@@ -282,7 +297,7 @@ function deliver(creep: Creep): void {
   }
 
   // Nothing needs energy - go back to source and drop energy
-  const source = creep.memory.sourceId ? Game.getObjectById(creep.memory.sourceId) : null;
+  var source = creep.memory.sourceId ? Game.getObjectById(creep.memory.sourceId) : null;
   if (source) {
     if (creep.pos.getRangeTo(source) > 2) {
       smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
