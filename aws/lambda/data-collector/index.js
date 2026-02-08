@@ -500,35 +500,33 @@ async function writeSignalsToS3(roomName, metrics, deltas, signalEvents, gameTic
   );
 }
 
+
 /**
- * Store decision log data to S3
+ * Store diagnostics data to S3
+ * Diagnostics now come from segment 93 as DiagnosticsPayload
  */
-async function storeDecisions(decisionData, gameTick) {
-  if (!ANALYTICS_BUCKET || !decisionData) return 0;
+async function storeDiagnostics(diagnosticsData, gameTick) {
+  if (!ANALYTICS_BUCKET || !diagnosticsData) return 0;
 
   const now = new Date();
   const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
   const hourStr = now.toISOString().split("T")[1].split(":")[0]; // HH
 
-  // Write decision log to S3 under decisions/ prefix
-  const key = `decisions/dt=${dateStr}/hour=${hourStr}/decisions_${gameTick || Date.now()}.json`;
+  // Write diagnostics to S3 under diagnostics/ prefix
+  const key = `diagnostics/dt=${dateStr}/hour=${hourStr}/diagnostics_${gameTick || Date.now()}.json`;
 
   await s3Client.send(
     new PutObjectCommand({
       Bucket: ANALYTICS_BUCKET,
       Key: key,
-      Body: JSON.stringify(decisionData),
+      Body: JSON.stringify(diagnosticsData),
       ContentType: "application/json",
     })
   );
 
-  const totalDecisions = (decisionData.spawn?.length || 0) +
-    (decisionData.taskGen?.length || 0) +
-    (decisionData.taskAssign?.length || 0) +
-    (decisionData.creep?.length || 0);
-
-  console.log(`Stored ${totalDecisions} decisions to S3`);
-  return totalDecisions;
+  const roomCount = Object.keys(diagnosticsData.diagnostics || {}).length;
+  console.log(`Stored diagnostics for ${roomCount} rooms to S3`);
+  return roomCount;
 }
 
 export async function handler(event) {
@@ -537,52 +535,64 @@ export async function handler(event) {
   try {
     const token = await getScreepsToken();
 
-    // Fetch segment 90 (colony data) and segment 93 (decisions) in parallel
-    const [data, decisionData] = await Promise.all([
+    // Fetch all three segments in parallel:
+    // - Segment 90: ColonyPayload (colonies, global, empire)
+    // - Segment 91: IntelPayload (intel delta)
+    // - Segment 93: DiagnosticsPayload (detailed diagnostics, every 100 ticks)
+    const [colonyData, intelData, diagnosticsData] = await Promise.all([
       fetchMemorySegment(token, 90),
+      fetchMemorySegment(token, 91),
       fetchMemorySegment(token, 93),
     ]);
 
-    if (!data) {
+    if (!colonyData) {
       console.log("No data in segment 90");
       return { statusCode: 200, body: "No data available" };
     }
 
-    console.log(`Received data from tick ${data.gameTick}, ${data.colonies?.length || 0} colonies`);
+    const gameTick = colonyData.gameTick;
+    console.log(`Received data from tick ${gameTick}, ${colonyData.colonies?.length || 0} colonies`);
 
-    // Store snapshots to DynamoDB
-    await storeSnapshot(data);
-
-    // Store intel to persistent DynamoDB table
-    const intelStored = await storeIntel(data.intel, data.gameTick);
-
-    // Store snapshots to S3 for analytics
-    await writeToS3(data);
-
-    // Store events if present
-    if (data.events && data.events.length > 0) {
-      await storeEvents(data.events, data.colonies?.[0]?.roomName);
+    // Log export metadata
+    if (colonyData.exportMeta) {
+      const meta = colonyData.exportMeta;
+      console.log(`Export meta: shedLevel=${meta.shedLevel || 0}, complete=${meta.complete}, ` +
+        `deltaIntel=${meta.deltaIntelCount}, totalIntel=${meta.totalIntelCount}`);
     }
 
-    // Store decision logs to S3
-    let decisionsStored = 0;
-    if (decisionData) {
-      console.log(`Received decision data: ${decisionData.spawn?.length || 0} spawn, ` +
-        `${decisionData.taskGen?.length || 0} taskGen, ` +
-        `${decisionData.taskAssign?.length || 0} taskAssign, ` +
-        `${decisionData.creep?.length || 0} creep decisions`);
-      decisionsStored = await storeDecisions(decisionData, data.gameTick);
+    // Store snapshots to DynamoDB (from segment 90)
+    await storeSnapshot(colonyData);
+
+    // Store intel to persistent DynamoDB table (from segment 91)
+    let intelStored = 0;
+    if (intelData && intelData.intel) {
+      console.log(`Received intel: ${intelData.deltaCount} delta entries, ${intelData.totalCount} total`);
+      intelStored = await storeIntel(intelData.intel, gameTick);
+    }
+
+    // Store snapshots to S3 for analytics
+    await writeToS3(colonyData);
+
+    // Store events if present (still in colonyData for now)
+    if (colonyData.events && colonyData.events.length > 0) {
+      await storeEvents(colonyData.events, colonyData.colonies?.[0]?.roomName);
+    }
+
+    // Store diagnostics to S3 (from segment 93)
+    let diagnosticsStored = 0;
+    if (diagnosticsData && diagnosticsData.diagnostics) {
+      diagnosticsStored = await storeDiagnostics(diagnosticsData, gameTick);
     }
 
     // Process signal layer for each colony
     let totalSignalEvents = 0;
-    for (const colony of data.colonies || []) {
+    for (const colony of colonyData.colonies || []) {
       // Get previous snapshot for delta computation
       const previousSnapshot = await getPreviousSnapshot(colony.roomName);
       const previousMetrics = previousSnapshot ? extractSignalMetrics(previousSnapshot, previousSnapshot.global) : null;
 
       // Extract current metrics
-      const currentMetrics = extractSignalMetrics(colony, data.global);
+      const currentMetrics = extractSignalMetrics(colony, colonyData.global);
 
       // Compute deltas
       const deltas = computeDeltas(currentMetrics, previousMetrics);
@@ -591,7 +601,7 @@ export async function handler(event) {
       const signalEvents = detectSignalEvents(currentMetrics, deltas, null);
 
       // Store signals
-      await storeSignals(colony.roomName, currentMetrics, deltas, signalEvents, data.gameTick);
+      await storeSignals(colony.roomName, currentMetrics, deltas, signalEvents, gameTick);
 
       totalSignalEvents += signalEvents.length;
     }
@@ -600,11 +610,11 @@ export async function handler(event) {
       statusCode: 200,
       body: JSON.stringify({
         message: "OK",
-        tick: data.gameTick,
-        colonies: data.colonies?.length || 0,
+        tick: gameTick,
+        colonies: colonyData.colonies?.length || 0,
         intelStored: intelStored,
         signalEvents: totalSignalEvents,
-        decisionsStored: decisionsStored,
+        diagnosticsStored: diagnosticsStored,
       }),
     };
   } catch (error) {
