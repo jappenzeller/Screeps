@@ -154,9 +154,9 @@ interface ContainerDetail {
 }
 
 interface StructureDetails {
-  links: LinkDetail[];
-  containers: ContainerDetail[];
-  spawns: { name: string; spawning: string | null; energy: number }[];
+  links: LinkDetail[] | null;
+  containers: ContainerDetail[] | null;
+  spawns: { name: string; spawning: string | null; energy: number }[] | null;
 }
 
 interface ColonyExport {
@@ -172,7 +172,7 @@ interface ColonyExport {
   creeps: {
     total: number;
     byRole: Record<string, number>;
-    details: CreepDetail[];
+    details: CreepDetail[] | null;
   };
   threats: {
     hostileCount: number;
@@ -185,11 +185,11 @@ interface ColonyExport {
   structureDetails: StructureDetails;
   // New fields
   defense: DefenseExport;
-  adjacentRooms: AdjacentRoomExport[];
-  remoteMining: RemoteMiningExport;
-  scouting: ScoutingExport;
-  traffic: TrafficExport;
-  remoteDefense: RemoteDefenseStatus;
+  adjacentRooms: AdjacentRoomExport[] | null;
+  remoteMining: RemoteMiningExport | null;
+  scouting: ScoutingExport | null;
+  traffic: TrafficExport | null;
+  remoteDefense: RemoteDefenseStatus | null;
   mineral: MineralExport;
   economy: ColonyEconomyMetrics;
   remoteRooms: string[];
@@ -222,7 +222,7 @@ interface AdjacentRoomExport {
 }
 
 interface RemoteMiningExport {
-  targetRooms: RemoteRoomExport[];
+  targetRooms: RemoteRoomExport[] | null;
   totalMiners: number;
   totalHaulers: number;
   totalReservers: number;
@@ -438,6 +438,7 @@ interface ExportMeta {
   shedLevel?: number;
   originalSize?: number;
   finalSize?: number;
+  complete: boolean;  // true if shedLevel === 0 (no data was shed)
 }
 
 // Size thresholds for segment 90 (100KB limit)
@@ -470,131 +471,81 @@ function shedStaleIntel(payload: AWSExportData, maxAge: number): number {
 
 /**
  * Shedding Tier 3: Trim creep data to counts only (remove details array)
+ * Uses null to indicate "data was shed" vs [] which means "no creeps"
  */
 function trimCreepData(payload: AWSExportData): void {
-  for (const colony of payload.colonies) {
-    colony.creeps.details = [];
+  for (var i = 0; i < payload.colonies.length; i++) {
+    payload.colonies[i].creeps.details = null;
   }
 }
 
 /**
  * Shedding Tier 3.5: Trim colony structure details
+ * Uses null to indicate "data was shed" vs [] which means "no structures"
  */
 function trimStructureDetails(payload: AWSExportData): void {
-  for (const colony of payload.colonies) {
-    // Keep only counts, not full details
-    colony.structureDetails = {
-      links: [],
-      containers: [],
-      spawns: [],
+  for (var i = 0; i < payload.colonies.length; i++) {
+    payload.colonies[i].structureDetails = {
+      links: null,
+      containers: null,
+      spawns: null,
     };
   }
 }
 
 /**
  * Shedding Tier 4.5: Trim remote mining and scouting details
+ * Uses null to indicate "data was shed" vs [] which means "verified empty"
  */
 function trimRemoteData(payload: AWSExportData): void {
-  for (const colony of payload.colonies) {
-    // Simplify remote mining - keep counts only
-    if (colony.remoteMining) {
+  for (var i = 0; i < payload.colonies.length; i++) {
+    var colony = payload.colonies[i];
+
+    // Simplify remote mining - keep counts only, null for details
+    if (colony.remoteMining && colony.remoteMining.targetRooms) {
       colony.remoteMining = {
-        targetRooms: colony.remoteMining.targetRooms.map(r => ({
-          ...r,
-          miners: [],
-          haulers: [],
-          reserver: null,
-        })),
+        targetRooms: null,  // Shed detailed room data
         totalMiners: colony.remoteMining.totalMiners,
         totalHaulers: colony.remoteMining.totalHaulers,
         totalReservers: colony.remoteMining.totalReservers,
       };
     }
 
-    // Simplify scouting - keep only counts
-    if (colony.scouting) {
-      colony.scouting = {
-        scouts: [],
-        roomsNeedingScan: [],
-        totalRemaining: colony.scouting.totalRemaining,
-        totalScanned: colony.scouting.totalScanned,
-        scannedRooms: {},
-      };
-    }
+    // Shed scouting data
+    colony.scouting = null;
 
-    // Remove remote defense details
-    if (colony.remoteDefense) {
-      colony.remoteDefense = {
-        roomVisibility: [],
-        remoteCreepStates: [],
-        spawnTriggers: [],
-      };
-    }
+    // Shed remote defense details
+    colony.remoteDefense = null;
 
-    // Remove traffic data
-    colony.traffic = {
-      trackedTiles: 0,
-      desirePaths: 0,
-      windowSize: 0,
-      windowProgress: 0,
-      roads: { total: 0, builtByPlanner: 0 },
-      hotspots: [],
-      efficiency: { swampTraffic: 0 },
-      pathCoverage: {
-        spawnToSources: [],
-        spawnToController: { coverage: 0, distance: 0 },
-        spawnToStorage: null,
-      },
-    };
+    // Shed traffic data
+    colony.traffic = null;
 
-    // Simplify adjacent rooms
-    colony.adjacentRooms = colony.adjacentRooms.map(r => ({
-      ...r,
-    }));
+    // Shed adjacent rooms detail
+    colony.adjacentRooms = null;
   }
 }
 
 /**
  * Shedding Tier 5.5: Minimal colony data - just essentials
+ * Uses null everywhere to indicate "data was shed"
  */
 function trimToMinimalColonies(payload: AWSExportData): void {
-  for (const colony of payload.colonies) {
-    // Keep only the absolute essentials
-    colony.structureDetails = { links: [], containers: [], spawns: [] };
-    colony.adjacentRooms = [];
+  for (var i = 0; i < payload.colonies.length; i++) {
+    var colony = payload.colonies[i];
+
+    // Keep only the absolute essentials - use null to indicate shed
+    colony.structureDetails = { links: null, containers: null, spawns: null };
+    colony.adjacentRooms = null;
     colony.remoteMining = {
-      targetRooms: [],
-      totalMiners: colony.remoteMining?.totalMiners || 0,
-      totalHaulers: colony.remoteMining?.totalHaulers || 0,
-      totalReservers: colony.remoteMining?.totalReservers || 0,
+      targetRooms: null,
+      totalMiners: colony.remoteMining ? colony.remoteMining.totalMiners : 0,
+      totalHaulers: colony.remoteMining ? colony.remoteMining.totalHaulers : 0,
+      totalReservers: colony.remoteMining ? colony.remoteMining.totalReservers : 0,
     };
-    colony.scouting = {
-      scouts: [],
-      roomsNeedingScan: [],
-      totalRemaining: 0,
-      totalScanned: 0,
-      scannedRooms: {},
-    };
-    colony.remoteDefense = {
-      roomVisibility: [],
-      remoteCreepStates: [],
-      spawnTriggers: [],
-    };
-    colony.traffic = {
-      trackedTiles: 0,
-      desirePaths: 0,
-      windowSize: 0,
-      windowProgress: 0,
-      roads: { total: 0, builtByPlanner: 0 },
-      hotspots: [],
-      efficiency: { swampTraffic: 0 },
-      pathCoverage: {
-        spawnToSources: [],
-        spawnToController: { coverage: 0, distance: 0 },
-        spawnToStorage: null,
-      },
-    };
-    colony.creeps.details = [];
+    colony.scouting = null;
+    colony.remoteDefense = null;
+    colony.traffic = null;
+    colony.creeps.details = null;
   }
 }
 
@@ -603,39 +554,44 @@ function trimToMinimalColonies(payload: AWSExportData): void {
  * (owned rooms, active remotes, active expansions, adjacent rooms)
  */
 function shedDistantIntel(payload: AWSExportData): number {
-  const essentialRooms = new Set<string>();
+  var essentialRooms = new Set<string>();
 
   // Owned rooms - always keep
-  for (const colony of payload.colonies) {
+  for (var i = 0; i < payload.colonies.length; i++) {
+    var colony = payload.colonies[i];
     essentialRooms.add(colony.roomName);
 
-    // Adjacent rooms - need for threat awareness
-    for (const adj of colony.adjacentRooms) {
-      essentialRooms.add(adj.roomName);
+    // Adjacent rooms - need for threat awareness (if not already shed)
+    if (colony.adjacentRooms) {
+      for (var j = 0; j < colony.adjacentRooms.length; j++) {
+        essentialRooms.add(colony.adjacentRooms[j].roomName);
+      }
     }
 
     // Active remote targets - always keep
-    for (const remote of colony.remoteRooms || []) {
-      essentialRooms.add(remote);
+    var remotes = colony.remoteRooms || [];
+    for (var k = 0; k < remotes.length; k++) {
+      essentialRooms.add(remotes[k]);
     }
   }
 
   // Active expansion targets - always keep
-  if (payload.empire?.expansion?.active) {
-    for (const exp of payload.empire.expansion.active) {
-      essentialRooms.add(exp.roomName);
+  var empire = payload.empire;
+  if (empire && empire.expansion && empire.expansion.active) {
+    for (var m = 0; m < empire.expansion.active.length; m++) {
+      essentialRooms.add(empire.expansion.active[m].roomName);
     }
   }
 
   // Queued expansions
-  if (payload.empire?.expansion?.queue) {
-    for (const q of payload.empire.expansion.queue) {
-      essentialRooms.add(q.target);
+  if (empire && empire.expansion && empire.expansion.queue) {
+    for (var n = 0; n < empire.expansion.queue.length; n++) {
+      essentialRooms.add(empire.expansion.queue[n].target);
     }
   }
 
-  let removed = 0;
-  for (const roomName in payload.intel) {
+  var removed = 0;
+  for (var roomName in payload.intel) {
     if (!essentialRooms.has(roomName)) {
       delete payload.intel[roomName];
       removed++;
@@ -820,6 +776,7 @@ export class AWSExporter {
         lastExportTick: lastExportTick,
         deltaIntelCount: deltaCount,
         totalIntelCount: totalIntelCount,
+        complete: true,  // Will be updated to false if shedding occurs
       },
     };
 
@@ -831,6 +788,7 @@ export class AWSExporter {
       payload.exportMeta.shedLevel = shedLevel;
       payload.exportMeta.originalSize = originalSize;
       payload.exportMeta.finalSize = json.length;
+      payload.exportMeta.complete = shedLevel === 0;  // Complete only if no shedding occurred
     }
 
     // Log size periodically with shedding info
