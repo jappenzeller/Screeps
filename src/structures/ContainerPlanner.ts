@@ -31,6 +31,13 @@ export class ContainerPlanner {
       logger.info("ContainerPlanner", `Created container plan for ${this.room.name}`);
     }
 
+    // Handle plan with missing sources key (e.g. {"placed":true,"controller":{"x":15,"y":8}})
+    if (plan && !plan.sources) {
+      logger.info("ContainerPlanner", "Plan missing sources key, regenerating for " + this.room.name);
+      plan = this.createPlan();
+      Memory.rooms[this.room.name].containerPlan = plan;
+    }
+
     // Check that plan covers all sources - regenerate if any source is missing
     if (plan && plan.sources) {
       var sources = this.room.find(FIND_SOURCES);
@@ -237,9 +244,16 @@ export class ContainerPlanner {
     }
 
     // Place controller container (RCL 2+) - only if controller doesn't already have one
+    // Skip if controller link exists (RCL 5+) - links replace containers for upgrader energy
     if (plan.controller && this.room.controller && this.room.controller.level >= 2) {
       if (!ContainerPlanner.getControllerContainer(this.room)) {
-        this.placeContainerSite(plan.controller.x, plan.controller.y);
+        // Check for controller link - skip container if link exists
+        var controllerLinks = this.room.controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
+          filter: function(s) { return s.structureType === STRUCTURE_LINK; }
+        });
+        if (controllerLinks.length === 0) {
+          this.placeContainerSite(plan.controller.x, plan.controller.y);
+        }
       }
     }
   }

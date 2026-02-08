@@ -35,9 +35,10 @@ To avoid CPU spikes, only **one structure** is placed per tick. The system cycle
 - Closer to spawn preferred (shorter hauler trips)
 
 **At Controller:**
-- Only at RCL 5+ with storage
+- Only at RCL 2-4 (skipped at RCL 5+ when controller link exists)
 - Range 2-3 from controller
 - Enables efficient upgrading
+- Automatically skipped if a controller link is within range 4
 
 ### Extensions (ExtensionPlanner.ts)
 
@@ -203,6 +204,21 @@ ColonyManager generates BUILD tasks when:
 3. Move to construction site
 4. Build until empty
 5. Repeat
+
+### Construction Site Priority
+
+When selecting which site to build in the home room, builders prioritize by structure type:
+
+1. Spawn (highest)
+2. Container
+3. Extension
+4. Tower
+5. Storage / Link
+6. Terminal
+7. Lab
+8. Wall / Rampart (lowest)
+
+Distance is used as a tiebreaker within the same priority level.
 
 ### Max Builders
 

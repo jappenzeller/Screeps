@@ -7,18 +7,44 @@ import { smartMoveTo, moveToRoom } from "../utils/movement";
  */
 
 /**
+ * Get structure type priority for home room construction sites.
+ * Lower number = higher priority.
+ */
+function getHomeSitePriority(site: ConstructionSite): number {
+  switch (site.structureType) {
+    case STRUCTURE_SPAWN: return 0;
+    case STRUCTURE_CONTAINER: return 1;
+    case STRUCTURE_EXTENSION: return 2;
+    case STRUCTURE_TOWER: return 3;
+    case STRUCTURE_STORAGE: return 4;
+    case STRUCTURE_LINK: return 4;
+    case STRUCTURE_TERMINAL: return 5;
+    case STRUCTURE_LAB: return 6;
+    case STRUCTURE_WALL: return 7;
+    case STRUCTURE_RAMPART: return 7;
+    default: return 5;
+  }
+}
+
+/**
  * Find the highest priority construction site.
  * Priority: home non-road > remote containers > remote roads > home roads
  */
 function findConstructionSite(creep: Creep): ConstructionSite | null {
   const homeRoom = Game.rooms[creep.memory.room];
 
-  // Priority 1: Non-road sites in home room
+  // Priority 1: Non-road sites in home room (sorted by structure type priority)
   if (homeRoom) {
-    const homeSites = homeRoom.find(FIND_CONSTRUCTION_SITES);
-    const nonRoad = homeSites.filter((s) => s.structureType !== STRUCTURE_ROAD);
+    var homeSites = homeRoom.find(FIND_CONSTRUCTION_SITES);
+    var nonRoad = homeSites.filter(function(s) { return s.structureType !== STRUCTURE_ROAD; });
     if (nonRoad.length > 0) {
-      return creep.pos.findClosestByPath(nonRoad) || nonRoad[0];
+      nonRoad.sort(function(a, b) {
+        var pa = getHomeSitePriority(a);
+        var pb = getHomeSitePriority(b);
+        if (pa !== pb) return pa - pb;
+        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
+      });
+      return nonRoad[0];
     }
   }
 
