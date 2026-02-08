@@ -91,6 +91,32 @@ async function fetchSegment90() {
 }
 
 /**
+ * Fetch segment 91 (intel delta) directly from Screeps API
+ */
+async function fetchSegment91() {
+  const token = await getScreepsToken();
+
+  const response = await fetch(
+    `https://screeps.com/api/user/memory-segment?segment=91&shard=${SCREEPS_SHARD}`,
+    {
+      headers: {
+        "X-Token": token,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Screeps API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (!data.data) return null;
+
+  return typeof data.data === "string" ? JSON.parse(data.data) : data.data;
+}
+
+/**
  * Fetch segment 92 (position log) directly from Screeps API
  */
 async function fetchSegment92() {
@@ -116,13 +142,39 @@ async function fetchSegment92() {
   return typeof data.data === "string" ? JSON.parse(data.data) : data.data;
 }
 
+/**
+ * Fetch segment 93 (diagnostics) directly from Screeps API
+ */
+async function fetchSegment93() {
+  const token = await getScreepsToken();
+
+  const response = await fetch(
+    `https://screeps.com/api/user/memory-segment?segment=93&shard=${SCREEPS_SHARD}`,
+    {
+      headers: {
+        "X-Token": token,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Screeps API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (!data.data) return null;
+
+  return typeof data.data === "string" ? JSON.parse(data.data) : data.data;
+}
+
 // ==================== Intel Endpoints ====================
 
 /**
- * Get intel for a specific room from DynamoDB (with segment 90 fallback)
+ * Get intel for a specific room from DynamoDB (with segment 91 fallback)
  */
 async function getIntel(roomName) {
-  // Try DynamoDB first (persistent), fall back to segment 90 (live delta)
+  // Try DynamoDB first (persistent), fall back to segment 91 (live delta)
   if (INTEL_TABLE) {
     try {
       const result = await docClient.send(
@@ -146,8 +198,8 @@ async function getIntel(roomName) {
     }
   }
 
-  // Fallback to segment 90
-  const data = await fetchSegment90();
+  // Fallback to segment 91 (intel is now in its own segment)
+  const data = await fetchSegment91();
   if (!data || !data.intel) {
     return { error: "No intel data available", roomName };
   }
@@ -161,7 +213,7 @@ async function getIntel(roomName) {
   }
 
   return {
-    source: "segment90",
+    source: "segment91",
     fetchedAt: Date.now(),
     gameTick: data.gameTick,
     ...intel,
@@ -169,11 +221,11 @@ async function getIntel(roomName) {
 }
 
 /**
- * Get all intel within range of home room (from DynamoDB with segment 90 fallback)
+ * Get all intel within range of home room (from DynamoDB with segment 91 fallback)
  */
 async function getAllIntel(range, homeRoom) {
   let rooms = [];
-  let source = "segment90";
+  let source = "segment91";
 
   // Try DynamoDB first (persistent, complete)
   if (INTEL_TABLE) {
@@ -200,19 +252,19 @@ async function getAllIntel(range, homeRoom) {
       source = "dynamodb";
     } catch (error) {
       console.error("Error scanning intel from DynamoDB:", error);
-      // Fall through to segment 90 fallback
+      // Fall through to segment 91 fallback
       rooms = [];
     }
   }
 
-  // Fallback to segment 90 if DynamoDB returned nothing
+  // Fallback to segment 91 if DynamoDB returned nothing (intel is now in its own segment)
   if (rooms.length === 0) {
-    const data = await fetchSegment90();
+    const data = await fetchSegment91();
     if (!data || !data.intel) {
       return { error: "No intel data available" };
     }
     rooms = Object.values(data.intel);
-    source = "segment90";
+    source = "segment91";
   }
 
   // Filter by range if specified
@@ -239,11 +291,11 @@ async function getAllIntel(range, homeRoom) {
 }
 
 /**
- * Get expansion candidates with scoring (from DynamoDB with segment 90 fallback)
+ * Get expansion candidates with scoring (from DynamoDB with segment 91 fallback)
  */
 async function getExpansionCandidates(homeRoom) {
   let intel = {};
-  let source = "segment90";
+  let source = "segment91";
 
   // Try DynamoDB first
   if (INTEL_TABLE) {
@@ -278,14 +330,14 @@ async function getExpansionCandidates(homeRoom) {
     }
   }
 
-  // Fallback to segment 90
+  // Fallback to segment 91 (intel is now in its own segment)
   if (Object.keys(intel).length === 0) {
-    const data = await fetchSegment90();
+    const data = await fetchSegment91();
     if (!data || !data.intel) {
       return { error: "No intel data available" };
     }
     intel = data.intel;
-    source = "segment90";
+    source = "segment91";
   }
 
   const home = homeRoom || "E46N37";
@@ -460,8 +512,16 @@ async function getColony(roomName) {
     };
   }
 
-  // Merge diagnostics into colony response
-  var diagnostics = data.diagnostics && data.diagnostics[roomName] ? data.diagnostics[roomName] : null;
+  // Fetch diagnostics from segment 93 (now in its own segment)
+  var diagnostics = null;
+  try {
+    const diagData = await fetchSegment93();
+    if (diagData && diagData.diagnostics && diagData.diagnostics[roomName]) {
+      diagnostics = diagData.diagnostics[roomName];
+    }
+  } catch (error) {
+    console.error("Error fetching diagnostics from segment 93:", error);
+  }
 
   return withMeta({
     gameTick: data.gameTick,
@@ -507,6 +567,39 @@ async function getColonyEconomy(roomName) {
     economy: colony.economy || null,
     mineral: colony.mineral || null,
   }, "segment90", data.timestamp);
+}
+
+/**
+ * GET /colonies/{roomName}/diagnostics — detailed diagnostics from segment 93
+ */
+async function getColonyDiagnostics(roomName) {
+  try {
+    const data = await fetchSegment93();
+    if (!data) {
+      return {
+        error: "No diagnostics data available",
+        hint: "Diagnostics are written to segment 93 every 100 ticks",
+      };
+    }
+
+    const diagnostics = data.diagnostics && data.diagnostics[roomName];
+    if (!diagnostics) {
+      return {
+        error: "Diagnostics for " + roomName + " not found",
+        availableRooms: data.diagnostics ? Object.keys(data.diagnostics) : [],
+        gameTick: data.gameTick,
+      };
+    }
+
+    return withMeta({
+      gameTick: data.gameTick,
+      roomName: roomName,
+      ...diagnostics,
+    }, "segment93", data.timestamp);
+  } catch (error) {
+    console.error("Error fetching diagnostics:", error);
+    return { error: "Failed to fetch diagnostics: " + error.message };
+  }
 }
 
 /**
@@ -1490,6 +1583,9 @@ export async function handler(event) {
     }
     else if (path === 'GET /colonies/{roomName}/remotes') {
       result = await getColonyRemotes(params.roomName);
+    }
+    else if (path === 'GET /colonies/{roomName}/diagnostics') {
+      result = await getColonyDiagnostics(params.roomName);
     }
     else if (path === 'GET /colonies/{roomName}') {
       result = await getColony(params.roomName);
