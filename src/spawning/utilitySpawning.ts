@@ -1385,7 +1385,12 @@ function remoteDefenderUtility(state: ColonyState): number {
  *
  * Fixed utility 45 when needed — above remote miners (40), below remote haulers first (55)
  */
-function reserverUtility(_deficit: number, state: ColonyState): number {
+function reserverUtility(deficit: number, state: ColonyState): number {
+  // PRIMARY GATE: Respect the target system
+  // target = number of active remotes, deficit = target - current
+  // If we already have enough reservers, don't spawn more
+  if (deficit <= 0) return 0;
+
   if (state.rcl < 4) return 0;
   if (state.remoteRooms.length === 0) return 0;
 
@@ -1395,33 +1400,35 @@ function reserverUtility(_deficit: number, state: ColonyState): number {
     return 0;
   }
 
-  // Check if any remote room needs reservation
-  let needsReservation = false;
-  const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+  // SECONDARY CHECK: Which remote room needs reservation?
+  // This suppresses utility when ALL remotes are fully reserved
+  var needsReservation = false;
+  var spawns = Object.values(Game.spawns);
+  var myUsername = spawns.length > 0 && spawns[0].owner ? spawns[0].owner.username : null;
 
-  for (const roomName of state.remoteRooms) {
+  for (var i = 0; i < state.remoteRooms.length; i++) {
+    var roomName = state.remoteRooms[i];
     // Need reserver if: no reservation, or reservation < 2000 ticks
     // 2000 tick buffer allows for spawn time + travel time
-    const remoteRoom = Game.rooms[roomName];
-    const reservation = remoteRoom?.controller?.reservation;
+    var remoteRoom = Game.rooms[roomName];
+    var controller = remoteRoom ? remoteRoom.controller : null;
+    var reservation = controller ? controller.reservation : null;
     if (!reservation || reservation.ticksToEnd < 2000 || reservation.username !== myUsername) {
       // Only if we have miners there (worth protecting) - including spawning
-      const hasMiners = Object.values(Game.creeps).some(
-        (c) =>
-          c.memory.role === "REMOTE_MINER" &&
+      var hasMiners = Object.values(Game.creeps).some(function(c) {
+        return c.memory.role === "REMOTE_MINER" &&
           c.memory.targetRoom === roomName &&
-          (!c.ticksToLive || c.ticksToLive > 100)
-      );
+          (!c.ticksToLive || c.ticksToLive > 100);
+      });
       if (hasMiners) {
         // Check if we already have a reserver assigned (including spawning)
         // !c.ticksToLive catches spawning creeps (TTL undefined = still building = healthy)
         // c.ticksToLive > 200 catches live creeps with enough life left
-        const hasReserver = Object.values(Game.creeps).some(
-          (c) =>
-            c.memory.role === "RESERVER" &&
+        var hasReserver = Object.values(Game.creeps).some(function(c) {
+          return c.memory.role === "RESERVER" &&
             c.memory.targetRoom === roomName &&
-            (!c.ticksToLive || c.ticksToLive > 200)
-        );
+            (!c.ticksToLive || c.ticksToLive > 200);
+        });
         if (!hasReserver) {
           needsReservation = true;
           break;
