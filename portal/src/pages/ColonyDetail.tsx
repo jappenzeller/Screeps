@@ -200,10 +200,7 @@ export function ColonyDetail() {
             />
           )}
           {activeTab === 'remotes' && (
-            <RemoteMining
-              remoteMining={colony?.remoteMining ?? null}
-              loading={loading && !colony}
-            />
+            <RemoteMining roomName={roomName} />
           )}
           {activeTab === 'metrics' && (
             <MetricsPanel roomName={roomName} rcl={colony?.rcl ?? 1} />

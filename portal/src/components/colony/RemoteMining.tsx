@@ -1,9 +1,11 @@
-import type { RemoteMiningExport, RemoteRoomExport } from '../../types/colony';
+import { useApi } from '../../hooks/useApi';
+import { fetchColonyRemotes } from '../../api/colonies';
+import type { RemotesResponse, RemoteRoomExport, AdjacentRoomInfo } from '../../types/colony';
+import { POLL_INTERVALS } from '../../utils/constants';
+import { FreshnessIndicator } from '../layout/FreshnessIndicator';
 
 interface RemoteMiningProps {
-  remoteMining: RemoteMiningExport | null;
-  loading?: boolean;
-  error?: Error | null;
+  roomName: string;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -15,8 +17,19 @@ const STATUS_COLORS: Record<string, string> = {
   OWNED: '#ff4444',
 };
 
-export function RemoteMining({ remoteMining, loading, error }: RemoteMiningProps) {
-  if (loading) {
+export function RemoteMining({ roomName }: RemoteMiningProps) {
+  const {
+    data,
+    meta,
+    loading,
+    error,
+  } = useApi<RemotesResponse>(
+    () => fetchColonyRemotes(roomName),
+    [roomName],
+    { pollInterval: POLL_INTERVALS.COLONY_DETAIL, enabled: !!roomName }
+  );
+
+  if (loading && !data) {
     return (
       <div className="space-y-3">
         {[1, 2].map((i) => (
@@ -26,7 +39,7 @@ export function RemoteMining({ remoteMining, loading, error }: RemoteMiningProps
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="bg-[#331111] border border-[#ff4444] rounded-lg p-4">
         <p className="text-[#ff4444]">Failed to load remote mining data: {error.message}</p>
@@ -34,31 +47,71 @@ export function RemoteMining({ remoteMining, loading, error }: RemoteMiningProps
     );
   }
 
-  if (!remoteMining || !remoteMining.targetRooms || remoteMining.targetRooms.length === 0) {
-    return (
-      <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-6 text-center">
-        <p className="text-[#888]">No remote mining configured</p>
-      </div>
-    );
-  }
+  const remoteMining = data?.remoteMining;
+  const adjacentRooms = data?.adjacentRooms;
+  const hasRemotes = remoteMining?.targetRooms && remoteMining.targetRooms.length > 0;
 
   return (
-    <div className="space-y-4">
-      {/* Summary */}
-      <div className="flex gap-4 text-sm">
-        <span className="text-[#888]">
-          Total: <span className="text-[#eee]">{remoteMining.totalMiners}</span> miners,{' '}
-          <span className="text-[#eee]">{remoteMining.totalHaulers}</span> haulers,{' '}
-          <span className="text-[#eee]">{remoteMining.totalReservers}</span> reservers
-        </span>
-      </div>
+    <div className="space-y-6">
+      {/* Header with freshness */}
+      {meta?.freshness !== undefined && (
+        <div className="flex justify-end">
+          <FreshnessIndicator freshness={meta.freshness} source={meta.source} size="sm" />
+        </div>
+      )}
 
-      {/* Remote Room Cards */}
-      <div className="space-y-3">
-        {remoteMining.targetRooms.map((room) => (
-          <RemoteRoomCard key={room.roomName} room={room} />
-        ))}
-      </div>
+      {/* Active Remote Mining */}
+      {hasRemotes ? (
+        <>
+          {/* Summary */}
+          <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-4">
+            <div className="flex flex-wrap gap-6 text-sm">
+              <div>
+                <span className="text-[#888]">Miners: </span>
+                <span className="text-lg font-bold text-[#00ff88]">{remoteMining!.totalMiners}</span>
+              </div>
+              <div>
+                <span className="text-[#888]">Haulers: </span>
+                <span className="text-lg font-bold text-[#ff8800]">{remoteMining!.totalHaulers}</span>
+              </div>
+              <div>
+                <span className="text-[#888]">Reservers: </span>
+                <span className="text-lg font-bold text-[#aa88ff]">{remoteMining!.totalReservers}</span>
+              </div>
+              <div>
+                <span className="text-[#888]">Remote Rooms: </span>
+                <span className="text-lg font-bold text-[#4488ff]">{remoteMining!.targetRooms!.length}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Remote Room Cards */}
+          <div>
+            <h4 className="text-sm font-medium text-[#888] mb-3 uppercase tracking-wider">Active Remote Rooms</h4>
+            <div className="space-y-3">
+              {remoteMining!.targetRooms!.map((room) => (
+                <RemoteRoomCard key={room.roomName} room={room} />
+              ))}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-6 text-center">
+          <p className="text-[#888]">No remote mining configured</p>
+        </div>
+      )}
+
+      {/* Adjacent Rooms (potential remotes) */}
+      {adjacentRooms && adjacentRooms.length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium text-[#888] mb-3 uppercase tracking-wider">Adjacent Rooms</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {adjacentRooms.map((room) => (
+              <AdjacentRoomCard key={room.roomName} room={room} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -137,14 +190,71 @@ function RemoteRoomCard({ room }: { room: RemoteRoomExport }) {
                 spawning={room.reserver.spawning}
               />
             ) : room.reservation ? (
-              <span className="text-[#aa88ff]">
-                Reserved by {room.reservation.username} ({room.reservation.ticksToEnd} ticks)
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[#aa88ff]">
+                  Reserved by {room.reservation.username}
+                </span>
+                <span className="text-xs text-[#888]">({room.reservation.ticksToEnd} ticks)</span>
+              </div>
             ) : (
               <span className="text-[#ffcc00]">No reservation</span>
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AdjacentRoomCard({ room }: { room: AdjacentRoomInfo }) {
+  const isValidTarget = room.isValidRemoteTarget;
+  const hasHostiles = room.hostiles > 0;
+  const isOwned = !!room.owner;
+  const isReservedByOther = room.reservation && room.reservation.username !== 'Montblanc0';
+
+  let statusText = 'Available';
+  let statusColor = '#00ff88';
+
+  if (isOwned) {
+    statusText = `Owned: ${room.owner}`;
+    statusColor = '#ff4444';
+  } else if (room.hasKeepers) {
+    statusText = 'Source Keepers';
+    statusColor = '#ff8844';
+  } else if (isReservedByOther) {
+    statusText = `Reserved: ${room.reservation!.username}`;
+    statusColor = '#ffcc00';
+  } else if (hasHostiles) {
+    statusText = `Hostiles: ${room.hostiles}`;
+    statusColor = '#ff4444';
+  } else if (room.hasInvaderCore) {
+    statusText = 'Invader Core';
+    statusColor = '#ff4444';
+  } else if (!isValidTarget) {
+    statusText = 'Not viable';
+    statusColor = '#888888';
+  }
+
+  return (
+    <div className="bg-[#1a1a1a] border border-[#333] rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-[#eee]">{room.roomName}</span>
+          <span className="text-xs px-1.5 py-0.5 bg-[#222] rounded text-[#888]">{room.direction}</span>
+        </div>
+        <span className="text-xs" style={{ color: statusColor }}>
+          {statusText}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-4 text-xs text-[#888]">
+        <span className="text-[#ffcc00]">{room.sources} source{room.sources !== 1 ? 's' : ''}</span>
+        {room.reservation && room.reservation.username === 'Montblanc0' && (
+          <span className="text-[#aa88ff]">Reserved ({room.reservation.ticksToEnd})</span>
+        )}
+        {room.lastScanAge > 0 && (
+          <span>Scanned {Math.floor(room.lastScanAge / 60)}m ago</span>
+        )}
       </div>
     </div>
   );

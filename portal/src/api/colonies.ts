@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { ColonyDetail, CreepDetail, ColonyEconomyMetrics, RemoteMiningExport } from '../types/colony';
+import type { ColonyDetail, CreepDetail, ColonyEconomyMetrics, RemotesResponse } from '../types/colony';
 
 export interface ColonySummary {
   roomName: string;
@@ -46,5 +46,5 @@ export function fetchColonyEconomy(room: string) {
 }
 
 export function fetchColonyRemotes(room: string) {
-  return apiFetch<RemoteMiningExport>(`/colonies/${room}/remotes`);
+  return apiFetch<RemotesResponse>(`/colonies/${room}/remotes`);
 }

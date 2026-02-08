@@ -118,6 +118,32 @@ export interface RemoteCreepExport {
   spawning?: boolean;
 }
 
+// Response from GET /colonies/{room}/remotes
+export interface RemotesResponse {
+  source: string;
+  freshness: number;
+  gameTick: number;
+  roomName: string;
+  remoteRooms: string[];
+  remoteMining: RemoteMiningExport | null;
+  remoteDefense: unknown | null;
+  adjacentRooms: AdjacentRoomInfo[] | null;
+}
+
+export interface AdjacentRoomInfo {
+  roomName: string;
+  direction: string;
+  sources: number;
+  owner: string | null;
+  reservation: { username: string; ticksToEnd: number } | null;
+  hostiles: number;
+  hasKeepers: boolean;
+  hasInvaderCore: boolean;
+  lastScan: number;
+  lastScanAge: number;
+  isValidRemoteTarget: boolean;
+}
+
 export interface ColonyEconomyMetrics {
   // Energy levels
   stored: number;
