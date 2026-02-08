@@ -14,7 +14,7 @@ import { getUtilityScores } from "../spawning/utilitySpawning";
 var DIAGNOSTIC_INTERVAL = 10;
 
 // Stall detection thresholds
-var STALL_THRESHOLD = 200;       // Ticks before considering a spawn-idle colony stalled
+var STALL_THRESHOLD = 100;       // Ticks before issuing directives (user spec: >100)
 var WARNING_TIMEOUT = 2000;      // Ticks in INTEGRATING before warning
 var CRITICAL_TIMEOUT = 5000;     // Ticks before requesting parent backup
 var FAILURE_TIMEOUT = 10000;     // Ticks before failing expansion
@@ -136,81 +136,83 @@ export function diagnoseColony(room: Room, state: EmpireExpansionState): ColonyD
 
 /**
  * Generate spawn directives based on diagnostic
+ *
+ * IMPORTANT: This is the core fix - directives based purely on role counts,
+ * not infrastructure. Fresh INTEGRATING colonies may not have containers.
  */
-function generateDirectives(diag: ColonyDiagnostic): SpawnDirective[] {
+function generateDirectives(room: Room, diag: ColonyDiagnostic): SpawnDirective[] {
   var directives: SpawnDirective[] = [];
 
-  // Don't generate directives if spawn is busy or no energy
-  if (!diag.spawnIdle) return directives;
-  if (diag.energyAvailable < 200) return directives;
+  // Don't generate directives if spawn is busy
+  if (!diag.spawnIdle) {
+    return directives;
+  }
 
-  // Priority 1: No harvester (economy dead)
-  if (diag.harvesters === 0 && diag.hasSourceContainers) {
+  // Don't generate directives if no energy to spawn anything
+  if (diag.energyAvailable < 200) {
+    return directives;
+  }
+
+  var rcl = room.controller ? room.controller.level : 0;
+  var sites = room.find(FIND_CONSTRUCTION_SITES);
+
+  // Priority order: harvester > hauler > upgrader > builder
+  // NO infrastructure gates - just check role counts
+
+  // Priority 1: No harvester - economy is completely dead
+  if (diag.harvesters === 0) {
     directives.push({
       source: "INTEGRATION_MANAGER",
       roomName: diag.roomName,
       role: "HARVESTER",
-      priority: DIRECTIVE_PRIORITY + 50,
-      reason: "Economy dead, force-spawning harvester",
-      maxActive: 1,
+      priority: DIRECTIVE_PRIORITY,
+      reason: "INTEGRATING: no harvester, economy dead",
+      maxActive: 2,
     });
-    return directives; // Only one directive at a time
+    console.log("[Integration] " + diag.roomName + " generating HARVESTER directive");
+    return directives;
   }
 
-  // Priority 2: No hauler with harvesters existing
-  if (diag.haulers === 0 && diag.harvesters > 0 && diag.hasSourceContainers) {
+  // Priority 2: No hauler but harvesters exist - energy stranded
+  if (diag.haulers === 0 && diag.harvesters > 0) {
     directives.push({
       source: "INTEGRATION_MANAGER",
       roomName: diag.roomName,
       role: "HAULER",
-      priority: DIRECTIVE_PRIORITY + 40,
-      reason: "Energy stranded at sources, force-spawning hauler",
+      priority: DIRECTIVE_PRIORITY,
+      reason: "INTEGRATING: no hauler, energy stranded",
+      maxActive: 2,
+    });
+    console.log("[Integration] " + diag.roomName + " generating HAULER directive");
+    return directives;
+  }
+
+  // Priority 3: No upgrader - RCL stuck
+  if (diag.upgraders === 0) {
+    directives.push({
+      source: "INTEGRATION_MANAGER",
+      roomName: diag.roomName,
+      role: "UPGRADER",
+      priority: DIRECTIVE_PRIORITY,
+      reason: "INTEGRATING: no upgrader, RCL stuck at " + rcl,
+      body: [WORK, CARRY, MOVE],  // Minimal body that can fetch and upgrade
       maxActive: 1,
     });
+    console.log("[Integration] " + diag.roomName + " generating UPGRADER directive");
     return directives;
   }
 
-  // Priority 3: No upgrader
-  if (diag.upgraders === 0) {
-    // Check if controller has any energy delivery mechanism
-    var hasEnergyInfra = diag.hasControllerContainer || diag.hasControllerLink || diag.hasStorage;
-
-    if (!hasEnergyInfra) {
-      // No infrastructure at controller - spawn minimal upgrader that can work from dropped energy
-      // or from containers near sources
-      directives.push({
-        source: "INTEGRATION_MANAGER",
-        roomName: diag.roomName,
-        role: "UPGRADER",
-        priority: DIRECTIVE_PRIORITY + 30,
-        reason: "No energy infra at controller, force-spawning minimal upgrader",
-        body: [WORK, CARRY, MOVE],  // Minimal body that can fetch and upgrade
-        maxActive: 1,
-      });
-    } else {
-      // Has infrastructure but utility still returns 0
-      directives.push({
-        source: "INTEGRATION_MANAGER",
-        roomName: diag.roomName,
-        role: "UPGRADER",
-        priority: DIRECTIVE_PRIORITY + 30,
-        reason: "Upgrader needed but utility gate blocking",
-        maxActive: 1,
-      });
-    }
-    return directives;
-  }
-
-  // Priority 4: Builder needed but utility returns 0
-  if (diag.builders === 0 && diag.missingRoles.indexOf("BUILDER") >= 0) {
+  // Priority 4: No builder but construction sites exist
+  if (diag.builders === 0 && sites.length > 0) {
     directives.push({
       source: "INTEGRATION_MANAGER",
       roomName: diag.roomName,
       role: "BUILDER",
-      priority: DIRECTIVE_PRIORITY + 10,
-      reason: "Construction needed but budget gate blocking",
+      priority: DIRECTIVE_PRIORITY,
+      reason: "INTEGRATING: no builder, " + sites.length + " construction sites pending",
       maxActive: 1,
     });
+    console.log("[Integration] " + diag.roomName + " generating BUILDER directive");
     return directives;
   }
 
@@ -270,6 +272,22 @@ export function runIntegration(
       return { complete: true, failed: false };
     }
 
+    // Clear stale directives - if the role now exists, remove the directive
+    // This must happen BEFORE we check for new stalls
+    if (intState.directives && intState.directives.length > 0) {
+      var roomName = state.roomName;
+      intState.directives = intState.directives.filter(function(d) {
+        var count = Object.values(Game.creeps).filter(function(c) {
+          return c.memory.room === roomName && c.memory.role === d.role;
+        }).length;
+        var keep = count < d.maxActive;
+        if (!keep) {
+          console.log("[Integration] " + roomName + " directive fulfilled: " + d.role + " (now have " + count + ")");
+        }
+        return keep;
+      });
+    }
+
     // Track stall state
     if (diag.stalledReason) {
       if (!intState.diagnostics.stalledSince) {
@@ -281,24 +299,32 @@ export function runIntegration(
       // Check if stalled long enough to intervene
       var stalledFor = Game.time - intState.diagnostics.stalledSince;
       if (stalledFor >= STALL_THRESHOLD) {
-        // Generate directives
-        var newDirectives = generateDirectives(diag);
-        if (newDirectives.length > 0) {
-          intState.directives = newDirectives;
-          intState.diagnostics.interventions++;
-          console.log("[Integration] " + room.name + " intervention #" + intState.diagnostics.interventions +
-            ": " + newDirectives[0].role + " - " + newDirectives[0].reason);
+        // Generate directives only if we don't already have active ones
+        if (intState.directives.length === 0) {
+          var newDirectives = generateDirectives(room, diag);
+          if (newDirectives.length > 0) {
+            intState.directives = newDirectives;
+            intState.diagnostics.interventions++;
+            console.log("[Integration] " + room.name + " intervention #" + intState.diagnostics.interventions +
+              ": " + newDirectives[0].role + " - " + newDirectives[0].reason);
+          }
+        }
+      } else {
+        // Log progress toward intervention
+        if (stalledFor > 0 && stalledFor % 50 === 0) {
+          console.log("[Integration] " + room.name + " stalled for " + stalledFor + "/" + STALL_THRESHOLD + " ticks");
         }
       }
     } else {
       // Not stalled anymore
       if (intState.diagnostics.stalledSince) {
-        console.log("[Integration] " + room.name + " stall resolved");
+        console.log("[Integration] " + room.name + " stall resolved after " +
+          (Game.time - intState.diagnostics.stalledSince) + " ticks");
         intState.diagnostics.stalledSince = null;
         intState.diagnostics.stalledReason = null;
       }
-      // Clear directives when not stalled
-      intState.directives = [];
+      // DON'T clear directives here - keep them until the role spawns
+      // The directive cleanup above handles removing fulfilled directives
     }
   }
 
