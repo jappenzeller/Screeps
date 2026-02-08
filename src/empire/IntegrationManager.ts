@@ -19,8 +19,9 @@ var WARNING_TIMEOUT = 2000;      // Ticks in INTEGRATING before warning
 var CRITICAL_TIMEOUT = 5000;     // Ticks before requesting parent backup
 var FAILURE_TIMEOUT = 10000;     // Ticks before failing expansion
 
-// Spawn directive priority (higher than any utility score)
-var DIRECTIVE_PRIORITY = 200;
+// Spawn directive priorities (higher than any utility score)
+var DIRECTIVE_PRIORITY = 200;         // Core role completely missing
+var SUPPRESSED_PRIORITY = 150;        // Role with deficit but suppressed by gate
 
 /**
  * Run diagnostics on an integrating colony
@@ -241,6 +242,60 @@ function generateDirectives(room: Room, diag: ColonyDiagnostic): SpawnDirective[
     });
     console.log("[Integration] " + diag.roomName + " generating BUILDER directive");
     return directives;
+  }
+
+  // === Priority 5: Suppressed role detection ===
+  // During INTEGRATING, any role with deficit > 0 but utility 0 is being suppressed
+  // by a gate that doesn't apply to transitional colonies (e.g., budget gate on builders)
+  var scores = getUtilityScores(room);
+  var integrationRoles = ["BUILDER", "UPGRADER", "HARVESTER", "HAULER"];
+
+  for (var si = 0; si < scores.length; si++) {
+    var score = scores[si];
+
+    // Skip roles with no deficit or roles that already have utility
+    if (score.deficit <= 0 || score.utility > 0) continue;
+
+    // Only intervene for roles that matter during integration
+    var isRelevant = false;
+    for (var ri = 0; ri < integrationRoles.length; ri++) {
+      if (score.role === integrationRoles[ri]) {
+        isRelevant = true;
+        break;
+      }
+    }
+    if (!isRelevant) continue;
+
+    // Special case for UPGRADER: check controller infra, maybe spawn PIONEER instead
+    var roleToSpawn = score.role;
+    if (score.role === "UPGRADER") {
+      var hasControllerInfra = diag.hasControllerContainer || diag.hasControllerLink || diag.hasStorage;
+      if (!hasControllerInfra) {
+        roleToSpawn = "PIONEER";
+      }
+    }
+
+    // Determine maxActive based on role
+    var maxActive = 1;
+    if (score.role === "BUILDER") {
+      maxActive = 2;  // Enough to build fast, not so many they drain energy
+    } else if (score.role === "HARVESTER" || score.role === "HAULER") {
+      maxActive = 2;  // Match early colony targets
+    }
+
+    directives.push({
+      source: "INTEGRATION_MANAGER",
+      roomName: diag.roomName,
+      role: roleToSpawn,
+      priority: SUPPRESSED_PRIORITY,
+      reason: "INTEGRATING: " + score.role + " suppressed (deficit " + score.deficit + ", utility 0)",
+      maxActive: maxActive,
+    });
+    console.log("[Integration] " + diag.roomName + " generating " + roleToSpawn +
+      " directive for suppressed " + score.role + " (deficit " + score.deficit + ")");
+
+    // Only issue one suppressed-role directive at a time to avoid overwhelming the spawn
+    break;
   }
 
   return directives;
