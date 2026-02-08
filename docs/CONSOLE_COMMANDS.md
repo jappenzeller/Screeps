@@ -187,6 +187,14 @@ expansion.auto(true)   // Enable
 expansion.auto(false)  // Disable
 ```
 
+### integration(roomName?)
+Show integration diagnostics for colonies in INTEGRATING state.
+```javascript
+integration()            // All integrating colonies
+integration("E44N37")    // Specific room
+// Shows: RCL, creep counts, stall detection, spawn directives
+```
+
 ## Defense Commands
 
 ### threats(roomName?)
@@ -303,6 +311,7 @@ checkSK("E45N36")
 | Remote | `intel("room")` | Room data |
 | Expansion | `bootstrap.status()` | Bootstrap |
 | Expansion | `expansion.status()` | Empire |
+| Expansion | `integration()` | Integration diagnostics |
 | Defense | `threats()` | Hostiles |
 | Defense | `safemode()` | Safe mode |
 | Debug | `moveStats()` | Movement |

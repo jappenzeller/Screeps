@@ -27,6 +27,7 @@ import { getPioneerBody } from "../creeps/Pioneer";
 import { ExpansionManager } from "../empire";
 import * as DuoManager from "../combat/DuoManager";
 import { DecisionLogger } from "../logging/DecisionLogger";
+import { getActiveDirective } from "../empire/IntegrationManager";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
@@ -247,6 +248,40 @@ function logSpawnDecision(
  * but temporarily unaffordable.
  */
 export function getSpawnCandidate(room: Room): SpawnCandidate | null {
+  // Check for integration directives FIRST - these bypass utility scoring
+  var directive = getActiveDirective(room.name);
+  if (directive) {
+    var directiveRole = directive.role;
+    var activeCount = Object.values(Game.creeps).filter(function(c) {
+      return c.memory.room === room.name && c.memory.role === directiveRole;
+    }).length;
+
+    if (activeCount < directive.maxActive) {
+      // Build body - use directive body if specified, otherwise use standard body builder
+      var body: BodyPartConstant[];
+      if (directive.body) {
+        body = directive.body;
+      } else {
+        // Use available energy NOW - don't wait for capacity
+        body = buildBodyFromConfig(directive.role as SpawnRole, room.energyAvailable);
+      }
+
+      if (body.length > 0) {
+        var cost = body.reduce(function(sum, p) { return sum + BODYPART_COST[p]; }, 0);
+        if (cost <= room.energyAvailable) {
+          console.log("[Integration] Directive spawn: " + directive.role + " - " + directive.reason);
+          return {
+            role: directive.role as SpawnRole,
+            utility: directive.priority,
+            body: body,
+            memory: directive.memory || { role: directive.role, room: room.name },
+            cost: cost,
+          };
+        }
+      }
+    }
+  }
+
   const candidates: SpawnCandidate[] = [];
   const state = getColonyState(room);
 

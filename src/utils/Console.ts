@@ -11,6 +11,7 @@ import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
 import * as DuoManager from "../combat/DuoManager";
 import { getUtilityScores } from "../spawning/utilitySpawning";
+import { getIntegrationData } from "../empire/IntegrationManager";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -104,6 +105,8 @@ combat.status()      - Show active combat duos
 combat.spawn(home, target) - Force spawn a combat duo
 combat.cancel(duoId) - Cancel a duo
 combat.toggle()      - Toggle duo combat system on/off
+integration()        - Show integration status for all expanding colonies
+integration("E44N37") - Show integration diagnostics for specific room
 `);
   };
 
@@ -1762,5 +1765,84 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     } else {
       return 'Spawn failed: ' + result;
     }
+  };
+
+  // Integration manager status - shows diagnostics for colonies in INTEGRATING state
+  global.integration = function(roomName?: string): string {
+    var lines: string[] = [];
+
+    if (roomName) {
+      // Show specific room
+      var data = getIntegrationData(roomName);
+      if (!data) {
+        return "Room " + roomName + " is not in INTEGRATING state";
+      }
+
+      lines.push("=== Integration Status: " + roomName + " ===");
+      lines.push("State: INTEGRATING (" + data.ticksInState + " ticks)");
+      lines.push("RCL: " + data.rcl);
+      lines.push("Spawn: " + (data.spawnIdle ? "idle" : "busy"));
+      lines.push("Creeps: H:" + data.harvesters + " HL:" + data.haulers + " U:" + data.upgraders + " B:" + data.builders);
+
+      if (data.stalledReason) {
+        lines.push("Diagnostic: STALLED - " + data.stalledReason);
+        if (data.stalledSince) {
+          var stalledTicks = Game.time - data.stalledSince;
+          lines.push("Stalled since: tick " + data.stalledSince + " (" + stalledTicks + " ticks ago)");
+        }
+      } else {
+        lines.push("Diagnostic: healthy");
+      }
+
+      lines.push("Interventions: " + data.interventions);
+
+      if (data.directives.length > 0) {
+        lines.push("Active directives:");
+        for (var i = 0; i < data.directives.length; i++) {
+          var d = data.directives[i];
+          lines.push("  >>> " + d.role + " (priority " + d.priority + ") - \"" + d.reason + "\"");
+        }
+      } else {
+        lines.push("Active directives: none");
+      }
+
+      console.log(lines.join("\n"));
+      return "OK";
+    }
+
+    // Show all integrating colonies
+    var empire = Memory.empire;
+    if (!empire || !empire.expansion || !empire.expansion.active) {
+      return "No active expansions";
+    }
+
+    var found = false;
+    for (var room in empire.expansion.active) {
+      var exp = empire.expansion.active[room];
+      if (exp.state !== "INTEGRATING") continue;
+
+      found = true;
+      var data = getIntegrationData(room);
+      if (!data) continue;
+
+      lines.push("\n=== " + room + " ===");
+      lines.push("  RCL: " + data.rcl + " | Ticks: " + data.ticksInState);
+      lines.push("  Creeps: H:" + data.harvesters + " HL:" + data.haulers + " U:" + data.upgraders + " B:" + data.builders);
+
+      if (data.stalledReason) {
+        lines.push("  STALLED: " + data.stalledReason);
+      }
+
+      if (data.directives.length > 0) {
+        lines.push("  Directives: " + data.directives.map(function(d: SpawnDirective) { return d.role; }).join(", "));
+      }
+    }
+
+    if (!found) {
+      return "No colonies currently in INTEGRATING state";
+    }
+
+    console.log(lines.join("\n"));
+    return "OK";
   };
 }

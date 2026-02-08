@@ -34,6 +34,8 @@ export interface EmpireExpansionState {
   spawnSitePos: { x: number; y: number } | null;
   blockers: string[];
   lastFailure: string | null;
+  // Integration manager state (INTEGRATING phase)
+  integration?: IntegrationState;
 }
 
 export interface EmpireExpansionHistory {

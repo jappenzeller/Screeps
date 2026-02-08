@@ -87,20 +87,90 @@ Rooms scored on:
 
 **Key:** Critical for energy flow when target room has no economy yet.
 
-## BootstrapManager States
+## Expansion State Machine
 
 ```
 IDLE
-  ↓ expansion.queueRoom("W1N2", "W1N1")
+  ↓ expansion.start("W1N2", "W1N1")
 CLAIMING
   ↓ claimer claims controller
-PLACING_SPAWN
-  ↓ spawn site created
-BUILDING_SPAWN
-  ↓ spawn construction complete
-RAMPING
-  ↓ room self-sufficient
+BOOTSTRAPPING
+  ↓ spawn constructed
+INTEGRATING
+  ↓ colony self-sufficient (RCL 2+, essential roles present)
 COMPLETE
+```
+
+## IntegrationManager (Active Colony Support)
+
+The **INTEGRATING** phase uses the IntegrationManager to actively diagnose and support transitional colonies. This prevents deadlocks where utility-based spawning gates block essential roles.
+
+### Problem Solved
+
+After spawn construction (BOOTSTRAPPING complete), colonies enter INTEGRATING state. The utility spawning system has "gates" that can cause deadlocks:
+- Upgraders require controller container OR RCL 3
+- Haulers require harvesters and containers
+- New colony may have neither, creating a stall
+
+### How It Works
+
+IntegrationManager runs every 10 ticks on INTEGRATING colonies:
+
+1. **Diagnose** - Check colony health (creep counts, spawn idle, RCL progress)
+2. **Detect Stall** - Identify if spawn is idle but critical roles missing
+3. **Issue Directives** - Spawn directives bypass utility scoring with priority 200
+4. **Monitor Timeout** - Escalate if stalled too long (2000/5000/10000 ticks)
+
+### Spawn Directives
+
+When a stall is detected, IntegrationManager issues spawn directives:
+
+```typescript
+{
+  source: "INTEGRATION_MANAGER",
+  roomName: "E44N37",
+  role: "UPGRADER",
+  priority: 200,  // Bypasses utility scoring
+  reason: "No upgrader present, spawn idle",
+  maxActive: 1
+}
+```
+
+Directives are checked before utility scoring in `getSpawnCandidate()`.
+
+### Self-Sufficiency Criteria
+
+Colony exits INTEGRATING when:
+- RCL 2+ (can build basic structures)
+- 1+ Harvester (energy income)
+- 1+ Hauler (energy distribution)
+- 1+ Upgrader (controller progress)
+
+### Timeout Escalation
+
+| Ticks | Level | Action |
+|-------|-------|--------|
+| 2,000 | Warning | Log warning |
+| 5,000 | Critical | Log critical |
+| 10,000 | Failure | Transition to FAILED state |
+
+### Console Command
+
+```javascript
+integration()           // All integrating colonies
+integration("E44N37")   // Specific room
+
+// Example output:
+=== Integration Status: E44N37 ===
+State: INTEGRATING (1,523 ticks)
+RCL: 1
+Spawn: idle
+Creeps: H:2 HL:2 U:0 B:1
+Diagnostic: STALLED - no upgrader, spawn idle
+Stalled since: tick 73187900 (423 ticks ago)
+Interventions: 0
+Active directives:
+  >>> UPGRADER (priority 200) - "No upgrader present, spawn idle"
 ```
 
 ## Memory Structure

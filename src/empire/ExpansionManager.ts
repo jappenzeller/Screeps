@@ -15,6 +15,7 @@ import {
 import { SpawnPlacementCalculator } from "./SpawnPlacementCalculator";
 import { RoomEvaluator, RoomScore } from "./RoomEvaluator";
 import { ExpansionReadiness, ReadinessCheck } from "./ExpansionReadiness";
+import * as IntegrationManager from "./IntegrationManager";
 
 export class ExpansionManager {
   private config = getConfig().expansion;
@@ -337,30 +338,45 @@ export class ExpansionManager {
   }
 
   private runIntegrating(state: EmpireExpansionState): void {
-    const room = Game.rooms[state.roomName];
-    if (!room?.controller?.my) {
+    var room = Game.rooms[state.roomName];
+    if (!room) {
+      // No visibility - wait for creeps to restore it
+      if ((Game.time - state.stateChangedAt) % 100 === 0) {
+        console.log("[Expansion] Waiting for visibility to " + state.roomName + "...");
+      }
+      return;
+    }
+
+    if (!room.controller || !room.controller.my) {
       state.lastFailure = "Lost room control";
       this.transitionTo(state, "FAILED");
       return;
     }
 
-    // Check self-sufficiency: RCL 2 + local economy
-    const localCreeps = Object.values(Game.creeps).filter(
-      (c) => c.memory.room === state.roomName && c.room.name === state.roomName
-    );
-    const hasHarvester = localCreeps.some((c) => c.memory.role === "HARVESTER");
-    const hasHauler = localCreeps.some((c) => c.memory.role === "HAULER");
+    // Run the active integration manager
+    var result = IntegrationManager.runIntegration(room, state);
 
-    if (room.controller.level >= 2 && hasHarvester && hasHauler) {
+    if (result.complete) {
       this.transitionTo(state, "COMPLETE");
       return;
     }
 
-    // Log status
+    if (result.failed) {
+      state.lastFailure = result.failReason || "Integration failed";
+      this.transitionTo(state, "FAILED");
+      return;
+    }
+
+    // Log status periodically
     if (Game.time % 500 === 0) {
-      console.log(
-        `[Expansion] Integrating ${state.roomName}: RCL ${room.controller.level}, H:${hasHarvester}, U:${hasHauler}`
-      );
+      var creeps = Object.values(Game.creeps).filter(function(c) {
+        return c.memory.room === state.roomName;
+      });
+      var h = creeps.filter(function(c) { return c.memory.role === "HARVESTER"; }).length;
+      var hl = creeps.filter(function(c) { return c.memory.role === "HAULER"; }).length;
+      var u = creeps.filter(function(c) { return c.memory.role === "UPGRADER"; }).length;
+      console.log("[Expansion] Integrating " + state.roomName + ": RCL " + room.controller.level +
+        ", H:" + h + " HL:" + hl + " U:" + u);
     }
   }
 

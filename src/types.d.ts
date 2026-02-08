@@ -364,6 +364,59 @@ interface CombatMemory {
   nextDuoId: number;
 }
 
+// Integration Manager types for active colony integration
+interface SpawnDirective {
+  source: "INTEGRATION_MANAGER";
+  roomName: string;         // Which colony's spawn to use
+  role: string;
+  priority: number;         // Higher than any utility score (e.g. 200)
+  reason: string;           // For logging
+  body?: BodyPartConstant[];  // Optional override
+  memory?: Partial<CreepMemory>;
+  maxActive: number;        // Don't spawn more than this many via directives
+}
+
+interface ColonyDiagnostic {
+  roomName: string;
+  rcl: number;
+  hasSpawn: boolean;
+  hasSourceContainers: boolean;
+  hasStorage: boolean;
+  hasControllerContainer: boolean;
+  hasControllerLink: boolean;
+
+  // Creep inventory
+  harvesters: number;
+  haulers: number;
+  upgraders: number;
+  builders: number;
+  pioneers: number;
+
+  // Economy
+  energyAvailable: number;
+  energyCapacity: number;
+  spawnIdle: boolean;
+
+  // Progression
+  controllerProgress: number;
+  controllerDowngradeTimer: number;
+  ticksInState: number;
+
+  // Gaps
+  missingRoles: string[];
+  stalledReason: string | null;
+}
+
+interface IntegrationState {
+  diagnostics: {
+    lastCheck: number;
+    stalledSince: number | null;
+    stalledReason: string | null;
+    interventions: number;
+  };
+  directives: SpawnDirective[];
+}
+
 // Extend Memory for advisor data, traffic, intel, colonies, and combat
 interface Memory {
   advisor?: AdvisorData;
