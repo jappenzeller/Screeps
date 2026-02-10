@@ -29,6 +29,19 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
   }
 
   const raw = await res.json();
+
+  // If the response is an array, there are no meta fields to strip
+  if (Array.isArray(raw)) {
+    return {
+      data: raw as T,
+      meta: {
+        source: 'unknown',
+        freshness: 0,
+        fetchedAt: Date.now(),
+      },
+    };
+  }
+
   const { source, freshness, fetchedAt, gameTick, ...data } = raw;
 
   return {

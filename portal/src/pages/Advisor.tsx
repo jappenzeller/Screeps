@@ -97,13 +97,13 @@ export function Advisor() {
     { pollInterval: POLL_INTERVALS.ANALYSIS, enabled: !!selectedRoom && !isAllRooms }
   );
 
-  // Extract data with defaults
-  const recommendations = recsData ?? [];
-  const signals = signalsData?.events ?? [];
+  // Extract data with defaults — guard against non-array responses
+  const recommendations = Array.isArray(recsData) ? recsData : [];
+  const signals = Array.isArray(signalsData?.events) ? signalsData.events : [];
   const trends = signalsData?.trends ?? {};
-  const events = eventsData?.events ?? [];
-  const observations = observationsData?.observations ?? [];
-  const patterns = patternsData?.patterns ?? [];
+  const events = Array.isArray(eventsData?.events) ? eventsData.events : [];
+  const observations = Array.isArray(observationsData?.observations) ? observationsData.observations : [];
+  const patterns = Array.isArray(patternsData?.patterns) ? patternsData.patterns : [];
 
   // Calculate recommendation counts per room for the colony selector
   const recCounts = useMemo(() => {
