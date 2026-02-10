@@ -84,10 +84,15 @@ export interface SnapshotMineral {
   mineralAmount?: number;
 }
 
-// Terrain is a 2500-char string where each char encodes terrain at (x, y)
+// Terrain API response
+// The `encoded` field is a 2500-char string where each char encodes terrain at (x, y)
 // Index = y * 50 + x, value = (charCode - 48) & 0x03
 // 0 = plain, 1 = wall, 2 = swamp, 3 = wall
-export type TerrainData = string;
+export interface TerrainData {
+  room: string;
+  encoded: string;
+  capturedAt: string;
+}
 
 // From GET /recordings/{id}/analysis
 export interface AnalysisSummary {

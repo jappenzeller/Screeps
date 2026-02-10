@@ -72,7 +72,8 @@ export function Recordings() {
     setLoadingTerrain(true);
     try {
       const terrainResponse = await fetchTerrain(recording.recordingId);
-      setTerrain(terrainResponse.data as unknown as string);
+      // API returns { room, encoded, capturedAt } — extract the encoded string
+      setTerrain(terrainResponse.data.encoded);
     } catch (e) {
       console.error('Failed to load terrain', e);
     }
