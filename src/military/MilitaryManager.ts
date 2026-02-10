@@ -10,6 +10,9 @@ import * as DuoManager from "../combat/DuoManager";
 import { ExpansionManager } from "../empire/ExpansionManager";
 import * as CounterIntel from "./CounterIntel";
 import * as CampaignChain from "./CampaignChain";
+import * as ConquestCoordinator from "./ConquestCoordinator";
+import * as CampaignRecovery from "./CampaignRecovery";
+import * as CampaignEventLog from "./CampaignEventLog";
 
 // ============================================
 // Types
@@ -109,9 +112,12 @@ export function getMilitaryMemory(): MilitaryMemory {
 // ============================================
 
 function transitionTo(campaign: CampaignState, newState: CampaignPhase): void {
-  console.log("[Military] " + campaign.id + ": " + campaign.state + " -> " + newState);
+  var oldState = campaign.state;
+  console.log("[Military] " + campaign.id + ": " + oldState + " -> " + newState);
   campaign.state = newState;
   campaign.stateChangedAt = Game.time;
+
+  CampaignEventLog.log(campaign, "STATE_CHANGE", oldState + " -> " + newState);
 }
 
 function estimateCyclesRemaining(rcl: number, ticksToDowngrade: number): number {
@@ -203,6 +209,9 @@ function withinSpawnBudget(): boolean {
 // ============================================
 
 export function run(): void {
+  // Campaign health checks (periodic + post-reset)
+  CampaignRecovery.runRecovery();
+
   var mem = getMilitaryMemory();
 
   // Home defense check — log when under attack
@@ -351,6 +360,9 @@ export function createCampaign(params: CreateCampaignParams): string {
 
   mem.campaigns[id] = campaign;
   mem.posture = "OFFENSIVE";
+
+  CampaignEventLog.log(campaign, "CAMPAIGN_CREATED",
+    "Target: " + params.targetRoom + " (" + targetOwner + ")");
 
   console.log("[Military] Created campaign " + id + " targeting " + params.targetRoom);
   return id;
@@ -675,6 +687,9 @@ function runTowerDraining(campaign: CampaignState): void {
 }
 
 function runClaiming(campaign: CampaignState): void {
+  // Run conquest coordination (demolish → block → claim sequence)
+  ConquestCoordinator.runConquest(campaign);
+
   var room = Game.rooms[campaign.targetRoom];
 
   // Check if room is already ours
@@ -800,6 +815,9 @@ function selectBestParentForClaim(targetRoom: string): string | null {
 }
 
 function runSecuring(campaign: CampaignState): void {
+  // Run conquest coordination (demolish continues while bootstrapping)
+  ConquestCoordinator.runConquest(campaign);
+
   var room = Game.rooms[campaign.targetRoom];
 
   // Check if the room is owned and has a spawn
@@ -883,6 +901,9 @@ function completeCampaign(campaign: CampaignState): void {
     rclDowngrades: stats.rclDowngrades.length,
     safeModes: stats.safeModeActivations,
   };
+
+  CampaignEventLog.log(campaign, "CAMPAIGN_COMPLETE",
+    "Duration: " + duration + " ticks, Attacks: " + attack.attackCount);
 
   transitionTo(campaign, "COMPLETE");
 
@@ -1174,6 +1195,10 @@ export function recordAttack(campaignId: string, rcl?: number, ticksToDowngrade?
     }
     attack.upgradeBlockedUntil = Game.time + ATTACK_COOLDOWN;
 
+    CampaignEventLog.log(campaign, "ATTACK_LANDED",
+      "Attack #" + attack.attackCount + " — RCL " + (rcl || "?") + " timer " + (ticksToDowngrade || "?"),
+      { rcl: rcl, timer: ticksToDowngrade });
+
     console.log("[Military] Attack #" + attack.attackCount + " on " + campaign.targetRoom +
       " — RCL " + (rcl || "?") + ", timer: " + (ticksToDowngrade || "?") +
       ", est " + attack.estimatedCyclesRemaining + " cycles remaining");
@@ -1192,6 +1217,10 @@ export function reportCreepLost(campaignId: string): void {
   campaign.controllerAttack.stats.totalLost++;
 
   var stats = campaign.controllerAttack.stats;
+
+  CampaignEventLog.log(campaign, "CREEP_LOST",
+    "Total losses: " + stats.totalLost + "/" + stats.totalSpawned);
+
   console.log("[Military] CONTROLLER_ATTACKER lost en route (campaign " + campaignId +
     ") — total losses: " + stats.totalLost + "/" + stats.totalSpawned);
 }
@@ -1408,6 +1437,14 @@ export function getSpawnRequests(homeRoom: string): MilitarySpawnRequest[] {
           targetRoom: campaign.targetRoom,
           priority: 80
         });
+      }
+    }
+
+    // === Conquest phase spawn requests (demolisher, reclaim blocker) ===
+    if (campaign.state === "CLAIMING" || campaign.state === "SECURING") {
+      var conquestRequests = ConquestCoordinator.getSpawnRequests(campaign, homeRoom);
+      for (var ci = 0; ci < conquestRequests.length; ci++) {
+        requests.push(conquestRequests[ci]);
       }
     }
   }

@@ -298,6 +298,33 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
     fallback: [TOUGH, MOVE],
     moveMode: "pattern",
   },
+
+  /**
+   * DEMOLISHER - Dismantles enemy structures after conquest
+   * WORK-heavy for fast dismantling (50 damage per WORK per tick)
+   * 1 CARRY to collect dismantled energy
+   */
+  DEMOLISHER: {
+    pattern: [WORK, WORK, MOVE],
+    maxRepeats: 8,
+    minEnergy: 350, // 2 WORK + 1 MOVE minimum
+    suffix: [CARRY, MOVE], // 1 CARRY to collect dismantle energy
+    fallback: [WORK, WORK, CARRY, MOVE, MOVE],
+    moveMode: "pattern",
+  },
+
+  /**
+   * RECLAIM_BLOCKER - Reserves neutral controller to block enemy reclaim
+   * Single CLAIM part with minimal MOVE
+   * 600-tick lifespan due to CLAIM body
+   */
+  RECLAIM_BLOCKER: {
+    pattern: [CLAIM, MOVE],
+    maxRepeats: 1, // Only 1 CLAIM part needed
+    minEnergy: 650,
+    fallback: [CLAIM, MOVE],
+    moveMode: "pattern",
+  },
 };
 
 /**
