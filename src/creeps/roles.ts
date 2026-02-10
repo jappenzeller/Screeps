@@ -17,6 +17,7 @@ import { runRoadBuilder } from "./RoadBuilder";
 import { runRangedAttacker } from "../combat/roles/RangedAttacker";
 import { runCombatHealer } from "../combat/roles/CombatHealer";
 import { runControllerAttacker } from "../military/roles/ControllerAttacker";
+import { runDecoy } from "../military/roles/Decoy";
 
 // Body configurations moved to src/spawning/bodyConfig.ts
 // Use buildBody() from src/spawning/bodyBuilder.ts for body generation
@@ -45,6 +46,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   RANGED_ATTACKER: runRangedAttacker,
   COMBAT_HEALER: runCombatHealer,
   CONTROLLER_ATTACKER: runControllerAttacker,
+  DECOY: runDecoy,
 };
 
 export function runCreep(creep: Creep): void {

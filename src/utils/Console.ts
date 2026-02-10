@@ -114,6 +114,9 @@ military.abort(id)   - Abort a campaign
 military.pause(id)   - Pause a campaign
 military.resume(id)  - Resume a paused campaign
 military.progress(id) - Show detailed attack progress
+military.drain(id)   - Start tower drain operation
+military.scout(id)   - Reset campaign to scouting phase
+military.escort(id)  - Request escort duo for campaign
 `);
   };
 
@@ -1921,6 +1924,43 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       }
 
       return MilitaryManager.startTowerDrain(campaignId);
+    },
+
+    scout: function(campaignId: string) {
+      if (!campaignId) {
+        console.log("Usage: military.scout('campaign_1')");
+        return "Error: specify campaign ID";
+      }
+
+      var campaign = MilitaryManager.getCampaign(campaignId);
+      if (!campaign) {
+        return "Campaign not found: " + campaignId;
+      }
+
+      campaign.state = "SCOUTING";
+      campaign.stateChangedAt = Game.time;
+      return "Reset " + campaignId + " to SCOUTING phase";
+    },
+
+    escort: function(campaignId: string) {
+      if (!campaignId) {
+        console.log("Usage: military.escort('campaign_1')");
+        return "Error: specify campaign ID";
+      }
+
+      var campaign = MilitaryManager.getCampaign(campaignId);
+      if (!campaign) {
+        return "Campaign not found: " + campaignId;
+      }
+
+      if (!campaign.controllerAttack) {
+        return "Not a controller attack campaign";
+      }
+
+      // Set defenders seen to trigger escort request
+      campaign.controllerAttack.defendersSeen = true;
+      campaign.controllerAttack.defendersLastSeen = Game.time;
+      return "Requested escort duo for " + campaignId;
     },
   };
 }

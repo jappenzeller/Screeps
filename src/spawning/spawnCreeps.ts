@@ -11,6 +11,7 @@
 
 import { getSpawnCandidate } from "./utilitySpawning";
 import * as DuoManager from "../combat/DuoManager";
+import * as MilitaryManager from "../military/MilitaryManager";
 
 /**
  * Main spawning function - uses utility-based decision making
@@ -43,6 +44,14 @@ export function spawnCreeps(room: Room): void {
       if (duoId) {
         var roleType: "attacker" | "healer" = candidate.role === "RANGED_ATTACKER" ? "attacker" : "healer";
         DuoManager.assignCreepToDuo(duoId, name, roleType);
+      }
+    }
+
+    // Track military spawns for death detection
+    if (candidate.role === "CONTROLLER_ATTACKER" || candidate.role === "DECOY") {
+      var campaignId = (candidate.memory as any).campaignId;
+      if (campaignId) {
+        MilitaryManager.reportSpawned(campaignId, candidate.role);
       }
     }
   } else if (result !== ERR_NOT_ENOUGH_ENERGY) {

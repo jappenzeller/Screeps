@@ -114,12 +114,57 @@ export function runControllerAttacker(creep: Creep): void {
           costs.set(c.pos.x, c.pos.y, 255);
         }
 
-        // Avoid ramparts (can't walk through hostile ramparts)
+        // Find hostile structures
         var hostileStructures = room.find(FIND_HOSTILE_STRUCTURES);
+
+        // Avoid ramparts (can't walk through hostile ramparts)
         for (var j = 0; j < hostileStructures.length; j++) {
           var s = hostileStructures[j];
           if (s.structureType === STRUCTURE_RAMPART) {
             costs.set(s.pos.x, s.pos.y, 255);
+          }
+        }
+
+        // Add tower avoidance - prefer paths that stay out of tower range
+        // Tower damage: 600 at range 5, drops linearly to 150 at range 20
+        for (var k = 0; k < hostileStructures.length; k++) {
+          var struct = hostileStructures[k];
+          if (struct.structureType !== STRUCTURE_TOWER) continue;
+
+          var tower = struct as StructureTower;
+          // Only avoid towers with energy (drained towers are safe)
+          if (tower.store[RESOURCE_ENERGY] < 10) continue;
+
+          // Add cost based on tower range
+          // Range 5 or less = max damage zone, avoid heavily
+          // Range 6-20 = decreasing damage
+          for (var dx = -20; dx <= 20; dx++) {
+            for (var dy = -20; dy <= 20; dy++) {
+              var tx = tower.pos.x + dx;
+              var ty = tower.pos.y + dy;
+              if (tx < 0 || tx > 49 || ty < 0 || ty > 49) continue;
+
+              var range = Math.max(Math.abs(dx), Math.abs(dy));
+              if (range > 20) continue;
+
+              var existingCost = costs.get(tx, ty);
+              if (existingCost === 255) continue; // Already blocked
+
+              // Cost scaling: range 5 or less = +30, decreases with range
+              var addedCost = 0;
+              if (range <= 5) {
+                addedCost = 30; // Max damage zone
+              } else if (range <= 10) {
+                addedCost = 20;
+              } else if (range <= 15) {
+                addedCost = 10;
+              } else {
+                addedCost = 5;
+              }
+
+              var newCost = Math.min(existingCost + addedCost, 254);
+              costs.set(tx, ty, newCost);
+            }
           }
         }
 

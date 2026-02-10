@@ -6,6 +6,8 @@
  * - Target: E44N39 (Bazsi1224, RCL 6)
  */
 
+import * as DuoManager from "../combat/DuoManager";
+
 // ============================================
 // Types
 // ============================================
@@ -67,6 +69,10 @@ var SPAWN_TIME = 18; // 6 parts x 3 ticks each
 var TRAVEL_TIME = 200; // Estimated 4 rooms at ~50 ticks each
 var ATTACK_COOLDOWN = 1000; // Controller upgradeBlocked duration
 var CLAIM_LIFESPAN = 600; // CLAIM creeps only live 600 ticks
+var TOWER_DRAIN_MAX_DECOYS = 3; // Max concurrent decoys
+var TOWER_DRAIN_ENERGY_THRESHOLD = 200; // Towers "drained" when below this combined
+var ESCORT_DUO_ID_KEY = "escortDuoId";
+var ESTIMATED_TRAVEL_TIME = 200;
 
 // ============================================
 // Memory Access
@@ -81,6 +87,47 @@ export function getMilitaryMemory(): MilitaryMemory {
     };
   }
   return Memory.military;
+}
+
+// ============================================
+// Helper Functions
+// ============================================
+
+function transitionTo(campaign: CampaignState, newState: CampaignPhase): void {
+  console.log("[Military] " + campaign.id + ": " + campaign.state + " -> " + newState);
+  campaign.state = newState;
+  campaign.stateChangedAt = Game.time;
+}
+
+function estimateCyclesRemaining(rcl: number, ticksToDowngrade: number): number {
+  // Each attack removes 900 ticks (3 CLAIM parts x 300)
+  // Plus 1000 ticks natural decay = 1900 effective per cycle
+  var effectivePerCycle = 1900;
+  return Math.ceil(ticksToDowngrade / effectivePerCycle);
+}
+
+function getAttackersForCampaign(campaignId: string): Creep[] {
+  var result: Creep[] = [];
+  for (var name in Game.creeps) {
+    var creep = Game.creeps[name];
+    if (creep.memory.role === "CONTROLLER_ATTACKER" &&
+        (creep.memory as any).campaignId === campaignId) {
+      result.push(creep);
+    }
+  }
+  return result;
+}
+
+function getDecoysForCampaign(campaignId: string): Creep[] {
+  var result: Creep[] = [];
+  for (var name in Game.creeps) {
+    var creep = Game.creeps[name];
+    if (creep.memory.role === "DECOY" &&
+        (creep.memory as any).campaignId === campaignId) {
+      result.push(creep);
+    }
+  }
+  return result;
 }
 
 // ============================================
@@ -414,15 +461,8 @@ function runAttacking(campaign: CampaignState): void {
     // Check if controller is now neutral - victory!
     if (!controller.owner) {
       console.log("[Military] " + campaign.id + ": Controller downgraded to neutral! Moving to CLAIMING.");
-      campaign.state = "CLAIMING";
-      campaign.stateChangedAt = Game.time;
+      transitionTo(campaign, "CLAIMING");
       return;
-    }
-
-    // Check if controller level dropped
-    if (controller.level < attack.currentTargetRCL) {
-      console.log("[Military] " + campaign.id + ": MILESTONE - RCL dropped from " +
-        attack.currentTargetRCL + " to " + controller.level + "!");
     }
 
     // Update state
@@ -435,8 +475,7 @@ function runAttacking(campaign: CampaignState): void {
       attack.safeModeEndsAt = Game.time + controller.safeMode;
       console.log("[Military] " + campaign.id + ": Safe mode detected! Duration: " +
         controller.safeMode + " ticks.");
-      campaign.state = "WAITING_SAFE_MODE";
-      campaign.stateChangedAt = Game.time;
+      transitionTo(campaign, "WAITING_SAFE_MODE");
       return;
     }
 
@@ -444,9 +483,28 @@ function runAttacking(campaign: CampaignState): void {
     if (controller.upgradeBlocked && controller.upgradeBlocked > 0) {
       attack.upgradeBlockedUntil = Game.time + controller.upgradeBlocked;
     }
+  }
 
-    // Check for defenders
+  // === Manage active CONTROLLER_ATTACKER creeps ===
+  var attackers = getAttackersForCampaign(campaign.id);
+  var hasUnspentAttacker = false;
+  for (var i = 0; i < attackers.length; i++) {
+    if (!(attackers[i].memory as any).attacked) {
+      hasUnspentAttacker = true;
+      break;
+    }
+  }
+
+  // === Adaptation checks (every 50 ticks when we have vision) ===
+  if (Game.time % 50 === 0 && room) {
     checkAdaptation(campaign);
+  }
+
+  // === If defenders detected recently, request escort ===
+  if (attack.defendersSeen && Game.time - attack.defendersLastSeen < 3000) {
+    if (!hasActiveEscort(campaign)) {
+      requestDuoEscort(campaign);
+    }
   }
 
   // The actual attack logic is handled by the ControllerAttacker creeps
@@ -492,9 +550,38 @@ function runWaitingCooldown(campaign: CampaignState): void {
 }
 
 function runTowerDraining(campaign: CampaignState): void {
-  // Tower drain operation - spawn decoys to waste tower energy
-  // For now, just log and stay in this state
-  // Actual decoy spawning handled by utility functions
+  var attack = campaign.controllerAttack;
+  if (!attack) return;
+
+  var room = Game.rooms[campaign.targetRoom];
+
+  // Check if towers are drained
+  if (room) {
+    var towers = room.find(FIND_HOSTILE_STRUCTURES, {
+      filter: function(s: Structure) { return s.structureType === STRUCTURE_TOWER; }
+    }) as StructureTower[];
+
+    var totalTowerEnergy = 0;
+    for (var i = 0; i < towers.length; i++) {
+      totalTowerEnergy += towers[i].store[RESOURCE_ENERGY];
+    }
+
+    if (totalTowerEnergy < TOWER_DRAIN_ENERGY_THRESHOLD) {
+      console.log("[Military] Towers drained in " + campaign.targetRoom +
+        " (total energy: " + totalTowerEnergy + "). Resuming attack.");
+      attack.towerDrainNeeded = false;
+      transitionTo(campaign, "ATTACKING");
+      return;
+    }
+
+    // Log progress every 100 ticks
+    if (Game.time % 100 === 0) {
+      console.log("[Military] Tower drain in progress — " + campaign.targetRoom +
+        " tower energy: " + totalTowerEnergy);
+    }
+  }
+
+  // Decoy spawning is handled by getSpawnRequests — nothing else to do here
 }
 
 function runClaiming(campaign: CampaignState): void {
@@ -562,9 +649,13 @@ function runSecuring(campaign: CampaignState): void {
 }
 
 // ============================================
-// Adaptation
+// Adaptation Detection
 // ============================================
 
+/**
+ * Monitor conditions and detect when the campaign needs to escalate.
+ * Called periodically during ATTACKING phase.
+ */
 function checkAdaptation(campaign: CampaignState): void {
   var attack = campaign.controllerAttack;
   if (!attack) return;
@@ -575,8 +666,8 @@ function checkAdaptation(campaign: CampaignState): void {
   var controller = room.controller;
   if (!controller) return;
 
-  // Check for combat creeps near controller
-  var hostileDefenders = controller.pos.findInRange(FIND_HOSTILE_CREEPS, 5, {
+  // --- Defender detection ---
+  var hostileDefenders = controller.pos.findInRange(FIND_HOSTILE_CREEPS, 8, {
     filter: function(c) {
       return c.getActiveBodyparts(ATTACK) > 0 || c.getActiveBodyparts(RANGED_ATTACK) > 0;
     }
@@ -585,16 +676,18 @@ function checkAdaptation(campaign: CampaignState): void {
   if (hostileDefenders.length > 0) {
     attack.defendersSeen = true;
     attack.defendersLastSeen = Game.time;
-    // TODO: Send duo escort with next CLAIM creep
   }
 
-  // Check if towers are actively being refilled
+  // --- Tower refill detection ---
   var towers = room.find(FIND_HOSTILE_STRUCTURES, {
     filter: function(s) { return s.structureType === STRUCTURE_TOWER; }
   }) as StructureTower[];
 
+  var totalTowerEnergy = 0;
   for (var i = 0; i < towers.length; i++) {
     var tower = towers[i];
+    totalTowerEnergy += tower.store[RESOURCE_ENERGY];
+
     var towerState = null;
     for (var j = 0; j < attack.towerPositions.length; j++) {
       var t = attack.towerPositions[j];
@@ -611,6 +704,120 @@ function checkAdaptation(campaign: CampaignState): void {
       towerState.lastEnergy = tower.store[RESOURCE_ENERGY];
     }
   }
+
+  // If towers are consistently full despite us sending creeps, warn
+  if (attack.attackCount > 3 && totalTowerEnergy > 1800) {
+    if (!attack.towerDrainNeeded && Game.time % 500 === 0) {
+      console.log("[Military] Towers consistently full in " + campaign.targetRoom +
+        " — may need drain operation. Use military.drain('" + campaign.id + "') to start.");
+    }
+  }
+
+  // --- Creep death detection ---
+  var totalSpawned = (attack as any).totalSpawned || attack.attackCount;
+  if (totalSpawned > attack.attackCount + 3) {
+    console.log("[Military] WARNING: Multiple CONTROLLER_ATTACKERs dying before reaching target" +
+      " (spawned: " + totalSpawned + ", attacks: " + attack.attackCount + ")");
+
+    if (totalTowerEnergy > 500 && !attack.towerDrainNeeded) {
+      console.log("[Military] Towers likely killing en-route. Consider military.drain('" + campaign.id + "')");
+      attack.towerDrainNeeded = true;
+    }
+  }
+
+  // --- Stall detection ---
+  if (attack.lastAttackTick > 0 &&
+      Game.time - attack.lastAttackTick > 3000 &&
+      campaign.state === "ATTACKING") {
+    if (Game.time % 500 === 0) {
+      console.log("[Military] Campaign " + campaign.id + " stalled — no attack in 3000 ticks");
+    }
+  }
+
+  // --- RCL downgrade milestone ---
+  if (controller.owner && controller.level < attack.currentTargetRCL) {
+    var newRCL = controller.level;
+    console.log("[Military] *** " + campaign.targetRoom + " DOWNGRADED to RCL " + newRCL + "! ***");
+    console.log("[Military] Previous: RCL " + attack.currentTargetRCL +
+      " -> New: RCL " + newRCL);
+    attack.currentTargetRCL = newRCL;
+    (attack as any).estimatedCyclesRemaining = estimateCyclesRemaining(newRCL, controller.ticksToDowngrade || 0);
+    console.log("[Military] Est remaining: " + (attack as any).estimatedCyclesRemaining + " cycles");
+  }
+}
+
+// ============================================
+// Duo Escort Escalation
+// ============================================
+
+/**
+ * Request a duo escort for the campaign.
+ * Uses existing DuoManager to create an ATTACK_ROOM duo targeting the enemy room.
+ */
+function requestDuoEscort(campaign: CampaignState): void {
+  var attack = campaign.controllerAttack;
+  if (!attack) return;
+
+  // Check if we already have a duo for this campaign
+  if ((attack as any)[ESCORT_DUO_ID_KEY]) {
+    if (hasActiveEscort(campaign)) {
+      return; // Duo still active
+    }
+  }
+
+  // Find best colony to spawn from (closest with duo capacity)
+  var bestRoom: string | null = null;
+  var bestDistance = Infinity;
+
+  for (var roomName in Game.rooms) {
+    var room = Game.rooms[roomName];
+    if (!room.controller || !room.controller.my) continue;
+
+    // Need enough energy for a duo (attacker + healer ~2300+ each)
+    if (room.energyCapacityAvailable < 2300) continue;
+
+    var route = Game.map.findRoute(roomName, campaign.targetRoom);
+    if (route === ERR_NO_PATH || !Array.isArray(route)) continue;
+
+    if (route.length < bestDistance) {
+      bestDistance = route.length;
+      bestRoom = roomName;
+    }
+  }
+
+  if (!bestRoom) {
+    console.log("[Military] Cannot spawn escort duo — no colony with sufficient energy capacity");
+    return;
+  }
+
+  // Create duo via DuoManager
+  var duoId = DuoManager.spawnDuo(
+    bestRoom,
+    campaign.targetRoom,
+    "ATTACK_ROOM",
+    "HIGH"
+  );
+
+  (attack as any)[ESCORT_DUO_ID_KEY] = duoId;
+  console.log("[Military] Requested escort duo " + duoId + " from " + bestRoom +
+    " for campaign " + campaign.id);
+}
+
+/**
+ * Check if escort duo is alive and active.
+ */
+function hasActiveEscort(campaign: CampaignState): boolean {
+  var attack = campaign.controllerAttack;
+  if (!attack) return false;
+
+  var duoId = (attack as any)[ESCORT_DUO_ID_KEY];
+  if (!duoId) return false;
+
+  var duo = DuoManager.getDuo(duoId);
+  if (!duo) return false;
+  if (duo.state === "RECYCLING") return false;
+
+  return true;
 }
 
 // ============================================
@@ -723,14 +930,33 @@ export function status(): string {
       if (attack.defendersSeen) {
         lines.push("  Defenders: seen at tick " + attack.defendersLastSeen);
       }
+
+      if (attack.towerDrainNeeded) {
+        lines.push("  Tower drain: NEEDED");
+      }
+
+      // Show escort duo status
+      var duoId = (attack as any)[ESCORT_DUO_ID_KEY];
+      if (duoId) {
+        lines.push("  Escort duo: " + duoId + (hasActiveEscort(campaign) ? " (active)" : " (inactive)"));
+      }
+
+      // Show total spawned vs attacks for death tracking
+      var totalSpawned = (attack as any).totalSpawned || 0;
+      if (totalSpawned > 0) {
+        lines.push("  Spawned/Attacks: " + totalSpawned + "/" + attack.attackCount);
+      }
     }
 
     // Count active creeps for this campaign
-    var attackers = Object.values(Game.creeps).filter(function(c) {
-      return c.memory.role === "CONTROLLER_ATTACKER" && (c.memory as any).campaignId === id;
-    });
+    var attackers = getAttackersForCampaign(id);
     if (attackers.length > 0) {
       lines.push("  CLAIM creeps: " + attackers.length);
+    }
+
+    var decoys = getDecoysForCampaign(id);
+    if (decoys.length > 0) {
+      lines.push("  Decoys: " + decoys.length);
     }
   }
 
@@ -784,4 +1010,94 @@ export function startTowerDrain(campaignId: string): string {
   campaign.stateChangedAt = Game.time;
 
   return "Started tower drain for " + campaignId;
+}
+
+// ============================================
+// Spawn Request System
+// ============================================
+
+export interface MilitarySpawnRequest {
+  role: "CONTROLLER_ATTACKER" | "DECOY";
+  campaignId: string;
+  targetRoom: string;
+  priority: number;
+}
+
+/**
+ * Get spawn requests for all active campaigns.
+ * Called by spawning system to determine what military creeps to spawn.
+ */
+export function getSpawnRequests(homeRoom: string): MilitarySpawnRequest[] {
+  var mem = getMilitaryMemory();
+  var requests: MilitarySpawnRequest[] = [];
+
+  for (var id in mem.campaigns) {
+    var campaign = mem.campaigns[id];
+
+    // Check if this room should contribute
+    if (campaign.homeRoom !== homeRoom && campaign.supportRooms.indexOf(homeRoom) === -1) {
+      continue;
+    }
+
+    var attack = campaign.controllerAttack;
+
+    // === ATTACKING phase: spawn CONTROLLER_ATTACKERs ===
+    if (campaign.state === "ATTACKING" && attack) {
+      // Check if there's already an attacker in pipeline
+      var existingAttackers = getAttackersForCampaign(id).filter(function(c) {
+        return !(c.memory as any).attacked;
+      });
+
+      if (existingAttackers.length === 0) {
+        // Check timing
+        var timeSinceLastAttack = Game.time - attack.lastAttackTick;
+        var spawnWindow = ATTACK_COOLDOWN - TRAVEL_TIME - SPAWN_TIME;
+
+        if (timeSinceLastAttack >= spawnWindow || attack.lastAttackTick === 0) {
+          requests.push({
+            role: "CONTROLLER_ATTACKER",
+            campaignId: id,
+            targetRoom: campaign.targetRoom,
+            priority: 100
+          });
+        }
+      }
+    }
+
+    // === TOWER_DRAINING phase: spawn DECOYs ===
+    if (campaign.state === "TOWER_DRAINING" && attack) {
+      var decoys = getDecoysForCampaign(id);
+      var aliveDecoys = decoys.filter(function(c) {
+        return c.ticksToLive && c.ticksToLive > 50;
+      });
+
+      if (aliveDecoys.length < TOWER_DRAIN_MAX_DECOYS) {
+        requests.push({
+          role: "DECOY",
+          campaignId: id,
+          targetRoom: campaign.targetRoom,
+          priority: 80
+        });
+      }
+    }
+  }
+
+  return requests;
+}
+
+/**
+ * Report that a military creep was spawned.
+ * Used to track total spawned for death detection.
+ */
+export function reportSpawned(campaignId: string, role: string): void {
+  var mem = getMilitaryMemory();
+  var campaign = mem.campaigns[campaignId];
+
+  if (!campaign || !campaign.controllerAttack) return;
+
+  var attack = campaign.controllerAttack;
+
+  if (role === "CONTROLLER_ATTACKER") {
+    (attack as any).totalSpawned = ((attack as any).totalSpawned || 0) + 1;
+  }
 }
