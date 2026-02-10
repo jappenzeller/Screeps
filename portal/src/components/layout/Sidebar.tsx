@@ -8,6 +8,7 @@ interface SidebarProps {
   onClose: () => void;
   badges?: {
     intel?: number;
+    military?: number;
     advisor?: number;
     recordings?: number;
   };
@@ -16,6 +17,7 @@ interface SidebarProps {
 const navItems = [
   { path: '/', label: 'Empire Overview', icon: '🏛️', key: 'overview' },
   { path: '/intel', label: 'Intel Map', icon: '🗺️', key: 'intel' },
+  { path: '/military', label: 'Military', icon: '⚔️', key: 'military' },
   { path: '/advisor', label: 'AI Advisor', icon: '🤖', key: 'advisor' },
   { path: '/recordings', label: 'Recordings', icon: '📹', key: 'recordings' },
   { path: '/debug', label: 'Debug', icon: '🔧', key: 'debug' },

@@ -5,6 +5,7 @@ export const POLL_INTERVALS = {
   COLONY_DETAIL: 15_000,
   COLONY_ECONOMY: 30_000,
   EMPIRE: 60_000,
+  MILITARY: 15_000, // Military campaigns update frequently
   METRICS: 0, // on-demand only
   ANALYSIS: 120_000,
   RECORDINGS: 0,
@@ -46,6 +47,11 @@ export const ROLE_COLORS: Record<string, string> = {
   CLAIMER: '#ff44ff',
   BOOTSTRAP_BUILDER: '#ff6600',
   BOOTSTRAP_HAULER: '#cc8800',
+  // Military roles
+  CONTROLLER_ATTACKER: '#ff0066',
+  DECOY: '#ff8800',
+  DEMOLISHER: '#cc0000',
+  RECLAIM_BLOCKER: '#9900ff',
 };
 
 export const BODY_PART_COLORS: Record<string, string> = {

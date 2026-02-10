@@ -10,6 +10,7 @@ import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { EmpireOverview } from './pages/EmpireOverview';
 import { ColonyDetail } from './pages/ColonyDetail';
 import { IntelMap } from './pages/IntelMap';
+import { Military } from './pages/Military';
 import { Advisor } from './pages/Advisor';
 import { Recordings } from './pages/Recordings';
 import { Debug } from './pages/Debug';
@@ -67,12 +68,15 @@ function AppContent() {
           navigate('/intel');
           break;
         case '3':
-          navigate('/advisor');
+          navigate('/military');
           break;
         case '4':
-          navigate('/recordings');
+          navigate('/advisor');
           break;
         case '5':
+          navigate('/recordings');
+          break;
+        case '6':
           navigate('/debug');
           break;
         case '?':
@@ -142,6 +146,9 @@ function AppContent() {
             } />
             <Route path="/intel" element={
               <ErrorBoundary><IntelMap /></ErrorBoundary>
+            } />
+            <Route path="/military" element={
+              <ErrorBoundary><Military /></ErrorBoundary>
             } />
             <Route path="/advisor" element={
               <ErrorBoundary><Advisor /></ErrorBoundary>

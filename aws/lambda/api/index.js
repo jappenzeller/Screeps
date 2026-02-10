@@ -43,6 +43,126 @@ function withMeta(data, source, dataTimestamp) {
   };
 }
 
+// ==================== Military Endpoints ====================
+
+/**
+ * GET /military — list all campaigns with summary data
+ */
+async function getMilitaryStatus() {
+  const data = await fetchSegment90();
+  if (!data) return { error: "No data in segment 90" };
+
+  if (!data.military) {
+    return {
+      source: "segment90",
+      fetchedAt: Date.now(),
+      gameTick: data.gameTick,
+      posture: "PEACEFUL",
+      campaigns: [],
+      campaignCount: 0,
+    };
+  }
+
+  const military = data.military;
+  const campaigns = [];
+
+  for (const id in military.campaigns || {}) {
+    const campaign = military.campaigns[id];
+    const attack = campaign.controllerAttack || {};
+
+    campaigns.push({
+      id: campaign.id,
+      type: campaign.type,
+      targetRoom: campaign.targetRoom,
+      targetOwner: campaign.targetOwner,
+      state: campaign.state,
+      stateChangedAt: campaign.stateChangedAt,
+      createdAt: campaign.createdAt,
+      // Attack summary
+      currentRCL: attack.currentTargetRCL || null,
+      ticksToDowngrade: attack.currentTicksToDowngrade || null,
+      attackCount: attack.attackCount || 0,
+      safeModeActive: attack.safeModeActive || false,
+      safeModeEndsAt: attack.safeModeEndsAt || null,
+      defendersSeen: attack.defendersSeen || false,
+      towerDrainNeeded: attack.towerDrainNeeded || false,
+      // Stats summary
+      stats: attack.stats || null,
+      // Conquest state if present
+      conquestPhase: attack.conquest ? attack.conquest.phase : null,
+    });
+  }
+
+  return withMeta({
+    gameTick: data.gameTick,
+    posture: military.posture || "PEACEFUL",
+    campaigns: campaigns,
+    campaignCount: campaigns.length,
+  }, "segment90", data.timestamp);
+}
+
+/**
+ * GET /military/{campaignId} — full campaign detail
+ */
+async function getMilitaryCampaign(campaignId) {
+  const data = await fetchSegment90();
+  if (!data) return { error: "No data in segment 90" };
+
+  if (!data.military || !data.military.campaigns) {
+    return { error: "No military data available" };
+  }
+
+  const campaign = data.military.campaigns[campaignId];
+  if (!campaign) {
+    return {
+      error: `Campaign ${campaignId} not found`,
+      availableCampaigns: Object.keys(data.military.campaigns),
+    };
+  }
+
+  const attack = campaign.controllerAttack || {};
+
+  // Get event log if present
+  const eventLog = attack.eventLog || [];
+  const recentEvents = eventLog.slice(-20);
+
+  return withMeta({
+    gameTick: data.gameTick,
+    id: campaign.id,
+    type: campaign.type,
+    targetRoom: campaign.targetRoom,
+    targetOwner: campaign.targetOwner,
+    state: campaign.state,
+    stateChangedAt: campaign.stateChangedAt,
+    createdAt: campaign.createdAt,
+    // Full attack state
+    controllerAttack: {
+      controllerPos: attack.controllerPos,
+      approachDirection: attack.approachDirection,
+      lastAttackTick: attack.lastAttackTick,
+      attackCount: attack.attackCount,
+      currentTargetRCL: attack.currentTargetRCL,
+      currentTicksToDowngrade: attack.currentTicksToDowngrade,
+      estimatedTicksRemaining: attack.estimatedTicksRemaining,
+      estimatedCyclesRemaining: attack.estimatedCyclesRemaining,
+      towerPositions: attack.towerPositions,
+      safeModeActive: attack.safeModeActive,
+      safeModeEndsAt: attack.safeModeEndsAt,
+      upgradeBlockedUntil: attack.upgradeBlockedUntil,
+      defendersSeen: attack.defendersSeen,
+      defendersLastSeen: attack.defendersLastSeen,
+      towerDrainNeeded: attack.towerDrainNeeded,
+      stats: attack.stats,
+    },
+    // Conquest state
+    conquest: attack.conquest || null,
+    // Event log
+    eventLog: recentEvents,
+    // Counter-intel alerts
+    counterIntel: attack.counterIntel || null,
+  }, "segment90", data.timestamp);
+}
+
 // ==================== Screeps API Helpers ====================
 
 /**
@@ -1689,6 +1809,14 @@ export async function handler(event) {
     else if (path === 'GET /metrics/{roomName}') {
       const hours = parseInt(query.hours) || 24;
       result = await getMetricHistory(params.roomName, hours);
+    }
+
+    // ==================== Military Endpoints ====================
+    else if (path === 'GET /military') {
+      result = await getMilitaryStatus();
+    }
+    else if (path === 'GET /military/{campaignId}') {
+      result = await getMilitaryCampaign(params.campaignId);
     }
 
     // ==================== Recording Endpoints ====================

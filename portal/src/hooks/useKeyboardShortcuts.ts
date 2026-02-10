@@ -34,12 +34,15 @@ export function useKeyboardShortcuts({
         navigate('/intel');
         break;
       case '3':
-        navigate('/advisor');
+        navigate('/military');
         break;
       case '4':
-        navigate('/recordings');
+        navigate('/advisor');
         break;
       case '5':
+        navigate('/recordings');
+        break;
+      case '6':
         navigate('/debug');
         break;
       case '?':
@@ -74,9 +77,10 @@ export function useKeyboardShortcuts({
 export const SHORTCUTS = [
   { key: '1', description: 'Go to Empire Overview' },
   { key: '2', description: 'Go to Intel Map' },
-  { key: '3', description: 'Go to AI Advisor' },
-  { key: '4', description: 'Go to Recordings' },
-  { key: '5', description: 'Go to Debug Console' },
+  { key: '3', description: 'Go to Military' },
+  { key: '4', description: 'Go to AI Advisor' },
+  { key: '5', description: 'Go to Recordings' },
+  { key: '6', description: 'Go to Debug Console' },
   { key: '?', description: 'Show keyboard shortcuts' },
   { key: 'Esc', description: 'Close panels/modals' },
   { key: 'r', description: 'Refresh current data' },
