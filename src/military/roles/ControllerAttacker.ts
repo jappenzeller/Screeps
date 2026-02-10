@@ -85,7 +85,7 @@ export function runControllerAttacker(creep: Creep): void {
 
       // Record the attack in campaign state
       if (mem.campaignId) {
-        recordAttack(mem.campaignId);
+        recordAttack(mem.campaignId, controller.level, controller.ticksToDowngrade || 0);
       }
     } else if (result === ERR_TIRED) {
       // upgradeBlocked still active, wait

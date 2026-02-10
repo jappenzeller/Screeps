@@ -7,6 +7,7 @@
  */
 
 import * as DuoManager from "../combat/DuoManager";
+import { ExpansionManager } from "../empire/ExpansionManager";
 
 // ============================================
 // Types
@@ -25,6 +26,16 @@ export type CampaignPhase =
   | "ABORTED"
   | "PAUSED";
 
+export interface CampaignStats {
+  totalSpawned: number;
+  totalLost: number;
+  totalEnergySpent: number;
+  rclDowngrades: number[];
+  safeModeActivations: number;
+  campaignStartTimer: number;
+  campaignStartRCL: number;
+}
+
 export interface ControllerAttackState {
   controllerPos: { x: number; y: number };
   approachDirection: "south" | "west" | "east" | "north";
@@ -33,6 +44,7 @@ export interface ControllerAttackState {
   currentTargetRCL: number;
   currentTicksToDowngrade: number;
   estimatedTicksRemaining: number;
+  estimatedCyclesRemaining: number;
   towerPositions: { x: number; y: number; lastEnergy: number }[];
   safeModeActive: boolean;
   safeModeEndsAt: number;
@@ -40,6 +52,7 @@ export interface ControllerAttackState {
   defendersSeen: boolean;
   defendersLastSeen: number;
   towerDrainNeeded: boolean;
+  stats: CampaignStats;
 }
 
 export interface CampaignState {
@@ -73,6 +86,8 @@ var TOWER_DRAIN_MAX_DECOYS = 3; // Max concurrent decoys
 var TOWER_DRAIN_ENERGY_THRESHOLD = 200; // Towers "drained" when below this combined
 var ESCORT_DUO_ID_KEY = "escortDuoId";
 var ESTIMATED_TRAVEL_TIME = 200;
+var HOME_THREAT_PAUSE_THRESHOLD = 3; // Hostile combat parts to trigger pause
+var MAX_MILITARY_SPAWN_PCT = 0.10; // Max 10% of spawn time for military
 
 // ============================================
 // Memory Access
@@ -131,11 +146,72 @@ function getDecoysForCampaign(campaignId: string): Creep[] {
 }
 
 // ============================================
+// Home Defense Awareness
+// ============================================
+
+/**
+ * Check if any of our colonies are under significant attack.
+ * If so, pause non-critical campaigns to free spawn capacity.
+ */
+function checkHomeDefense(): boolean {
+  for (var roomName in Game.rooms) {
+    var room = Game.rooms[roomName];
+    if (!room.controller || !room.controller.my) continue;
+
+    var hostiles = room.find(FIND_HOSTILE_CREEPS, {
+      filter: function(c: Creep) {
+        // Only count real threats, not scouts
+        return (c.getActiveBodyparts(ATTACK) +
+                c.getActiveBodyparts(RANGED_ATTACK) +
+                c.getActiveBodyparts(HEAL)) >= HOME_THREAT_PAUSE_THRESHOLD;
+      }
+    });
+
+    if (hostiles.length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if empire-wide spawn budget allows another military creep.
+ */
+function withinSpawnBudget(): boolean {
+  var mem = getMilitaryMemory();
+  var activeCampaigns = 0;
+  for (var id in mem.campaigns) {
+    var state = mem.campaigns[id].state;
+    if (state === "ATTACKING" || state === "TOWER_DRAINING") {
+      activeCampaigns++;
+    }
+  }
+
+  // Each campaign uses ~1.8% spawn time (18 ticks per 1000)
+  var totalSpawns = Object.keys(Game.spawns).length;
+  if (totalSpawns === 0) return false;
+
+  var totalCapacity = totalSpawns * 1000;
+  var militaryUsage = activeCampaigns * 18;
+  var militaryPct = militaryUsage / totalCapacity;
+
+  return militaryPct < MAX_MILITARY_SPAWN_PCT;
+}
+
+// ============================================
 // Main Run Function
 // ============================================
 
 export function run(): void {
   var mem = getMilitaryMemory();
+
+  // Home defense check — log when under attack
+  var homeUnderAttack = checkHomeDefense();
+  if (homeUnderAttack && mem.posture === "OFFENSIVE") {
+    if (Game.time % 100 === 0) {
+      console.log("[Military] Home colony under attack — campaign spawning deprioritized");
+    }
+  }
 
   for (var id in mem.campaigns) {
     var campaign = mem.campaigns[id];
@@ -222,6 +298,7 @@ export function createCampaign(params: CreateCampaignParams): string {
       currentTargetRCL: 0,
       currentTicksToDowngrade: 0,
       estimatedTicksRemaining: 0,
+      estimatedCyclesRemaining: 0,
       towerPositions: [],
       safeModeActive: false,
       safeModeEndsAt: 0,
@@ -229,6 +306,15 @@ export function createCampaign(params: CreateCampaignParams): string {
       defendersSeen: false,
       defendersLastSeen: 0,
       towerDrainNeeded: false,
+      stats: {
+        totalSpawned: 0,
+        totalLost: 0,
+        totalEnergySpent: 0,
+        rclDowngrades: [],
+        safeModeActivations: 0,
+        campaignStartTimer: 0,
+        campaignStartRCL: 0,
+      },
     };
   }
 
@@ -497,7 +583,7 @@ function runAttacking(campaign: CampaignState): void {
 
   // === Adaptation checks (every 50 ticks when we have vision) ===
   if (Game.time % 50 === 0 && room) {
-    checkAdaptation(campaign);
+    checkAdaptation(campaign, room);
   }
 
   // === If defenders detected recently, request escort ===
@@ -514,6 +600,13 @@ function runAttacking(campaign: CampaignState): void {
 function runWaitingSafeMode(campaign: CampaignState): void {
   var attack = campaign.controllerAttack;
   if (!attack) return;
+
+  // Track safe mode activation (only on first tick of this state)
+  if (Game.time === campaign.stateChangedAt) {
+    attack.stats.safeModeActivations++;
+    console.log("[Military] Safe mode #" + attack.stats.safeModeActivations +
+      " activated in " + campaign.targetRoom);
+  }
 
   var room = Game.rooms[campaign.targetRoom];
 
@@ -585,66 +678,223 @@ function runTowerDraining(campaign: CampaignState): void {
 }
 
 function runClaiming(campaign: CampaignState): void {
-  // Check if we have a claimer heading to target
-  var claimers = Object.values(Game.creeps).filter(function(c) {
-    return c.memory.role === "CLAIMER" && c.memory.targetRoom === campaign.targetRoom;
-  });
-
-  // Check if room is now ours
   var room = Game.rooms[campaign.targetRoom];
+
+  // Check if room is already ours
   if (room && room.controller && room.controller.my) {
-    console.log("[Military] " + campaign.id + ": Room " + campaign.targetRoom + " claimed! Moving to SECURING.");
-    campaign.state = "SECURING";
-    campaign.stateChangedAt = Game.time;
+    console.log("[Military] *** " + campaign.targetRoom + " CLAIMED! ***");
+    console.log("[Military] Campaign " + campaign.id + " entering SECURING phase.");
+
+    // Attempt to hand off to ExpansionManager
+    initiateExpansionHandoff(campaign);
+    transitionTo(campaign, "SECURING");
     return;
   }
 
-  if (claimers.length === 0) {
-    // Request claimer through expansion system or direct spawn
-    // For now, log that we need one
-    if (Game.time % 50 === 0) {
-      console.log("[Military] " + campaign.id + ": Waiting for CLAIMER to claim " + campaign.targetRoom);
+  // Check if controller is neutral (our goal)
+  if (room && room.controller && !room.controller.owner) {
+    // Controller is down — need to send a CLAIMER
+    var claimers: Creep[] = [];
+    for (var name in Game.creeps) {
+      var creep = Game.creeps[name];
+      if (creep.memory.role === "CLAIMER" &&
+          creep.memory.targetRoom === campaign.targetRoom) {
+        claimers.push(creep);
+      }
+    }
+
+    if (claimers.length === 0) {
+      // No claimer — we need to trigger expansion system
+      var alreadyExpanding = false;
+      if (Memory.empire && Memory.empire.expansion && Memory.empire.expansion.active) {
+        if ((Memory.empire.expansion.active as any)[campaign.targetRoom]) {
+          alreadyExpanding = true;
+        }
+      }
+
+      if (!alreadyExpanding) {
+        var parentRoom = selectBestParentForClaim(campaign.targetRoom);
+        if (parentRoom) {
+          console.log("[Military] Controller DOWN in " + campaign.targetRoom +
+            " — triggering expansion from " + parentRoom);
+          initiateExpansionHandoff(campaign);
+        } else {
+          console.log("[Military] No suitable parent room found for " + campaign.targetRoom +
+            " — manually run: expansion.expand('" + campaign.targetRoom + "', '<parentRoom>')");
+        }
+      } else {
+        if (Game.time % 200 === 0) {
+          console.log("[Military] Waiting for expansion system to claim " + campaign.targetRoom);
+        }
+      }
+    } else {
+      if (Game.time % 100 === 0) {
+        console.log("[Military] CLAIMER en route to " + campaign.targetRoom +
+          " — TTL: " + (claimers[0].ticksToLive || "?"));
+      }
+    }
+  } else if (!room) {
+    if (Game.time % 200 === 0) {
+      console.log("[Military] No vision on " + campaign.targetRoom + " in CLAIMING state");
     }
   }
 }
 
+/**
+ * Initiate handoff to ExpansionManager for newly conquered room.
+ */
+function initiateExpansionHandoff(campaign: CampaignState): void {
+  var parentRoom = selectBestParentForClaim(campaign.targetRoom);
+  if (!parentRoom) {
+    console.log("[Military] No parent room found for expansion handoff");
+    return;
+  }
+
+  // Use existing expansion system
+  try {
+    var manager = new ExpansionManager();
+    var success = manager.startExpansion(campaign.targetRoom, parentRoom);
+    if (success) {
+      console.log("[Military] ExpansionManager.startExpansion() succeeded for " +
+        campaign.targetRoom);
+    } else {
+      console.log("[Military] ExpansionManager.startExpansion() returned false — " +
+        "check expansion readiness. Try manually: expansion.expand('" +
+        campaign.targetRoom + "', '" + parentRoom + "')");
+    }
+  } catch (e) {
+    console.log("[Military] Error starting expansion: " + e +
+      " — try manually: expansion.expand('" + campaign.targetRoom + "', '" + parentRoom + "')");
+  }
+}
+
+/**
+ * Select best parent room for claiming a conquered target.
+ * Prefers: closest, highest RCL, with energy reserves.
+ */
+function selectBestParentForClaim(targetRoom: string): string | null {
+  var best: string | null = null;
+  var bestScore = -Infinity;
+
+  for (var roomName in Game.rooms) {
+    var room = Game.rooms[roomName];
+    if (!room.controller || !room.controller.my) continue;
+    if (room.controller.level < 4) continue; // Need CLAIM parts
+
+    var route = Game.map.findRoute(roomName, targetRoom);
+    if (route === ERR_NO_PATH || !Array.isArray(route)) continue;
+
+    var distance = route.length;
+    if (distance > 10) continue; // Too far
+
+    // Score: prioritize close distance, high RCL, and energy reserves
+    var score = 100 - (distance * 15) + (room.controller.level * 10);
+    if (room.storage) {
+      score += Math.min(30, room.storage.store[RESOURCE_ENERGY] / 10000);
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = roomName;
+    }
+  }
+
+  return best;
+}
+
 function runSecuring(campaign: CampaignState): void {
-  // Room is claimed, bootstrap it
   var room = Game.rooms[campaign.targetRoom];
 
-  if (!room || !room.controller || !room.controller.my) {
-    console.log("[Military] " + campaign.id + ": Lost control of " + campaign.targetRoom + "!");
-    campaign.state = "CLAIMING";
-    campaign.stateChangedAt = Game.time;
-    return;
-  }
+  // Check if the room is owned and has a spawn
+  if (room && room.controller && room.controller.my) {
+    var spawns = room.find(FIND_MY_SPAWNS);
+    if (spawns.length > 0) {
+      // Spawn built — colony is bootstrapped
+      completeCampaign(campaign);
+      return;
+    }
 
-  // Check if room has a spawn (self-sustaining)
-  var spawns = room.find(FIND_MY_SPAWNS);
-  if (spawns.length > 0) {
-    console.log("[Military] " + campaign.id + ": " + campaign.targetRoom + " has spawn. Campaign COMPLETE!");
-    campaign.state = "COMPLETE";
-    campaign.stateChangedAt = Game.time;
+    // Check expansion state
+    if (Memory.empire && Memory.empire.expansion && Memory.empire.expansion.active) {
+      var expansion = (Memory.empire.expansion.active as any)[campaign.targetRoom];
+      if (expansion) {
+        if (Game.time % 500 === 0) {
+          console.log("[Military] Securing " + campaign.targetRoom +
+            " — expansion state: " + expansion.state +
+            " (ticks in state: " + (Game.time - expansion.stateChangedAt) + ")");
+        }
 
-    // Update posture
-    var mem = getMilitaryMemory();
-    var hasActive = false;
-    for (var id in mem.campaigns) {
-      var c = mem.campaigns[id];
-      if (c.id !== campaign.id && c.state !== "COMPLETE" && c.state !== "ABORTED") {
-        hasActive = true;
-        break;
+        // If expansion completes, we're done
+        if (expansion.state === "COMPLETE" || expansion.state === "INTEGRATING") {
+          completeCampaign(campaign);
+          return;
+        }
       }
     }
-    if (!hasActive) {
-      mem.posture = "PEACEFUL";
-    }
+  } else if (room && room.controller && !room.controller.my) {
+    // Lost the claim somehow — go back to CLAIMING
+    console.log("[Military] Lost claim on " + campaign.targetRoom + " — reverting to CLAIMING");
+    transitionTo(campaign, "CLAIMING");
+  }
+
+  // Timeout: if securing takes too long, just complete
+  if (Game.time - campaign.stateChangedAt > 20000) {
+    console.log("[Military] Securing timeout for " + campaign.targetRoom + " — marking complete");
+    completeCampaign(campaign);
+  }
+}
+
+function completeCampaign(campaign: CampaignState): void {
+  var attack = campaign.controllerAttack;
+  if (!attack) {
+    transitionTo(campaign, "COMPLETE");
     return;
   }
 
-  // Otherwise, expansion system should be handling bootstrap
-  if (Game.time % 100 === 0) {
-    console.log("[Military] " + campaign.id + ": Securing " + campaign.targetRoom + " (waiting for spawn)");
+  var duration = Game.time - campaign.createdAt;
+  var hours = (duration / 3600 * 3).toFixed(1);
+  var stats = attack.stats;
+
+  console.log("╔══════════════════════════════════════════╗");
+  console.log("║  CAMPAIGN COMPLETE: " + campaign.targetRoom.padEnd(20) + "║");
+  console.log("╠══════════════════════════════════════════╣");
+  console.log("║  Target:    " + campaign.targetOwner.padEnd(28) + "║");
+  console.log("║  Duration:  " + (duration + " ticks (~" + hours + "h)").padEnd(28) + "║");
+  console.log("║  Attacks:   " + (attack.attackCount + "").padEnd(28) + "║");
+  console.log("║  Spawned:   " + (stats.totalSpawned + "").padEnd(28) + "║");
+  console.log("║  Losses:    " + (stats.totalLost + "").padEnd(28) + "║");
+  console.log("║  Energy:    " + (stats.totalEnergySpent + "").padEnd(28) + "║");
+  console.log("║  RCL drops: " + (stats.rclDowngrades.length + "").padEnd(28) + "║");
+  console.log("║  Safe modes:" + (stats.safeModeActivations + "").padEnd(28) + "║");
+  console.log("╚══════════════════════════════════════════╝");
+
+  // Store completion data
+  (campaign as any).completedAt = Game.time;
+  (campaign as any).completionStats = {
+    duration: duration,
+    attacks: attack.attackCount,
+    spawned: stats.totalSpawned,
+    losses: stats.totalLost,
+    energySpent: stats.totalEnergySpent,
+    rclDowngrades: stats.rclDowngrades.length,
+    safeModes: stats.safeModeActivations,
+  };
+
+  transitionTo(campaign, "COMPLETE");
+
+  // Check if all campaigns done
+  var mem = getMilitaryMemory();
+  var anyActive = false;
+  for (var id in mem.campaigns) {
+    var c = mem.campaigns[id];
+    if (c.state !== "COMPLETE" && c.state !== "ABORTED") {
+      anyActive = true;
+      break;
+    }
+  }
+  if (!anyActive) {
+    mem.posture = "PEACEFUL";
+    console.log("[Military] All campaigns complete — posture set to PEACEFUL");
   }
 }
 
@@ -653,22 +903,38 @@ function runSecuring(campaign: CampaignState): void {
 // ============================================
 
 /**
- * Monitor conditions and detect when the campaign needs to escalate.
- * Called periodically during ATTACKING phase.
+ * Monitor conditions and auto-escalate when needed.
+ * Called every 50 ticks during ATTACKING phase.
  */
-function checkAdaptation(campaign: CampaignState): void {
+function checkAdaptation(campaign: CampaignState, room: Room): void {
   var attack = campaign.controllerAttack;
   if (!attack) return;
-
-  var room = Game.rooms[campaign.targetRoom];
-  if (!room) return;
 
   var controller = room.controller;
   if (!controller) return;
 
+  var stats = attack.stats;
+
+  // --- RCL downgrade milestone ---
+  if (controller.owner && controller.level < attack.currentTargetRCL) {
+    var newRCL = controller.level;
+    console.log("[Military] *** " + campaign.targetRoom + " DOWNGRADED to RCL " + newRCL + "! ***");
+    console.log("[Military] Previous: RCL " + attack.currentTargetRCL + " → New: RCL " + newRCL);
+    attack.currentTargetRCL = newRCL;
+    stats.rclDowngrades.push(Game.time);
+    attack.estimatedCyclesRemaining = estimateCyclesRemaining(newRCL, controller.ticksToDowngrade || 0);
+    console.log("[Military] Est remaining: " + attack.estimatedCyclesRemaining + " cycles");
+
+    // At RCL 2, towers are destroyed (towers require RCL 3)
+    if (newRCL <= 2 && attack.towerDrainNeeded) {
+      attack.towerDrainNeeded = false;
+      console.log("[Military] RCL dropped to " + newRCL + " — towers should be destroyed, clearing drain flag");
+    }
+  }
+
   // --- Defender detection ---
   var hostileDefenders = controller.pos.findInRange(FIND_HOSTILE_CREEPS, 8, {
-    filter: function(c) {
+    filter: function(c: Creep) {
       return c.getActiveBodyparts(ATTACK) > 0 || c.getActiveBodyparts(RANGED_ATTACK) > 0;
     }
   });
@@ -676,11 +942,12 @@ function checkAdaptation(campaign: CampaignState): void {
   if (hostileDefenders.length > 0) {
     attack.defendersSeen = true;
     attack.defendersLastSeen = Game.time;
+    (attack as any).defenderSightings = ((attack as any).defenderSightings || 0) + 1;
   }
 
   // --- Tower refill detection ---
   var towers = room.find(FIND_HOSTILE_STRUCTURES, {
-    filter: function(s) { return s.structureType === STRUCTURE_TOWER; }
+    filter: function(s: Structure) { return s.structureType === STRUCTURE_TOWER; }
   }) as StructureTower[];
 
   var totalTowerEnergy = 0;
@@ -705,23 +972,29 @@ function checkAdaptation(campaign: CampaignState): void {
     }
   }
 
-  // If towers are consistently full despite us sending creeps, warn
-  if (attack.attackCount > 3 && totalTowerEnergy > 1800) {
-    if (!attack.towerDrainNeeded && Game.time % 500 === 0) {
-      console.log("[Military] Towers consistently full in " + campaign.targetRoom +
-        " — may need drain operation. Use military.drain('" + campaign.id + "') to start.");
+  // --- Auto tower drain escalation ---
+  // If 3+ creeps have died without attacking, towers are likely killing them
+  if (stats.totalLost >= 3 && !attack.towerDrainNeeded) {
+    var lossRate = stats.totalLost / Math.max(1, stats.totalSpawned);
+    if (lossRate > 0.3) {
+      // More than 30% loss rate — auto-escalate
+      if (towers.length > 0) {
+        console.log("[Military] AUTO-ESCALATION: " + (lossRate * 100).toFixed(0) +
+          "% creep loss rate, " + towers.length + " towers detected → starting tower drain");
+        attack.towerDrainNeeded = true;
+        transitionTo(campaign, "TOWER_DRAINING");
+        return;
+      }
     }
   }
 
-  // --- Creep death detection ---
-  var totalSpawned = (attack as any).totalSpawned || attack.attackCount;
-  if (totalSpawned > attack.attackCount + 3) {
-    console.log("[Military] WARNING: Multiple CONTROLLER_ATTACKERs dying before reaching target" +
-      " (spawned: " + totalSpawned + ", attacks: " + attack.attackCount + ")");
-
-    if (totalTowerEnergy > 500 && !attack.towerDrainNeeded) {
-      console.log("[Military] Towers likely killing en-route. Consider military.drain('" + campaign.id + "')");
-      attack.towerDrainNeeded = true;
+  // --- Defender detection auto-escort ---
+  if (attack.defendersSeen && Game.time - attack.defendersLastSeen < 1500) {
+    if (!hasActiveEscort(campaign)) {
+      var defenderSightings = (attack as any).defenderSightings || 0;
+      if (defenderSightings >= 2) {
+        requestDuoEscort(campaign);
+      }
     }
   }
 
@@ -729,20 +1002,14 @@ function checkAdaptation(campaign: CampaignState): void {
   if (attack.lastAttackTick > 0 &&
       Game.time - attack.lastAttackTick > 3000 &&
       campaign.state === "ATTACKING") {
-    if (Game.time % 500 === 0) {
-      console.log("[Military] Campaign " + campaign.id + " stalled — no attack in 3000 ticks");
-    }
-  }
+    console.log("[Military] Campaign " + campaign.id + " stalled — no attack in 3000 ticks." +
+      " Losses: " + stats.totalLost + ", spawned: " + stats.totalSpawned);
 
-  // --- RCL downgrade milestone ---
-  if (controller.owner && controller.level < attack.currentTargetRCL) {
-    var newRCL = controller.level;
-    console.log("[Military] *** " + campaign.targetRoom + " DOWNGRADED to RCL " + newRCL + "! ***");
-    console.log("[Military] Previous: RCL " + attack.currentTargetRCL +
-      " -> New: RCL " + newRCL);
-    attack.currentTargetRCL = newRCL;
-    (attack as any).estimatedCyclesRemaining = estimateCyclesRemaining(newRCL, controller.ticksToDowngrade || 0);
-    console.log("[Military] Est remaining: " + (attack as any).estimatedCyclesRemaining + " cycles");
+    // If high loss rate + stalled, something is very wrong
+    if (stats.totalLost > 5 && stats.totalSpawned > 0 &&
+        stats.totalLost / stats.totalSpawned > 0.5) {
+      console.log("[Military] CRITICAL: >50% loss rate and stalled. Consider military.abort() or military.escort().");
+    }
   }
 }
 
@@ -874,16 +1141,53 @@ export function getCampaign(campaignId: string): CampaignState | null {
 }
 
 /**
- * Record a successful attack
+ * Record a successful attack with RCL and timer info
  */
-export function recordAttack(campaignId: string): void {
+export function recordAttack(campaignId: string, rcl?: number, ticksToDowngrade?: number): void {
   var mem = getMilitaryMemory();
   var campaign = mem.campaigns[campaignId];
 
   if (campaign && campaign.controllerAttack) {
-    campaign.controllerAttack.lastAttackTick = Game.time;
-    campaign.controllerAttack.attackCount++;
+    var attack = campaign.controllerAttack;
+
+    // Capture starting conditions on first attack
+    if (attack.attackCount === 0 && rcl && ticksToDowngrade) {
+      attack.stats.campaignStartTimer = ticksToDowngrade + (3 * 300); // Add back what we just removed
+      attack.stats.campaignStartRCL = rcl;
+    }
+
+    attack.lastAttackTick = Game.time;
+    attack.attackCount++;
+
+    if (rcl !== undefined) {
+      attack.currentTargetRCL = rcl;
+    }
+    if (ticksToDowngrade !== undefined) {
+      attack.currentTicksToDowngrade = ticksToDowngrade;
+      attack.estimatedCyclesRemaining = estimateCyclesRemaining(rcl || attack.currentTargetRCL, ticksToDowngrade);
+    }
+    attack.upgradeBlockedUntil = Game.time + ATTACK_COOLDOWN;
+
+    console.log("[Military] Attack #" + attack.attackCount + " on " + campaign.targetRoom +
+      " — RCL " + (rcl || "?") + ", timer: " + (ticksToDowngrade || "?") +
+      ", est " + attack.estimatedCyclesRemaining + " cycles remaining");
   }
+}
+
+/**
+ * Called when a CONTROLLER_ATTACKER dies without having attacked.
+ * Detected via memory cleanup in main.ts.
+ */
+export function reportCreepLost(campaignId: string): void {
+  var mem = getMilitaryMemory();
+  var campaign = mem.campaigns[campaignId];
+  if (!campaign || !campaign.controllerAttack) return;
+
+  campaign.controllerAttack.stats.totalLost++;
+
+  var stats = campaign.controllerAttack.stats;
+  console.log("[Military] CONTROLLER_ATTACKER lost en route (campaign " + campaignId +
+    ") — total losses: " + stats.totalLost + "/" + stats.totalSpawned);
 }
 
 // ============================================
@@ -1031,6 +1335,13 @@ export function getSpawnRequests(homeRoom: string): MilitarySpawnRequest[] {
   var mem = getMilitaryMemory();
   var requests: MilitarySpawnRequest[] = [];
 
+  // Multi-campaign budget check
+  if (!withinSpawnBudget()) return requests;
+
+  // Check if home is under attack — reduce priority if so
+  var underAttack = checkHomeDefense();
+  var attackPenalty = underAttack ? 30 : 0;
+
   for (var id in mem.campaigns) {
     var campaign = mem.campaigns[id];
 
@@ -1058,7 +1369,7 @@ export function getSpawnRequests(homeRoom: string): MilitarySpawnRequest[] {
             role: "CONTROLLER_ATTACKER",
             campaignId: id,
             targetRoom: campaign.targetRoom,
-            priority: 100
+            priority: 100 - attackPenalty
           });
         }
       }
@@ -1087,17 +1398,14 @@ export function getSpawnRequests(homeRoom: string): MilitarySpawnRequest[] {
 
 /**
  * Report that a military creep was spawned.
- * Used to track total spawned for death detection.
+ * Used to track total spawned and energy spent.
  */
-export function reportSpawned(campaignId: string, role: string): void {
+export function reportSpawned(campaignId: string, energyCost: number): void {
   var mem = getMilitaryMemory();
   var campaign = mem.campaigns[campaignId];
 
   if (!campaign || !campaign.controllerAttack) return;
 
-  var attack = campaign.controllerAttack;
-
-  if (role === "CONTROLLER_ATTACKER") {
-    (attack as any).totalSpawned = ((attack as any).totalSpawned || 0) + 1;
-  }
+  campaign.controllerAttack.stats.totalSpawned++;
+  campaign.controllerAttack.stats.totalEnergySpent += energyCost;
 }

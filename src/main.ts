@@ -34,6 +34,7 @@ import { getMilestones, getMilestonePhase } from "./core/ColonyMilestones";
 import * as DuoManager from "./combat/DuoManager";
 import { DecisionLogger, registerDecisionCommands } from "./logging/DecisionLogger";
 import * as MilitaryManager from "./military/MilitaryManager";
+import { drawMilitaryVisuals } from "./military/MilitaryVisuals";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -98,6 +99,11 @@ export function loop(): void {
 
   // Run military manager (campaigns, controller attacks)
   MilitaryManager.run();
+
+  // Draw military visuals in target rooms (every 3 ticks)
+  if (Game.time % 3 === 0) {
+    drawMilitaryVisuals();
+  }
 
   // Run all creeps
   runCreeps();
@@ -269,6 +275,13 @@ function cleanupMemory(): void {
   // Dead creep cleanup - EVERY tick (it's cheap)
   for (const name in Memory.creeps) {
     if (!Game.creeps[name]) {
+      // Track military creep losses before deleting
+      const deadCreepMem = Memory.creeps[name] as any;
+      if (deadCreepMem.role === "CONTROLLER_ATTACKER" &&
+          deadCreepMem.campaignId &&
+          !deadCreepMem.attacked) {
+        MilitaryManager.reportCreepLost(deadCreepMem.campaignId);
+      }
       delete Memory.creeps[name];
     }
   }

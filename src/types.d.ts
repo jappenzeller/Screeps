@@ -417,7 +417,7 @@ interface IntegrationState {
   directives: SpawnDirective[];
 }
 
-// Extend Memory for advisor data, traffic, intel, colonies, and combat
+// Extend Memory for advisor data, traffic, intel, colonies, combat, and military
 interface Memory {
   advisor?: AdvisorData;
   traffic?: { [roomName: string]: TrafficMemory };
@@ -426,6 +426,14 @@ interface Memory {
   debug?: DebugFlags;
   settings?: SettingsFlags;
   combat?: CombatMemory;
+  military?: MilitaryMemory;
+}
+
+// Military Manager types
+interface MilitaryMemory {
+  campaigns: Record<string, any>;
+  nextCampaignId: number;
+  posture: "PEACEFUL" | "ALERT" | "OFFENSIVE";
 }
 
 // ==================== Decision Logging Types ====================

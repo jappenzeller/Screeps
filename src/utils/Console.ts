@@ -117,6 +117,8 @@ military.progress(id) - Show detailed attack progress
 military.drain(id)   - Start tower drain operation
 military.scout(id)   - Reset campaign to scouting phase
 military.escort(id)  - Request escort duo for campaign
+military.history()   - Show campaign history and stats
+military.cleanup()   - Remove completed campaigns from memory
 `);
   };
 
@@ -1961,6 +1963,65 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       campaign.controllerAttack.defendersSeen = true;
       campaign.controllerAttack.defendersLastSeen = Game.time;
       return "Requested escort duo for " + campaignId;
+    },
+
+    history: function() {
+      var mem = (Memory as any).military;
+      if (!mem || !mem.campaigns) {
+        console.log("No campaigns");
+        return "OK";
+      }
+
+      var lines: string[] = [];
+      lines.push("=== Campaign History ===");
+
+      for (var id in mem.campaigns) {
+        var c = mem.campaigns[id];
+        var completionStats = (c as any).completionStats;
+        var state = c.state;
+        var age = Game.time - c.createdAt;
+        var hours = (age / 3600 * 3).toFixed(1);
+
+        lines.push("");
+        lines.push("[" + id + "] " + c.targetRoom + " (" + c.targetOwner + ") — " + state);
+        lines.push("  Age: " + age + " ticks (~" + hours + "h)");
+
+        if (completionStats) {
+          lines.push("  Duration: " + completionStats.duration + " ticks");
+          lines.push("  Attacks: " + completionStats.attacks);
+          lines.push("  Spawned: " + completionStats.spawned + " | Lost: " + completionStats.losses);
+          lines.push("  Energy: " + completionStats.energySpent);
+          lines.push("  RCL drops: " + completionStats.rclDowngrades + " | Safe modes: " + completionStats.safeModes);
+        } else {
+          var a = c.controllerAttack;
+          if (a) {
+            lines.push("  Attacks: " + a.attackCount);
+            lines.push("  RCL: " + a.currentTargetRCL + " | Timer: " + a.currentTicksToDowngrade);
+            if (a.stats) {
+              lines.push("  Spawned: " + a.stats.totalSpawned + " | Lost: " + a.stats.totalLost);
+            }
+          }
+        }
+      }
+
+      console.log(lines.join("\n"));
+      return "OK";
+    },
+
+    cleanup: function() {
+      var mem = (Memory as any).military;
+      if (!mem || !mem.campaigns) return "No campaigns";
+
+      var removed = 0;
+      for (var id in mem.campaigns) {
+        var c = mem.campaigns[id];
+        if (c.state === "COMPLETE" || c.state === "ABORTED") {
+          delete mem.campaigns[id];
+          removed++;
+        }
+      }
+
+      return "Removed " + removed + " completed/aborted campaigns";
     },
   };
 }

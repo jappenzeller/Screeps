@@ -109,6 +109,43 @@ interface EmpireExpansionExport {
   lastFailure: string | null;
 }
 
+// Military campaign export
+interface MilitaryCampaignExport {
+  id: string;
+  type: string;
+  targetRoom: string;
+  targetOwner: string;
+  state: string;
+  ticksInState: number;
+  createdAt: number;
+  age: number;
+  attack: {
+    attackCount: number;
+    currentRCL: number;
+    currentTimer: number;
+    estimatedCycles: number;
+    estimatedHours: string;
+    defendersSeen: boolean;
+    towerDrainNeeded: boolean;
+    safeModeActive: boolean;
+    stats: {
+      totalSpawned: number;
+      totalLost: number;
+      totalEnergySpent: number;
+      rclDowngrades: number;
+      safeModeActivations: number;
+    };
+  };
+  creeps: number;
+}
+
+interface MilitaryExport {
+  posture: string;
+  activeCampaigns: number;
+  totalCampaigns: number;
+  campaigns: MilitaryCampaignExport[];
+}
+
 // Legacy combined export (for backward compatibility during transition)
 interface AWSExportData {
   timestamp: number;
@@ -134,6 +171,7 @@ interface ColonyPayload {
   colonies: ColonyExport[];
   global: GlobalExport;
   empire: EmpireExport | null;
+  military: MilitaryExport | null;
   exportMeta: ExportMeta;
 }
 
@@ -904,6 +942,7 @@ export class AWSExporter {
       colonies: colonies,
       global: this.getGlobalStats(),
       empire: this.getEmpireStatus(),
+      military: this.getMilitaryStatus(),
       exportMeta: {
         lastExportTick: lastExportTick,
         deltaIntelCount: deltaCount,
@@ -1716,6 +1755,81 @@ export class AWSExporter {
       candidateCount: candidates.length,
       parentReadiness,
       history: exp ? exp.history : {},
+    };
+  }
+
+  /**
+   * Get military campaign status for API export
+   */
+  private static getMilitaryStatus(): MilitaryExport | null {
+    var militaryMem = (Memory as any).military;
+    if (!militaryMem) return null;
+
+    var campaigns: MilitaryCampaignExport[] = [];
+    var activeCampaigns = 0;
+
+    for (var id in militaryMem.campaigns) {
+      var c = militaryMem.campaigns[id];
+      var a = c.controllerAttack;
+      if (!a) continue;
+
+      if (c.state !== "COMPLETE" && c.state !== "ABORTED") {
+        activeCampaigns++;
+      }
+
+      var estHours = ((a.estimatedCyclesRemaining || 0) * 1000 / 3600 * 3).toFixed(1);
+
+      // Count creeps for this campaign
+      var creepCount = 0;
+      for (var name in Game.creeps) {
+        if ((Game.creeps[name].memory as any).campaignId === id) {
+          creepCount++;
+        }
+      }
+
+      var stats = a.stats || {
+        totalSpawned: 0,
+        totalLost: 0,
+        totalEnergySpent: 0,
+        rclDowngrades: [],
+        safeModeActivations: 0,
+      };
+
+      campaigns.push({
+        id: id,
+        type: c.type,
+        targetRoom: c.targetRoom,
+        targetOwner: c.targetOwner,
+        state: c.state,
+        ticksInState: Game.time - c.stateChangedAt,
+        createdAt: c.createdAt,
+        age: Game.time - c.createdAt,
+        attack: {
+          attackCount: a.attackCount,
+          currentRCL: a.currentTargetRCL,
+          currentTimer: a.currentTicksToDowngrade,
+          estimatedCycles: a.estimatedCyclesRemaining || 0,
+          estimatedHours: estHours,
+          defendersSeen: a.defendersSeen,
+          towerDrainNeeded: a.towerDrainNeeded,
+          safeModeActive: a.safeModeActive,
+          stats: {
+            totalSpawned: stats.totalSpawned,
+            totalLost: stats.totalLost,
+            totalEnergySpent: stats.totalEnergySpent,
+            rclDowngrades: stats.rclDowngrades ? stats.rclDowngrades.length : 0,
+            safeModeActivations: stats.safeModeActivations,
+          },
+        },
+        creeps: creepCount,
+      });
+    }
+
+    return {
+      posture: militaryMem.posture || "PEACEFUL",
+      activeCampaigns: activeCampaigns,
+      totalCampaigns: Object.keys(militaryMem.campaigns).length,
+      campaigns: campaigns,
     };
   }
 

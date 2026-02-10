@@ -47,11 +47,16 @@ export function spawnCreeps(room: Room): void {
       }
     }
 
-    // Track military spawns for death detection
-    if (candidate.role === "CONTROLLER_ATTACKER" || candidate.role === "DECOY") {
+    // Track military spawns with energy cost
+    if (candidate.role === "CONTROLLER_ATTACKER") {
       var campaignId = (candidate.memory as any).campaignId;
       if (campaignId) {
-        MilitaryManager.reportSpawned(campaignId, candidate.role);
+        // Calculate body cost
+        var bodyCost = 0;
+        for (var pi = 0; pi < candidate.body.length; pi++) {
+          bodyCost += BODYPART_COST[candidate.body[pi]];
+        }
+        MilitaryManager.reportSpawned(campaignId, bodyCost);
       }
     }
   } else if (result !== ERR_NOT_ENOUGH_ENERGY) {
