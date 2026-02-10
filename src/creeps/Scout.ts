@@ -319,6 +319,38 @@ function getNextScoutTarget(memory: ScoutMemory, creep: Creep): string | undefin
     return false;
   });
 
+  // Prioritize military campaign targets that lack fresh intel
+  var militaryMem = (Memory as any).military;
+  var priorityTargets: string[] = [];
+  if (militaryMem && militaryMem.campaigns) {
+    for (var cid in militaryMem.campaigns) {
+      var camp = militaryMem.campaigns[cid];
+      if (camp.state === "COMPLETE" || camp.state === "ABORTED") continue;
+
+      var targetIntel = intel[camp.targetRoom];
+      var intelAge = targetIntel ? (Game.time - targetIntel.lastScanned) : Infinity;
+
+      if (intelAge > 300) {
+        // Insert at front of candidates (highest priority)
+        if (candidates.indexOf(camp.targetRoom) === -1) {
+          // Target room not in normal queue — add it as priority
+          priorityTargets.push(camp.targetRoom);
+        } else {
+          // Move to front
+          priorityTargets.push(camp.targetRoom);
+        }
+      }
+    }
+  }
+
+  // If we have priority targets, check if any are not already targeted by other scouts
+  for (var i = 0; i < priorityTargets.length; i++) {
+    var pt = priorityTargets[i];
+    if (targetedByOthers.indexOf(pt) === -1 && scannedRooms.indexOf(pt) === -1) {
+      return pt; // Return immediately — campaign targets are highest priority
+    }
+  }
+
   if (candidates.length === 0) return undefined;
 
   // Sort by distance to current position (nearest first)

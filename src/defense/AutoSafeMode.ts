@@ -1,4 +1,5 @@
 import { logger } from "../utils/Logger";
+import { isUnderControllerAttack, getDefenseResponse } from "../military/AntiDowngrade";
 
 /**
  * Auto Safe Mode Defense System
@@ -149,6 +150,23 @@ export function checkAutoSafeMode(room: Room): void {
       logger.warn("AutoSafeMode", "Safe mode activated successfully");
     } else {
       logger.warn("AutoSafeMode", `Failed to activate safe mode: ${result}`);
+    }
+    return;
+  }
+
+  // Check for controller downgrade attack (anti-downgrade defense)
+  if (isUnderControllerAttack(room.name)) {
+    const response = getDefenseResponse(room.name);
+    if (response.activateSafeMode) {
+      logger.warn("AutoSafeMode",
+        `CRITICAL: Controller under downgrade attack in ${room.name} — activating safe mode!`
+      );
+      const downgradeResult = controller.activateSafeMode();
+      if (downgradeResult === OK) {
+        logger.warn("AutoSafeMode", "Safe mode activated for controller defense");
+      } else {
+        logger.warn("AutoSafeMode", `Failed to activate safe mode: ${downgradeResult}`);
+      }
     }
   }
 }

@@ -13,6 +13,8 @@ import * as DuoManager from "../combat/DuoManager";
 import { getUtilityScores } from "../spawning/utilitySpawning";
 import { getIntegrationData } from "../empire/IntegrationManager";
 import * as MilitaryManager from "../military/MilitaryManager";
+import * as CounterIntel from "../military/CounterIntel";
+import * as CampaignChain from "../military/CampaignChain";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -118,6 +120,8 @@ military.drain(id)   - Start tower drain operation
 military.scout(id)   - Reset campaign to scouting phase
 military.escort(id)  - Request escort duo for campaign
 military.history()   - Show campaign history and stats
+military.intel(id)   - Show counter-intelligence report for campaign
+military.targets()   - Evaluate potential next campaign targets
 military.cleanup()   - Remove completed campaigns from memory
 `);
   };
@@ -2003,6 +2007,60 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       }
 
       console.log(lines.join("\n"));
+      return "OK";
+    },
+
+    intel: function(campaignId?: string) {
+      var mem = (Memory as any).military;
+      if (!mem || !mem.campaigns) {
+        console.log("No campaigns");
+        return "OK";
+      }
+
+      if (campaignId) {
+        var c = mem.campaigns[campaignId];
+        if (!c) return "Campaign not found: " + campaignId;
+
+        var alerts = CounterIntel.getAlerts(c, 20);
+        var snapshot = CounterIntel.getLatestSnapshot(c);
+
+        console.log("=== Counter-Intel: " + c.targetRoom + " ===");
+
+        if (snapshot) {
+          console.log("Latest snapshot (tick " + snapshot.tick + "):");
+          console.log("  RCL: " + snapshot.rcl + " | Timer: " + snapshot.ticksToDowngrade);
+          console.log("  Towers: " + snapshot.towerCount + " (energy: " + snapshot.towerEnergy.join(", ") + ")");
+          console.log("  Terminal: " + snapshot.terminalEnergy + " | Storage: " + snapshot.storageEnergy);
+          console.log("  Hostiles: " + snapshot.hostileCreepCount + " (combat: " + snapshot.combatCreepCount + ")");
+          console.log("  Walls near ctrl: " + snapshot.wallCount + " | Spawning: " + snapshot.spawning);
+        }
+
+        console.log("");
+        console.log("Alerts (" + alerts.length + "):");
+        for (var i = 0; i < alerts.length; i++) {
+          var a = alerts[i];
+          var age = Game.time - a.tick;
+          console.log("  [" + a.severity + "] " + a.type + " — " + a.message + " (" + age + "t ago)");
+        }
+
+        return "OK";
+      } else {
+        // Show all campaigns' alert counts
+        for (var id in mem.campaigns) {
+          var camp = mem.campaigns[id];
+          if (camp.state === "COMPLETE" || camp.state === "ABORTED") continue;
+
+          var ci = camp.controllerAttack && camp.controllerAttack.counterIntel;
+          var alertCount = ci ? ci.alerts.length : 0;
+          console.log("[" + id + "] " + camp.targetRoom + " — " + alertCount + " alerts");
+        }
+        return "OK";
+      }
+    },
+
+    targets: function() {
+      var targets = CampaignChain.evaluateTargets();
+      console.log(CampaignChain.displayTargets(targets));
       return "OK";
     },
 

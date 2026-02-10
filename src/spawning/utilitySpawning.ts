@@ -29,6 +29,7 @@ import * as DuoManager from "../combat/DuoManager";
 import { DecisionLogger } from "../logging/DecisionLogger";
 import { getActiveDirective } from "../empire/IntegrationManager";
 import * as MilitaryManager from "../military/MilitaryManager";
+import { isUnderControllerAttack } from "../military/AntiDowngrade";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
@@ -1052,7 +1053,14 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   // Combine all factors using geometric mean
   const multiplier = combineUtilities(storageFactor, sustainFactor, rateFactor, countFactor);
 
-  return base * multiplier * deficit;
+  let upgraderUtilityValue = base * multiplier * deficit;
+
+  // If under controller attack, upgrading is critical — counteract downgrade
+  if (isUnderControllerAttack(state.room.name)) {
+    upgraderUtilityValue = Math.max(upgraderUtilityValue, 85); // Higher than most roles
+  }
+
+  return upgraderUtilityValue;
 }
 
 /**
@@ -1516,9 +1524,27 @@ function scoutUtility(_deficit: number, state: ColonyState): number {
 
   // Base 10, urgency scales up to 1.5x, cap at 15
   const urgency = Math.min(roomsNeedingScan / 20, 1.5);
-  const utility = (10 * urgency) / (existingScouts + 1);
+  let scoutUtilityValue = (10 * urgency) / (existingScouts + 1);
 
-  return Math.min(utility, 15);
+  // Boost scout priority if any military campaign needs vision
+  var militaryMem = (Memory as any).military;
+  if (militaryMem && militaryMem.campaigns) {
+    for (var cid in militaryMem.campaigns) {
+      var camp = militaryMem.campaigns[cid];
+      if (camp.state === "SCOUTING" || camp.state === "ATTACKING") {
+        // Check if we have recent vision on the target
+        var targetIntel = Memory.intel && Memory.intel[camp.targetRoom];
+        var intelAge = targetIntel ? (Game.time - targetIntel.lastScanned) : Infinity;
+        if (intelAge > 500) {
+          // Stale intel — boost scout priority
+          scoutUtilityValue = Math.max(scoutUtilityValue, 50);
+          break;
+        }
+      }
+    }
+  }
+
+  return Math.min(scoutUtilityValue, 50);
 }
 
 /**
@@ -1750,8 +1776,11 @@ function decoyUtility(state: ColonyState): number {
 
   for (var id in mem.campaigns) {
     var campaign = mem.campaigns[id];
-    if (campaign.homeRoom !== state.room.name) continue;
     if (campaign.state !== "TOWER_DRAINING") continue;
+
+    // Check if this colony can reach the target
+    var route = Game.map.findRoute(state.room.name, campaign.targetRoom);
+    if (route === ERR_NO_PATH || !Array.isArray(route) || route.length > 6) continue;
 
     // Count existing decoys for this campaign
     var existingDecoys = Object.values(Game.creeps).filter(function(c) {
@@ -2051,11 +2080,16 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
     }
 
     case "DECOY": {
-      // Find the campaign in TOWER_DRAINING phase
+      // Find the campaign in TOWER_DRAINING phase that this colony can support
       var milMem = MilitaryManager.getMilitaryMemory();
       for (var cid in milMem.campaigns) {
         var camp = milMem.campaigns[cid];
-        if (camp.homeRoom === state.room.name && camp.state === "TOWER_DRAINING") {
+        if (camp.state === "TOWER_DRAINING") {
+          // Check if this colony can reach the target
+          var route = Game.map.findRoute(state.room.name, camp.targetRoom);
+          if (route === ERR_NO_PATH || !Array.isArray(route) || route.length > 8) {
+            continue; // Too far or no path
+          }
           return {
             ...base,
             targetRoom: camp.targetRoom,

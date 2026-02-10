@@ -8,6 +8,8 @@
 
 import * as DuoManager from "../combat/DuoManager";
 import { ExpansionManager } from "../empire/ExpansionManager";
+import * as CounterIntel from "./CounterIntel";
+import * as CampaignChain from "./CampaignChain";
 
 // ============================================
 // Types
@@ -576,6 +578,11 @@ function runAttacking(campaign: CampaignState): void {
     checkAdaptation(campaign, room);
   }
 
+  // === Counter-intelligence snapshot ===
+  if (room) {
+    CounterIntel.run(campaign);
+  }
+
   // === If defenders detected recently, request escort ===
   if (attack.defendersSeen && Game.time - attack.defendersLastSeen < 3000) {
     if (!hasActiveEscort(campaign)) {
@@ -857,6 +864,13 @@ function completeCampaign(campaign: CampaignState): void {
   console.log("║  RCL drops: " + (stats.rclDowngrades.length + "").padEnd(28) + "║");
   console.log("║  Safe modes:" + (stats.safeModeActivations + "").padEnd(28) + "║");
   console.log("╚══════════════════════════════════════════╝");
+
+  // Evaluate next targets
+  var nextTargets = CampaignChain.evaluateTargets();
+  if (nextTargets.length > 0) {
+    console.log("");
+    console.log(CampaignChain.displayTargets(nextTargets));
+  }
 
   // Store completion data
   (campaign as any).completedAt = Game.time;
@@ -1252,6 +1266,18 @@ export function status(): string {
     var decoys = getDecoysForCampaign(id);
     if (decoys.length > 0) {
       lines.push("  Decoys: " + decoys.length);
+    }
+
+    // Counter-intel summary
+    var ciAlerts = CounterIntel.getAlerts(campaign, 3);
+    if (ciAlerts.length > 0) {
+      lines.push("  Recent intel:");
+      for (var ai = 0; ai < ciAlerts.length; ai++) {
+        var alert = ciAlerts[ai];
+        var age = Game.time - alert.tick;
+        lines.push("    [" + alert.severity + "] " + alert.type +
+          " (" + age + " ticks ago)");
+      }
     }
   }
 

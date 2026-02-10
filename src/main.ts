@@ -35,6 +35,7 @@ import * as DuoManager from "./combat/DuoManager";
 import { DecisionLogger, registerDecisionCommands } from "./logging/DecisionLogger";
 import * as MilitaryManager from "./military/MilitaryManager";
 import { drawMilitaryVisuals } from "./military/MilitaryVisuals";
+import { checkAntiDowngrade } from "./military/AntiDowngrade";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -99,6 +100,11 @@ export function loop(): void {
 
   // Run military manager (campaigns, controller attacks)
   MilitaryManager.run();
+
+  // Anti-downgrade check: detect enemy CLAIM creeps attacking our controllers (every 10 ticks)
+  if (Game.time % 10 === 0) {
+    checkAntiDowngrade();
+  }
 
   // Draw military visuals in target rooms (every 3 ticks)
   if (Game.time % 3 === 0) {
