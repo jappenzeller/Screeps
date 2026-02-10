@@ -109,7 +109,7 @@ combat.toggle()      - Toggle duo combat system on/off
 integration()        - Show integration status for all expanding colonies
 integration("E44N37") - Show integration diagnostics for specific room
 military.status()    - Show active military campaigns
-military.attack(home, target) - Start controller attack campaign
+military.attack(target) - Start controller attack campaign
 military.abort(id)   - Abort a campaign
 military.pause(id)   - Pause a campaign
 military.resume(id)  - Resume a paused campaign
@@ -1865,17 +1865,15 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       return "OK";
     },
 
-    attack: function(homeRoom: string, targetRoom: string) {
-      if (!homeRoom || !targetRoom) {
-        console.log("Usage: military.attack('E46N37', 'E44N39')");
-        console.log("  homeRoom: Colony to spawn attackers from (required)");
+    attack: function(targetRoom: string) {
+      if (!targetRoom) {
+        console.log("Usage: military.attack('E44N39')");
         console.log("  targetRoom: Enemy room to downgrade (required)");
-        return "Error: specify home and target rooms";
+        return "Error: specify target room";
       }
 
       var campaignId = MilitaryManager.createCampaign({
         type: "CONTROLLER_ATTACK",
-        homeRoom: homeRoom,
         targetRoom: targetRoom,
       });
 

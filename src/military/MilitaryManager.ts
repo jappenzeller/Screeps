@@ -59,8 +59,6 @@ export interface CampaignState {
   id: string;
   type: "CONTROLLER_ATTACK" | "ROOM_ASSAULT" | "TOWER_DRAIN";
   targetRoom: string;
-  homeRoom: string;
-  supportRooms: string[];
   state: CampaignPhase;
   stateChangedAt: number;
   createdAt: number;
@@ -261,28 +259,59 @@ export function run(): void {
 
 interface CreateCampaignParams {
   type: "CONTROLLER_ATTACK";
-  homeRoom: string;
   targetRoom: string;
-  supportRooms?: string[];
+  targetOwner?: string;
 }
 
 export function createCampaign(params: CreateCampaignParams): string {
   var mem = getMilitaryMemory();
+
+  // Check if already attacking this room
+  for (var existingId in mem.campaigns) {
+    var existing = mem.campaigns[existingId];
+    if (existing.targetRoom === params.targetRoom &&
+        existing.state !== "COMPLETE" &&
+        existing.state !== "ABORTED") {
+      console.log("[Military] ERROR: Already have active campaign against " + params.targetRoom);
+      return "ERROR";
+    }
+  }
+
+  // Verify at least one colony can contribute
+  var anyViable = false;
+  for (var roomName in Game.rooms) {
+    var room = Game.rooms[roomName];
+    if (!room.controller || !room.controller.my) continue;
+    if (room.energyCapacityAvailable < 700) continue;
+    var spawns = room.find(FIND_MY_SPAWNS);
+    if (spawns.length === 0) continue;
+    var route = Game.map.findRoute(roomName, params.targetRoom);
+    if (route !== ERR_NO_PATH && Array.isArray(route) && route.length * 50 < 400) {
+      anyViable = true;
+      console.log("[Military] " + roomName + " can contribute (route: " + route.length + " rooms)");
+    }
+  }
+
+  if (!anyViable) {
+    console.log("[Military] ERROR: No colony within CLAIM range of " + params.targetRoom);
+    return "ERROR";
+  }
+
   var id = "campaign_" + mem.nextCampaignId++;
 
-  // Get target owner from intel if available
-  var targetOwner = "unknown";
-  var intel = Memory.intel && Memory.intel[params.targetRoom];
-  if (intel && intel.owner) {
-    targetOwner = intel.owner;
+  // Get target owner from intel or params
+  var targetOwner = params.targetOwner || "unknown";
+  if (targetOwner === "unknown") {
+    var intel = Memory.intel && Memory.intel[params.targetRoom];
+    if (intel && intel.owner) {
+      targetOwner = intel.owner;
+    }
   }
 
   var campaign: CampaignState = {
     id: id,
     type: params.type,
     targetRoom: params.targetRoom,
-    homeRoom: params.homeRoom,
-    supportRooms: params.supportRooms || [],
     state: "PLANNING",
     stateChangedAt: Game.time,
     createdAt: Game.time,
@@ -400,48 +429,9 @@ export function resumeCampaign(campaignId: string): string {
 // ============================================
 
 function runPlanning(campaign: CampaignState): void {
-  // Validate home room can spawn CLAIM creeps
-  var homeRoom = Game.rooms[campaign.homeRoom];
-  if (!homeRoom) {
-    console.log("[Military] Cannot plan: home room " + campaign.homeRoom + " not visible");
-    return;
-  }
-
-  // Need 2100 energy for [CLAIM x3, MOVE x3]
-  if (homeRoom.energyCapacityAvailable < 2100) {
-    console.log("[Military] Cannot plan: " + campaign.homeRoom + " energy capacity too low (" +
-      homeRoom.energyCapacityAvailable + " < 2100)");
-    campaign.state = "ABORTED";
-    campaign.stateChangedAt = Game.time;
-    return;
-  }
-
-  // Validate route exists
-  var route = Game.map.findRoute(campaign.homeRoom, campaign.targetRoom, {
-    routeCallback: function(roomName) {
-      // Avoid source keeper rooms
-      var parsed = /^[WE](\d+)[NS](\d+)$/.exec(roomName);
-      if (parsed) {
-        var x = parseInt(parsed[1]) % 10;
-        var y = parseInt(parsed[2]) % 10;
-        if ((x === 4 || x === 5 || x === 6) && (y === 4 || y === 5 || y === 6)) {
-          return Infinity; // SK room
-        }
-      }
-      return 1;
-    }
-  });
-
-  if (route === ERR_NO_PATH) {
-    console.log("[Military] Cannot plan: no valid route to " + campaign.targetRoom);
-    campaign.state = "ABORTED";
-    campaign.stateChangedAt = Game.time;
-    return;
-  }
-
-  console.log("[Military] " + campaign.id + ": Planning complete. Route is " +
-    (Array.isArray(route) ? route.length : 0) + " rooms. Moving to SCOUTING.");
-
+  // Planning phase: validate target room is reachable
+  // With decentralized spawning, any colony can contribute
+  console.log("[Military] " + campaign.id + ": Planning complete. Moving to SCOUTING.");
   campaign.state = "SCOUTING";
   campaign.stateChangedAt = Game.time;
 }
@@ -1092,7 +1082,8 @@ function hasActiveEscort(campaign: CampaignState): boolean {
 // ============================================
 
 /**
- * Check if we need to spawn a CONTROLLER_ATTACKER for any active campaign
+ * Check if we need to spawn a CONTROLLER_ATTACKER for any active campaign.
+ * With decentralized spawning, any colony within range can contribute.
  */
 export function needsControllerAttacker(homeRoom: string): { needed: boolean; campaignId: string | null } {
   var mem = getMilitaryMemory();
@@ -1100,16 +1091,17 @@ export function needsControllerAttacker(homeRoom: string): { needed: boolean; ca
   for (var id in mem.campaigns) {
     var campaign = mem.campaigns[id];
 
-    // Check if this room should contribute
-    if (campaign.homeRoom !== homeRoom && campaign.supportRooms.indexOf(homeRoom) === -1) {
-      continue;
-    }
-
     // Only spawn during ATTACKING phase
     if (campaign.state !== "ATTACKING") continue;
 
     var attack = campaign.controllerAttack;
     if (!attack) continue;
+
+    // Check if this colony can reach the target
+    var route = Game.map.findRoute(homeRoom, campaign.targetRoom);
+    if (route === ERR_NO_PATH || !Array.isArray(route) || route.length * 50 > 400) {
+      continue; // Too far or no path
+    }
 
     // Check if there's already an attacker in pipeline
     var existingAttackers = Object.values(Game.creeps).filter(function(c) {
@@ -1213,7 +1205,6 @@ export function status(): string {
     lines.push("[" + id + "] " + campaign.type + " -> " + campaign.targetRoom);
     lines.push("  State: " + campaign.state + " (since tick " + campaign.stateChangedAt + ")");
     lines.push("  Owner: " + campaign.targetOwner);
-    lines.push("  Home: " + campaign.homeRoom);
 
     if (attack) {
       lines.push("  Target RCL: " + attack.currentTargetRCL);
@@ -1330,6 +1321,7 @@ export interface MilitarySpawnRequest {
 /**
  * Get spawn requests for all active campaigns.
  * Called by spawning system to determine what military creeps to spawn.
+ * With decentralized spawning, any colony within CLAIM range can contribute.
  */
 export function getSpawnRequests(homeRoom: string): MilitarySpawnRequest[] {
   var mem = getMilitaryMemory();
@@ -1345,9 +1337,10 @@ export function getSpawnRequests(homeRoom: string): MilitarySpawnRequest[] {
   for (var id in mem.campaigns) {
     var campaign = mem.campaigns[id];
 
-    // Check if this room should contribute
-    if (campaign.homeRoom !== homeRoom && campaign.supportRooms.indexOf(homeRoom) === -1) {
-      continue;
+    // Check if this colony can reach the target (within CLAIM range)
+    var route = Game.map.findRoute(homeRoom, campaign.targetRoom);
+    if (route === ERR_NO_PATH || !Array.isArray(route) || route.length * 50 > 400) {
+      continue; // Too far or no path — CLAIM creeps only last 600 ticks
     }
 
     var attack = campaign.controllerAttack;
