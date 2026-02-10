@@ -1009,24 +1009,39 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   const controller = state.room.controller;
 
   // Gate: Don't spawn upgraders if no energy is reachable at controller
+  // For young colonies (no storage, no links), upgraders can withdraw from
+  // source containers or pick up dropped energy — they don't need energy
+  // pre-staged at the controller. Only gate on controller energy for
+  // mature colonies where upgraders are expected to use link/container.
   if (controller) {
-    const controllerContainer = controller.pos.findInRange(FIND_STRUCTURES, 3, {
-      filter: (s) => s.structureType === STRUCTURE_CONTAINER,
-    })[0] as StructureContainer | undefined;
+    var hasStorageOrLinks = !!state.room.storage || state.rcl >= 5;
 
-    const controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 3, {
-      filter: (s) => s.structureType === STRUCTURE_LINK,
-    })[0] as StructureLink | undefined;
+    if (hasStorageOrLinks) {
+      // Mature colony: require energy accessible at controller
+      var controllerContainer = controller.pos.findInRange(FIND_STRUCTURES, 3, {
+        filter: function(s) { return s.structureType === STRUCTURE_CONTAINER; }
+      })[0] as StructureContainer | undefined;
 
-    const storage = state.room.storage;
+      var controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 3, {
+        filter: function(s) { return s.structureType === STRUCTURE_LINK; }
+      })[0] as StructureLink | undefined;
 
-    const hasEnergyAtController =
-      (controllerContainer && controllerContainer.store[RESOURCE_ENERGY] > 0) ||
-      (controllerLink && controllerLink.store[RESOURCE_ENERGY] > 0) ||
-      (storage && storage.store[RESOURCE_ENERGY] > 1000);
+      var storage = state.room.storage;
 
-    if (!hasEnergyAtController) {
-      return 0; // No point spawning upgrader with no energy to use
+      var hasEnergyAtController =
+        (controllerContainer && controllerContainer.store[RESOURCE_ENERGY] > 0) ||
+        (controllerLink && controllerLink.store[RESOURCE_ENERGY] > 0) ||
+        (storage && storage.store[RESOURCE_ENERGY] > 1000);
+
+      if (!hasEnergyAtController) {
+        return 0; // No point spawning upgrader with no energy to use
+      }
+    } else {
+      // Young colony: just check that the economy has SOME energy flowing.
+      // Upgraders will find energy from source containers or dropped resources.
+      if (state.energyIncome <= 0) {
+        return 0;
+      }
     }
   }
 
