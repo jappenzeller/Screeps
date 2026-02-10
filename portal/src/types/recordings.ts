@@ -1,28 +1,31 @@
 export type AnalysisType = 'heatmap' | 'oscillations' | 'stuck' | 'roads' | 'bottlenecks';
 
-// From GET /recordings
+// From GET /recordings (after extraction from { recordings: [...] })
 export interface Recording {
   recordingId: string;
   room: string;
+  shard: string;
   status: 'active' | 'complete' | 'paused';
-  startTick?: number;
-  endTick?: number;
-  durationTicks?: number;
-  snapshotInterval?: number;
-  snapshotCount?: number;
-  createdAt?: string;
-  updatedAt?: string;
-  analysisStatus?: 'not_started' | 'in_progress' | 'complete' | 'failed';
+  startTick: number | null;
+  endTick: number | null;
+  lastCapturedTick: number | null;
+  durationTicks: number;
+  tickInterval: number;
+  ticksCaptured: number;
+  continuous: boolean;
+  terrainCaptured: boolean;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: number;
+  analysisStatus?: 'complete' | 'in_progress' | 'not_started' | 'failed';
+  analysisAt?: string;
 }
 
-// From GET /recordings/{id}
-export interface RecordingDetail extends Recording {
-  // May include additional metadata
-}
+// From GET /recordings/{id} — same shape as Recording
+export type RecordingDetail = Recording;
 
-// From GET /recordings/{id}/snapshots
+// From GET /recordings/{id}/snapshots — API returns bare array, we transform to this
 export interface SnapshotIndex {
-  recordingId: string;
   ticks: number[];
   count: number;
 }

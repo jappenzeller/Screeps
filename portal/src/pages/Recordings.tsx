@@ -68,12 +68,11 @@ export function Recordings() {
     snapshotCache.clear();
     dispatch({ type: 'CLEAR_RECORDING' });
 
-    // Load terrain
+    // Load terrain (fetchTerrain now extracts the encoded string)
     setLoadingTerrain(true);
     try {
       const terrainResponse = await fetchTerrain(recording.recordingId);
-      // API returns { room, encoded, capturedAt } — extract the encoded string
-      setTerrain(terrainResponse.data.encoded);
+      setTerrain(terrainResponse.data);
     } catch (e) {
       console.error('Failed to load terrain', e);
     }

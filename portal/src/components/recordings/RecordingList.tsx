@@ -82,7 +82,7 @@ export function RecordingList({
 
             {/* Stats */}
             <div className="text-xs text-[#888] mb-2">
-              Snapshots: {recording.snapshotCount?.toLocaleString() ?? '?'}
+              Snapshots: {recording.ticksCaptured?.toLocaleString() ?? '?'}
             </div>
 
             {/* Created time */}
