@@ -16,7 +16,7 @@ export class ContainerPlanner {
    */
   run(): void {
     // Source containers can be placed at any RCL - they're the economy foundation
-    // Controller container gated at RCL 2+ (handled in createPlan/placeConstructionSites)
+    // Controller container gated at RCL 5+ with storage (handled in createPlan/placeConstructionSites)
     if (!this.room.controller) return;
 
     // Initialize room memory
@@ -49,10 +49,10 @@ export class ContainerPlanner {
       }
     }
 
-    // Regenerate controller container position if missing and should exist (RCL 2+)
+    // Regenerate controller container position if missing and should exist (RCL 5+ with storage)
     // Handles rooms that had plans created before this position was added
     // Skip if controller already has a container
-    if (!plan.controller && this.room.controller && this.room.controller.level >= 2) {
+    if (!plan.controller && this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
       if (!ContainerPlanner.getControllerContainer(this.room)) {
         var controllerPos = this.findControllerContainerPosition();
         if (controllerPos) {
@@ -117,9 +117,9 @@ export class ContainerPlanner {
       }
     }
 
-    // Plan container near controller (RCL 2+, skip if already has one)
-    // Upgraders need a withdrawal target, haulers need a delivery point near controller
-    if (this.room.controller && this.room.controller.level >= 2) {
+    // Plan container near controller (RCL 5+ with storage, skip if already has one)
+    // Before storage exists, upgraders are better off collecting from source containers
+    if (this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
       if (!ContainerPlanner.getControllerContainer(this.room)) {
         const controllerPos = this.findControllerContainerPosition();
         if (controllerPos) {
@@ -243,9 +243,9 @@ export class ContainerPlanner {
       this.placeContainerSite(pos.x, pos.y);
     }
 
-    // Place controller container (RCL 2+) - only if controller doesn't already have one
-    // Skip if controller link exists (RCL 5+) - links replace containers for upgrader energy
-    if (plan.controller && this.room.controller && this.room.controller.level >= 2) {
+    // Place controller container (RCL 5+ with storage) - only if controller doesn't already have one
+    // Skip if controller link exists - links replace containers for upgrader energy
+    if (plan.controller && this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
       if (!ContainerPlanner.getControllerContainer(this.room)) {
         // Check for controller link - skip container if link exists
         var controllerLinks = this.room.controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {

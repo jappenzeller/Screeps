@@ -50,7 +50,15 @@ export class SmartRoadPlanner {
       routePlaced = this.planRemoteRoutes(routeMax);
     }
 
-    // Phase 3: Remote room roads (inside remote rooms - exit to sources)
+    // Phase 3: Via room transit roads (for distance-2 remotes)
+    // Uses its own budget based on via room sites only
+    const viaRoadSites = this.countViaRoomSites();
+    const viaMax = MAX_CONCURRENT_ROAD_SITES - viaRoadSites;
+    if (viaMax > 0) {
+      this.planViaRoomRoads(viaMax);
+    }
+
+    // Phase 4: Remote room roads (inside remote rooms - exit to sources)
     // Count remote road sites separately - don't let home room sites block remote
     const remoteRoadSites = this.countRemoteRoadSites();
     const remoteMax = MAX_CONCURRENT_ROAD_SITES - remoteRoadSites;
@@ -86,7 +94,7 @@ export class SmartRoadPlanner {
         placed++;
         logger.info("SmartRoadPlanner", `Road at ${spot.x},${spot.y} (${spot.visits} visits)`);
 
-        if (Memory.traffic?.[this.room.name]) {
+        if (Memory.traffic && Memory.traffic[this.room.name]) {
           Memory.traffic[this.room.name].roadsBuilt.push(`${spot.x}:${spot.y}`);
         }
       }
@@ -101,23 +109,76 @@ export class SmartRoadPlanner {
   }
 
   /**
-   * Count road construction sites in remote rooms
+   * Count road construction sites in remote rooms and via rooms
    */
   private countRemoteRoadSites(): number {
     let count = 0;
+    const countedRooms = new Set<string>();
+
+    // Count sites in active remote rooms
     const remoteRooms = this.getActiveRemoteRooms();
     for (const roomName of remoteRooms) {
+      if (countedRooms.has(roomName)) continue;
+      countedRooms.add(roomName);
+
       const room = Game.rooms[roomName];
       if (!room) continue;
       count += room.find(FIND_CONSTRUCTION_SITES, {
         filter: (s: ConstructionSite) => s.structureType === STRUCTURE_ROAD,
       }).length;
     }
+
+    // Also count sites in via rooms for distance-2 remotes
+    const manager = ColonyManager.getInstance(this.room.name);
+    const remoteConfigs = manager.getRemoteConfigs();
+    for (const remoteName in remoteConfigs) {
+      const config = remoteConfigs[remoteName];
+      if (!config.active || !config.via) continue;
+
+      const viaRoomName = config.via;
+      if (countedRooms.has(viaRoomName)) continue;
+      countedRooms.add(viaRoomName);
+
+      const viaRoom = Game.rooms[viaRoomName];
+      if (!viaRoom) continue;
+      count += viaRoom.find(FIND_CONSTRUCTION_SITES, {
+        filter: (s: ConstructionSite) => s.structureType === STRUCTURE_ROAD,
+      }).length;
+    }
+
+    return count;
+  }
+
+  /**
+   * Count road construction sites only in via rooms (for separate budget)
+   */
+  private countViaRoomSites(): number {
+    let count = 0;
+    const countedRooms = new Set<string>();
+
+    const manager = ColonyManager.getInstance(this.room.name);
+    const remoteConfigs = manager.getRemoteConfigs();
+
+    for (const remoteName in remoteConfigs) {
+      const config = remoteConfigs[remoteName];
+      if (!config.active || !config.via) continue;
+
+      const viaRoomName = config.via;
+      if (countedRooms.has(viaRoomName)) continue;
+      countedRooms.add(viaRoomName);
+
+      const viaRoom = Game.rooms[viaRoomName];
+      if (!viaRoom) continue;
+      count += viaRoom.find(FIND_CONSTRUCTION_SITES, {
+        filter: (s: ConstructionSite) => s.structureType === STRUCTURE_ROAD,
+      }).length;
+    }
+
     return count;
   }
 
   private shouldPlanRoads(): boolean {
-    const rcl = this.room.controller?.level || 0;
+    const rcl = this.room.controller ? this.room.controller.level : 0;
     if (rcl < 3) return false;
 
     // Extensions should be mostly done first
@@ -304,10 +365,11 @@ export class SmartRoadPlanner {
   /**
    * Plan roads toward active remote mining exits.
    * Only runs when core roads are complete.
+   * Supports distance-2 remotes by routing to via room exit.
    */
   planRemoteRoutes(limit: number): number {
     // Gate: only at RCL 4+ with storage
-    const rcl = this.room.controller?.level || 0;
+    const rcl = this.room.controller ? this.room.controller.level : 0;
     if (rcl < 4 || !this.room.storage) return 0;
 
     // Gate: core roads must be complete first
@@ -316,16 +378,22 @@ export class SmartRoadPlanner {
     const spawn = this.room.find(FIND_MY_SPAWNS)[0];
     if (!spawn) return 0;
 
-    const remoteRooms = this.getActiveRemoteRooms();
-    if (remoteRooms.length === 0) return 0;
+    // Use remote configs instead of just room names to get distance/via info
+    const manager = ColonyManager.getInstance(this.room.name);
+    const remoteConfigs = manager.getRemoteConfigs();
 
     let placed = 0;
 
     // Plan roads from storage to exits leading to remote rooms
-    for (const targetRoom of remoteRooms) {
+    for (const remoteName in remoteConfigs) {
       if (placed >= limit) break;
 
-      const exitDir = this.room.findExitTo(targetRoom);
+      const config = remoteConfigs[remoteName];
+      if (!config.active) continue;
+
+      // For distance-2 remotes, route to via room exit; for distance-1, route to remote directly
+      const routeTarget = (config.distance >= 2 && config.via) ? config.via : remoteName;
+      const exitDir = this.room.findExitTo(routeTarget);
       if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) continue;
 
       // Find center of exit tiles
@@ -333,7 +401,7 @@ export class SmartRoadPlanner {
       if (!exitCenter) continue;
 
       // Plan road from storage to exit center
-      placed += this.planPath(this.room.storage!.pos, exitCenter, limit - placed);
+      placed += this.planPath(this.room.storage.pos, exitCenter, limit - placed);
     }
 
     if (placed > 0) {
@@ -436,90 +504,232 @@ export class SmartRoadPlanner {
   /**
    * Plan roads from room exit to remote sources.
    * Only builds in rooms with active reservation (to prevent rapid decay).
+   * Supports both distance-1 (adjacent) and distance-2 remote rooms.
    */
   planRemoteRoads(limit: number): number {
     // Gate: only at RCL 4+
-    const rcl = this.room.controller?.level || 0;
+    const rcl = this.room.controller ? this.room.controller.level : 0;
     if (rcl < 4) return 0;
 
-    const myUsername = Object.values(Game.spawns)[0]?.owner?.username;
+    const spawns = Object.values(Game.spawns);
+    const myUsername = spawns.length > 0 && spawns[0].owner ? spawns[0].owner.username : null;
+    if (!myUsername) return 0;
+
     const homeRoom = this.room.name;
     let placed = 0;
 
-    // Get adjacent rooms we're actively mining
+    // Get remote configs to know which rooms are active
+    const manager = ColonyManager.getInstance(this.room.name);
+    const remoteConfigs = manager.getRemoteConfigs();
+
+    // Phase 1: Distance-1 (adjacent) rooms - use describeExits
     const exits = Game.map.describeExits(homeRoom);
-    if (!exits) return 0;
-
-    for (const dir in exits) {
-      if (placed >= limit) break;
-
-      const roomName = exits[dir as ExitKey];
-      if (!roomName) continue;
-
-      const room = Game.rooms[roomName];
-      if (!room) continue; // No visibility
-
-      // Only build roads in reserved rooms (otherwise they decay too fast)
-      const reservation = room.controller?.reservation;
-      if (!reservation || reservation.username !== myUsername) continue;
-
-      // Find sources we're mining
-      const sources = room.find(FIND_SOURCES);
-
-      // Find the exit tiles back to home room
-      const exitDir = this.reverseDirection(dir);
-      const exitPositions = room.find(exitDir as FindConstant) as RoomPosition[];
-      if (exitPositions.length === 0) continue;
-
-      // Use center of exit as reference point
-      const exitCenter = exitPositions[Math.floor(exitPositions.length / 2)];
-
-      for (const source of sources) {
+    if (exits) {
+      for (const dir in exits) {
         if (placed >= limit) break;
 
-        // Check if we have a miner on this source
-        const hasMiner = Object.values(Game.creeps).some(
-          (c) =>
-            c.memory.role === "REMOTE_MINER" &&
-            c.memory.sourceId === source.id
-        );
-        if (!hasMiner) continue;
+        const roomName = exits[dir as ExitKey];
+        if (!roomName) continue;
 
-        // Find container near source (if exists)
-        const container = source.pos.findInRange(FIND_STRUCTURES, 1, {
-          filter: (s) => s.structureType === STRUCTURE_CONTAINER,
-        })[0];
+        // Check if this is an active remote
+        const config = remoteConfigs[roomName];
+        if (!config || !config.active) continue;
 
-        const target = container?.pos || source.pos;
+        const room = Game.rooms[roomName];
+        if (!room) continue; // No visibility
 
-        // Get path from exit to source/container
-        const path = room.findPath(exitCenter, target, {
-          ignoreCreeps: true,
-          swampCost: 2,
-          plainCost: 1,
-        });
+        // Only build roads in reserved rooms (otherwise they decay too fast)
+        const reservation = room.controller && room.controller.reservation;
+        if (!reservation || reservation.username !== myUsername) continue;
 
-        // Place road construction sites along path
-        for (const step of path) {
-          if (placed >= limit) break;
+        // Find the exit tiles back to home room
+        const exitDir = this.reverseDirection(dir);
+        const exitPositions = room.find(exitDir as FindConstant) as RoomPosition[];
+        if (exitPositions.length === 0) continue;
 
-          // Use canPlaceRoad to check for containers and other structures
-          if (!this.canPlaceRoad(room, step.x, step.y)) continue;
+        // Use center of exit as reference point
+        const exitCenter = exitPositions[Math.floor(exitPositions.length / 2)];
 
-          // Check global construction site limit
-          const totalSites = Object.keys(Game.constructionSites).length;
-          if (totalSites >= 100) return placed;
+        placed += this.planRoadsToSources(room, exitCenter, limit - placed);
+      }
+    }
 
-          const result = room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
-          if (result === OK) {
-            placed++;
-          }
+    // Phase 2: Distance-2+ rooms - iterate remote configs directly
+    for (const remoteName in remoteConfigs) {
+      if (placed >= limit) break;
+
+      const config = remoteConfigs[remoteName];
+      if (!config.active || config.distance < 2 || !config.via) continue;
+
+      const room = Game.rooms[remoteName];
+      if (!room) continue; // No visibility
+
+      // Only build roads in reserved rooms
+      const reservation = room.controller && room.controller.reservation;
+      if (!reservation || reservation.username !== myUsername) continue;
+
+      // For distance-2 rooms, find exit toward via room (which leads back home)
+      const exitDir = room.findExitTo(config.via);
+      if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) continue;
+
+      const exitPositions = room.find(exitDir) as RoomPosition[];
+      if (exitPositions.length === 0) continue;
+
+      const exitCenter = exitPositions[Math.floor(exitPositions.length / 2)];
+
+      placed += this.planRoadsToSources(room, exitCenter, limit - placed);
+    }
+
+    if (placed > 0) {
+      logger.info("SmartRoadPlanner", `Placed ${placed} remote road(s)`);
+    }
+
+    return placed;
+  }
+
+  /**
+   * Plan roads from an exit point to all mined sources in a room.
+   * Helper method for planRemoteRoads.
+   */
+  private planRoadsToSources(room: Room, exitCenter: RoomPosition, limit: number): number {
+    let placed = 0;
+
+    const sources = room.find(FIND_SOURCES);
+    for (const source of sources) {
+      if (placed >= limit) break;
+
+      // Check if we have a miner on this source
+      let hasMiner = false;
+      for (const name in Game.creeps) {
+        const c = Game.creeps[name];
+        if (c.memory.role === "REMOTE_MINER" && c.memory.sourceId === source.id) {
+          hasMiner = true;
+          break;
+        }
+      }
+      if (!hasMiner) continue;
+
+      // Find container near source (if exists)
+      const containers = source.pos.findInRange(FIND_STRUCTURES, 1, {
+        filter: (s: Structure) => s.structureType === STRUCTURE_CONTAINER,
+      });
+      const container = containers.length > 0 ? containers[0] : null;
+
+      const target = container ? container.pos : source.pos;
+
+      // Get path from exit to source/container
+      const path = room.findPath(exitCenter, target, {
+        ignoreCreeps: true,
+        swampCost: 2,
+        plainCost: 1,
+      });
+
+      // Place road construction sites along path
+      for (const step of path) {
+        if (placed >= limit) break;
+
+        // Use canPlaceRoad to check for containers and other structures
+        if (!this.canPlaceRoad(room, step.x, step.y)) continue;
+
+        // Check global construction site limit
+        const totalSites = Object.keys(Game.constructionSites).length;
+        if (totalSites >= 100) return placed;
+
+        const result = room.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
+        if (result === OK) {
+          placed++;
+        }
+      }
+    }
+
+    return placed;
+  }
+
+  /**
+   * Plan roads through via (intermediate) rooms for distance-2 remotes.
+   * Routes from home-side exit to far-side exit through the via room.
+   */
+  planViaRoomRoads(limit: number): number {
+    // Gate: only at RCL 4+
+    const rcl = this.room.controller ? this.room.controller.level : 0;
+    if (rcl < 4) return 0;
+
+    const spawns = Object.values(Game.spawns);
+    const myUsername = spawns.length > 0 && spawns[0].owner ? spawns[0].owner.username : null;
+    if (!myUsername) return 0;
+
+    const homeRoom = this.room.name;
+    let placed = 0;
+
+    // Get remote configs to find distance-2 remotes with via rooms
+    const manager = ColonyManager.getInstance(this.room.name);
+    const remoteConfigs = manager.getRemoteConfigs();
+
+    // Track which via rooms we've already processed (avoid duplicates)
+    const processedViaRooms = new Set<string>();
+
+    for (const remoteName in remoteConfigs) {
+      if (placed >= limit) break;
+
+      const config = remoteConfigs[remoteName];
+      if (!config.active || config.distance < 2 || !config.via) continue;
+
+      const viaRoomName = config.via;
+
+      // Skip if we already processed this via room
+      if (processedViaRooms.has(viaRoomName)) continue;
+      processedViaRooms.add(viaRoomName);
+
+      const viaRoom = Game.rooms[viaRoomName];
+      if (!viaRoom) continue; // No visibility
+
+      // Only build roads in reserved rooms (or rooms we own)
+      const isOwned = viaRoom.controller && viaRoom.controller.my;
+      const reservation = viaRoom.controller && viaRoom.controller.reservation;
+      const isReserved = reservation && reservation.username === myUsername;
+      if (!isOwned && !isReserved) continue;
+
+      // Find entry exit (from home room side)
+      const entryExitDir = viaRoom.findExitTo(homeRoom);
+      if (entryExitDir === ERR_NO_PATH || entryExitDir === ERR_INVALID_ARGS) continue;
+
+      const entryExitPositions = viaRoom.find(entryExitDir) as RoomPosition[];
+      if (entryExitPositions.length === 0) continue;
+      const entryCenter = entryExitPositions[Math.floor(entryExitPositions.length / 2)];
+
+      // Find far exit (toward the target remote room)
+      const farExitDir = viaRoom.findExitTo(remoteName);
+      if (farExitDir === ERR_NO_PATH || farExitDir === ERR_INVALID_ARGS) continue;
+
+      const farExitPositions = viaRoom.find(farExitDir) as RoomPosition[];
+      if (farExitPositions.length === 0) continue;
+      const farCenter = farExitPositions[Math.floor(farExitPositions.length / 2)];
+
+      // Plan road from entry exit to far exit
+      const path = viaRoom.findPath(entryCenter, farCenter, {
+        ignoreCreeps: true,
+        swampCost: 2,
+        plainCost: 1,
+      });
+
+      for (const step of path) {
+        if (placed >= limit) break;
+
+        if (!this.canPlaceRoad(viaRoom, step.x, step.y)) continue;
+
+        // Check global construction site limit
+        const totalSites = Object.keys(Game.constructionSites).length;
+        if (totalSites >= 100) return placed;
+
+        const result = viaRoom.createConstructionSite(step.x, step.y, STRUCTURE_ROAD);
+        if (result === OK) {
+          placed++;
         }
       }
     }
 
     if (placed > 0) {
-      logger.info("SmartRoadPlanner", `Placed ${placed} remote road(s)`);
+      logger.info("SmartRoadPlanner", `Placed ${placed} via room transit road(s)`);
     }
 
     return placed;
