@@ -1,4 +1,5 @@
 import { apiFetch } from './client';
+import type { ApiMeta } from './client';
 import type {
   Recording,
   RecordingDetail,
@@ -14,8 +15,18 @@ import type {
   BottleneckData,
 } from '../types/recordings';
 
-export function fetchRecordings() {
-  return apiFetch<Recording[]>('/recordings');
+// Actual API response shape
+interface RecordingsListResponse {
+  recordings: Recording[];
+  count: number;
+}
+
+export async function fetchRecordings(): Promise<{ data: Recording[]; meta: ApiMeta }> {
+  const raw = await apiFetch<RecordingsListResponse>('/recordings');
+  return {
+    data: Array.isArray(raw.data.recordings) ? raw.data.recordings : [],
+    meta: raw.meta,
+  };
 }
 
 export function fetchRecording(id: string) {
