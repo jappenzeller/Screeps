@@ -103,11 +103,14 @@ export class LinkManager {
         this.storageLink.store[RESOURCE_ENERGY] >= 100 &&
         this.controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100
       ) {
-        // Gate: only send to controller when colony has enough energy
-        var colonyEnergyRatio = this.room.energyAvailable / this.room.energyCapacityAvailable;
-        if (colonyEnergyRatio >= 0.8) {
+        // Gate: only send to controller when storage has healthy reserves
+        // Storage level is the real indicator of colony health, not extension fill state.
+        // Extensions are transient (filler handles them), storage is the buffer.
+        var storage = this.room.storage;
+        var storageEnergy = storage ? storage.store[RESOURCE_ENERGY] : 0;
+        if (storageEnergy > 10000) {
           this.storageLink.transferEnergy(this.controllerLink);
-          logger.debug("LinkManager", "Storage link forwarding to controller (colony at " + Math.round(colonyEnergyRatio * 100) + "%)");
+          logger.debug("LinkManager", "Storage link forwarding to controller (storage: " + storageEnergy + ")");
         }
       }
     }
