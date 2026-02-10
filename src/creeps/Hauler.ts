@@ -9,6 +9,28 @@ declare global {
   }
 }
 
+// ============================================
+// Filler Detection Cache
+// ============================================
+
+/**
+ * Check if room has an active FILLER creep (cached per tick for CPU efficiency).
+ * When a filler exists, haulers skip spawn/extension filling and go to storage.
+ */
+function roomHasFiller(room: Room): boolean {
+  var cached = (room as any)._fillerCheck;
+  if (cached && cached.tick === Game.time) return cached.result;
+
+  var result = room.find(FIND_MY_CREEPS, {
+    filter: function(c) {
+      return c.memory.role === "FILLER" && (!c.ticksToLive || c.ticksToLive > 50);
+    }
+  }).length > 0;
+
+  (room as any)._fillerCheck = { tick: Game.time, result: result };
+  return result;
+}
+
 /**
  * Hauler: Picks up energy from containers/ground and delivers to structures.
  *
@@ -582,20 +604,23 @@ function deliver(creep: Creep): void {
   }
 
   // Priority 1: Spawn and Extensions (critical for spawning)
-  const spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: (s) =>
-      (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-  });
+  // SKIP if a FILLER exists — filler handles this more efficiently from storage
+  if (!roomHasFiller(creep.room)) {
+    const spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+      filter: (s) =>
+        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+    });
 
-  if (spawnOrExtension) {
-    if (creep.transfer(spawnOrExtension, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, spawnOrExtension, {
-        visualizePathStyle: { stroke: "#ffffff" },
-        reusePath: 5,
-      });
+    if (spawnOrExtension) {
+      if (creep.transfer(spawnOrExtension, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, spawnOrExtension, {
+          visualizePathStyle: { stroke: "#ffffff" },
+          reusePath: 5,
+        });
+      }
+      return;
     }
-    return;
   }
 
   // Priority 2: Towers below 500 (defensive readiness)

@@ -142,6 +142,7 @@ type SpawnRole =
   | "RESERVER"
   | "SCOUT"
   | "LINK_FILLER"
+  | "FILLER"
   | "MINERAL_HARVESTER"
   | "CLAIMER"
   | "PIONEER"
@@ -168,6 +169,7 @@ const ALL_ROLES: SpawnRole[] = [
   "RESERVER",
   "SCOUT",
   "LINK_FILLER",
+  "FILLER",
   "MINERAL_HARVESTER",
   "CLAIMER",
   "ROAD_BUILDER",
@@ -567,6 +569,7 @@ function getColonyState(room: Room): ColonyState {
   const selfRenewingRoles = new Set([
     "HARVESTER",
     "LINK_FILLER",
+    "FILLER",
     "REMOTE_DEFENDER",
   ]);
 
@@ -784,6 +787,21 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     }
   }
 
+  // Filler at RCL 5+ with storage containing energy
+  // Filler owns spawn/extension filling, freeing haulers for long-haul
+  if (rcl >= 5 && room.storage && room.storage.store[RESOURCE_ENERGY] > 5000) {
+    targets.FILLER = 1;
+    // At RCL 7+ with 50+ extensions, may need 2
+    if (rcl >= 7) {
+      var extensionCount = room.find(FIND_MY_STRUCTURES, {
+        filter: function(s) { return s.structureType === STRUCTURE_EXTENSION; }
+      }).length;
+      if (extensionCount >= 50) {
+        targets.FILLER = 2;
+      }
+    }
+  }
+
   // Mineral harvester at RCL 6+ with extractor
   if (rcl >= 6) {
     const mineral = room.find(FIND_MINERALS)[0];
@@ -879,6 +897,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return scoutUtility(effectiveDeficit, state);
     case "LINK_FILLER":
       return linkFillerUtility(effectiveDeficit, state);
+    case "FILLER":
+      return fillerUtility(effectiveDeficit, state);
     case "MINERAL_HARVESTER":
       return mineralHarvesterUtility(effectiveDeficit, state);
     case "ROAD_BUILDER":
@@ -1501,6 +1521,27 @@ function linkFillerUtility(deficit: number, state: ColonyState): number {
   // Scale by economy health
   const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
   utility *= incomeRatio;
+
+  return utility;
+}
+
+/**
+ * Filler utility - dedicated spawn/extension filling from storage
+ * Critical infrastructure at RCL 5+: without fillers, spawning stalls
+ * while haulers do long-haul trips from sources.
+ * Priority 75 — above link filler (70), below haulers (90).
+ */
+function fillerUtility(deficit: number, state: ColonyState): number {
+  if (state.rcl < 5) return 0;
+  if (deficit <= 0) return 0;
+  if (state.energyStored < 5000) return 0;
+
+  // High priority — spawning stalls without this
+  var utility = deficit * 75;
+
+  // Scale by economy health
+  var incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
+  utility *= Math.max(incomeRatio, 0.3); // Floor at 0.3 so we still spawn even with struggling economy
 
   return utility;
 }

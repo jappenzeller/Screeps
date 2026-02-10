@@ -8,17 +8,18 @@ export const CONFIG = {
   SPAWN_PRIORITY: {
     HARVESTER: 1,
     HAULER: 2,
-    SCOUT: 3, // Intel gathering before extra upgraders
-    UPGRADER: 4,
-    BUILDER: 5,
-    DEFENDER: 6,
-    REMOTE_DEFENDER: 7,
-    REMOTE_DEFENDER_RANGED: 8,
-    RESERVER: 9,
-    REMOTE_MINER: 10,
-    REMOTE_HAULER: 11,
-    CLAIMER: 12,
-    LINK_FILLER: 13,
+    FILLER: 3, // Dedicated spawn/extension filling from storage
+    SCOUT: 4, // Intel gathering before extra upgraders
+    UPGRADER: 5,
+    BUILDER: 6,
+    DEFENDER: 7,
+    REMOTE_DEFENDER: 8,
+    REMOTE_DEFENDER_RANGED: 9,
+    RESERVER: 10,
+    REMOTE_MINER: 11,
+    REMOTE_HAULER: 12,
+    CLAIMER: 13,
+    LINK_FILLER: 14,
   } as const,
 
   // Minimum creep counts per room
@@ -73,6 +74,7 @@ export const CONFIG = {
     BASE_UTILITY: {
       HARVESTER: 100, // Critical - economy foundation
       HAULER: 90, // Critical - energy distribution
+      FILLER: 75, // Infrastructure - enables faster spawning
       UPGRADER: 20, // Important but deferrable
       BUILDER: 25, // Construction
       DEFENDER: 50, // Defense when needed

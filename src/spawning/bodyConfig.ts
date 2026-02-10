@@ -201,6 +201,19 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
   },
 
   /**
+   * FILLER - Dedicated spawn/extension filling from storage
+   * Runs tight loop: withdraw from storage, fill spawn/extensions
+   * Road-speed movement (1 MOVE per 2 CARRY) since it stays near storage
+   */
+  FILLER: {
+    pattern: [CARRY, CARRY],
+    moveMode: "road" as const,
+    maxRepeats: 16,  // max 32 CARRY + 16 MOVE = 48 parts
+    minEnergy: 200,
+    fallback: [CARRY, CARRY, CARRY, CARRY, MOVE, MOVE],
+  },
+
+  /**
    * MINERAL_HARVESTER - Extracts minerals from extractor
    * WORK-heavy with CARRY to deliver to terminal/storage
    * 5 tick cooldown between harvests, so high WORK benefits burst extraction

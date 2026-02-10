@@ -11,6 +11,7 @@ import { runReserver } from "./Reserver";
 import { runClaimer } from "./Claimer";
 import { runRemoteDefender } from "./RemoteDefender";
 import { runLinkFiller } from "./LinkFiller";
+import { runFiller } from "./Filler";
 import { runMineralHarvester } from "./MineralHarvester";
 import { runPioneer } from "./Pioneer";
 import { runRoadBuilder } from "./RoadBuilder";
@@ -43,6 +44,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   RESERVER: runReserver,
   CLAIMER: runClaimer,
   LINK_FILLER: runLinkFiller,
+  FILLER: runFiller,
   MINERAL_HARVESTER: runMineralHarvester,
   PIONEER: runPioneer,
   ROAD_BUILDER: runRoadBuilder,
