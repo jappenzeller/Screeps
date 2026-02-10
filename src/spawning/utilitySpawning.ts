@@ -2141,13 +2141,18 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
       if (need.campaignId) {
         var campaign = MilitaryManager.getCampaign(need.campaignId);
         if (campaign) {
-          return {
+          var attackerMem: any = {
             ...base,
             targetRoom: campaign.targetRoom,
             campaignId: need.campaignId,
             attackState: "TRAVELING",
             attacked: false,
-          } as Partial<CreepMemory>;
+          };
+          // Include approach room if campaign has one
+          if (campaign.approachRoom) {
+            attackerMem.approachRoom = campaign.approachRoom;
+          }
+          return attackerMem as Partial<CreepMemory>;
         }
       }
       return base;

@@ -21,6 +21,7 @@ export interface ControllerAttackerMemory extends CreepMemory {
   campaignId: string;
   attackState: "TRAVELING" | "APPROACHING" | "ATTACKING" | "DONE";
   attacked: boolean;
+  approachRoom?: string;  // Route through this room before entering target
 }
 
 export function runControllerAttacker(creep: Creep): void {
@@ -44,10 +45,20 @@ export function runControllerAttacker(creep: Creep): void {
     return;
   }
 
-  // Not in target room - travel
+  // === Cross-room movement ===
   if (creep.room.name !== mem.targetRoom) {
+    // If we have an approach room, route through it first
+    if (mem.approachRoom && creep.room.name !== mem.approachRoom) {
+      // Haven't reached the approach room yet — go there first
+      moveToRoom(creep, mem.approachRoom, "#ff0000", { avoidDanger: false });
+      creep.say("→" + mem.approachRoom.substring(0, 4));
+      return;
+    }
+
+    // Either no approach room, or we're in the approach room
+    // Now move to target room (will enter from the correct side)
     moveToRoom(creep, mem.targetRoom, "#ff0000", { avoidDanger: false });
-    creep.say("->ATK");
+    creep.say("→" + mem.targetRoom.substring(0, 4));
     return;
   }
 

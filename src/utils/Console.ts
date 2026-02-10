@@ -120,6 +120,7 @@ military.progress(id) - Show detailed attack progress
 military.drain(id)   - Start tower drain operation
 military.scout(id)   - Reset campaign to scouting phase
 military.escort(id)  - Request escort duo for campaign
+military.approach(id, room) - Force approach from adjacent room (less tower fire)
 military.history()   - Show campaign history and stats
 military.intel(id)   - Show counter-intelligence report for campaign
 military.targets()   - Evaluate potential next campaign targets
@@ -1968,6 +1969,17 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       campaign.controllerAttack.defendersSeen = true;
       campaign.controllerAttack.defendersLastSeen = Game.time;
       return "Requested escort duo for " + campaignId;
+    },
+
+    approach: function(campaignId: string, approachRoom: string) {
+      if (!campaignId || !approachRoom) {
+        console.log("Usage: military.approach('campaign_1', 'E43N39')");
+        console.log("  Forces attackers to route through approachRoom before entering target");
+        console.log("  Use when controller is near an edge (less tower fire)");
+        return "Error: specify campaign ID and approach room";
+      }
+
+      return MilitaryManager.setApproachRoom(campaignId, approachRoom);
     },
 
     history: function() {

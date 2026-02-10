@@ -68,6 +68,7 @@ export interface CampaignState {
   stateChangedAt: number;
   createdAt: number;
   targetOwner: string;
+  approachRoom?: string;  // Optional waypoint room — enter target from this room's border
   controllerAttack?: ControllerAttackState;
 }
 
@@ -438,6 +439,40 @@ export function resumeCampaign(campaignId: string): string {
   return "Campaign resumed to " + previousState;
 }
 
+/**
+ * Set approach room for campaign — forces attackers to enter from this adjacent room.
+ * Use when controller is near an edge and direct approach crosses too much tower fire.
+ */
+export function setApproachRoom(campaignId: string, approachRoom: string): string {
+  var mem = getMilitaryMemory();
+  var campaign = mem.campaigns[campaignId];
+
+  if (!campaign) {
+    return "Campaign not found: " + campaignId;
+  }
+
+  // Validate that approachRoom is adjacent to targetRoom
+  var exits = Game.map.describeExits(campaign.targetRoom);
+  var isAdjacent = false;
+  if (exits) {
+    for (var dir in exits) {
+      if ((exits as any)[dir] === approachRoom) {
+        isAdjacent = true;
+        break;
+      }
+    }
+  }
+
+  if (!isAdjacent) {
+    return approachRoom + " is not adjacent to " + campaign.targetRoom;
+  }
+
+  campaign.approachRoom = approachRoom;
+  console.log("[Military] Campaign " + campaignId + ": approach set to enter from " + approachRoom);
+  console.log("[Military] Attackers will route through " + approachRoom + " before entering " + campaign.targetRoom);
+  return "Approach room set to " + approachRoom;
+}
+
 // ============================================
 // Phase Handlers
 // ============================================
@@ -495,6 +530,44 @@ function runScouting(campaign: CampaignState): void {
   attack.controllerPos = { x: controller.pos.x, y: controller.pos.y };
   attack.currentTargetRCL = controller.level;
   attack.currentTicksToDowngrade = controller.ticksToDowngrade || 0;
+
+  // Auto-select approach direction based on controller proximity to edges
+  if (!campaign.approachRoom) {
+    var controllerPos = attack.controllerPos;
+    var distLeft = controllerPos.x;
+    var distRight = 49 - controllerPos.x;
+    var distTop = controllerPos.y;
+    var distBottom = 49 - controllerPos.y;
+
+    var minDist = Math.min(distLeft, distRight, distTop, distBottom);
+
+    // Only set approach if controller is within 15 tiles of an edge
+    // (otherwise entering from any side is roughly equivalent)
+    if (minDist <= 15) {
+      var exits = Game.map.describeExits(campaign.targetRoom);
+      var approachDir: string | null = null;
+
+      if (exits) {
+        // Find which edge is closest and check if exit exists
+        if (minDist === distLeft && (exits as any)[LEFT.toString()]) {
+          approachDir = (exits as any)[LEFT.toString()];
+        } else if (minDist === distRight && (exits as any)[RIGHT.toString()]) {
+          approachDir = (exits as any)[RIGHT.toString()];
+        } else if (minDist === distTop && (exits as any)[TOP.toString()]) {
+          approachDir = (exits as any)[TOP.toString()];
+        } else if (minDist === distBottom && (exits as any)[BOTTOM.toString()]) {
+          approachDir = (exits as any)[BOTTOM.toString()];
+        }
+      }
+
+      if (approachDir) {
+        campaign.approachRoom = approachDir;
+        console.log("[Military] Auto-selected approach from " + approachDir +
+          " (controller at " + controllerPos.x + "," + controllerPos.y +
+          ", " + minDist + " tiles from nearest edge)");
+      }
+    }
+  }
 
   // Check safe mode
   if (controller.safeMode && controller.safeMode > 0) {
@@ -1271,6 +1344,11 @@ export function status(): string {
 
       if (attack.towerDrainNeeded) {
         lines.push("  Tower drain: NEEDED");
+      }
+
+      // Show approach room if set
+      if (campaign.approachRoom) {
+        lines.push("  Approach: via " + campaign.approachRoom);
       }
 
       // Show escort duo status
