@@ -29,6 +29,7 @@ import * as DuoManager from "../combat/DuoManager";
 import { DecisionLogger } from "../logging/DecisionLogger";
 import { getActiveDirective } from "../empire/IntegrationManager";
 import * as MilitaryManager from "../military/MilitaryManager";
+import * as WaveCoordinator from "../military/WaveCoordinator";
 import { isUnderControllerAttack } from "../military/AntiDowngrade";
 
 // TTL thresholds for proactive replacement spawning
@@ -150,7 +151,8 @@ type SpawnRole =
   | "CONTROLLER_ATTACKER"
   | "DECOY"
   | "DEMOLISHER"
-  | "RECLAIM_BLOCKER";
+  | "RECLAIM_BLOCKER"
+  | "RAIDER";
 
 const ALL_ROLES: SpawnRole[] = [
   "PIONEER",
@@ -175,6 +177,7 @@ const ALL_ROLES: SpawnRole[] = [
   "DECOY",
   "DEMOLISHER",
   "RECLAIM_BLOCKER",
+  "RAIDER",
 ];
 
 export interface SpawnCandidate {
@@ -894,6 +897,8 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return demolisherUtility(state);
     case "RECLAIM_BLOCKER":
       return reclaimBlockerUtility(state);
+    case "RAIDER":
+      return raiderUtility(state);
     default:
       return 0;
   }
@@ -1805,6 +1810,47 @@ function decoyUtility(state: ColonyState): number {
 }
 
 /**
+ * Raider utility - spawns to disrupt enemy economy during controller attacks
+ *
+ * Raiders target haulers, harvesters, and containers to:
+ * - Slow enemy energy income
+ * - Accelerate controller downgrade (less upgrading)
+ * Priority: 35 (low, supplementary role)
+ */
+function raiderUtility(state: ColonyState): number {
+  var mem = MilitaryManager.getMilitaryMemory();
+
+  for (var id in mem.campaigns) {
+    var campaign = mem.campaigns[id];
+    if (campaign.state !== "ATTACKING") continue;
+
+    var attack = campaign.controllerAttack;
+    if (!attack) continue;
+
+    // Only spawn raiders after a few successful attacks
+    if (attack.attackCount < 2) continue;
+
+    // Check if this colony can reach the target (raiders have normal lifespan)
+    var route = Game.map.findRoute(state.room.name, campaign.targetRoom);
+    if (route === ERR_NO_PATH || !Array.isArray(route) || route.length > 8) continue;
+
+    // Count existing raiders for this campaign
+    var existingRaiders = Object.values(Game.creeps).filter(function(c) {
+      return c.memory.role === "RAIDER" &&
+        (c.memory as any).campaignId === id &&
+        c.ticksToLive && c.ticksToLive > 100;
+    });
+
+    // Keep 1-2 raiders per campaign
+    if (existingRaiders.length < 2) {
+      return 35; // Low priority, supplementary
+    }
+  }
+
+  return 0;
+}
+
+/**
  * Demolisher utility - spawns during conquest DEMOLISHING phase
  *
  * Only spawns when MilitaryManager has an active campaign in CLAIMING/SECURING
@@ -2152,6 +2198,11 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
           if (campaign.approachRoom) {
             attackerMem.approachRoom = campaign.approachRoom;
           }
+          // Check if this is part of a wave attack
+          var activeWave = WaveCoordinator.getActiveWave(need.campaignId);
+          if (activeWave && WaveCoordinator.getWaveSpawnNeed(need.campaignId) > 0) {
+            attackerMem.waveId = activeWave.id;
+          }
           return attackerMem as Partial<CreepMemory>;
         }
       }
@@ -2224,6 +2275,42 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
           campaignId: blkCid,
           state: "TRAVELING",
         } as Partial<CreepMemory>;
+      }
+      return base;
+    }
+
+    case "RAIDER": {
+      // Find campaign in ATTACKING phase that needs raiders
+      var raidMilMem = MilitaryManager.getMilitaryMemory();
+      for (var raidCid in raidMilMem.campaigns) {
+        var raidCamp = raidMilMem.campaigns[raidCid];
+        if (raidCamp.state !== "ATTACKING") continue;
+
+        var raidAttack = raidCamp.controllerAttack;
+        if (!raidAttack || raidAttack.attackCount < 2) continue;
+
+        var raidRoute = Game.map.findRoute(state.room.name, raidCamp.targetRoom);
+        if (raidRoute === ERR_NO_PATH || !Array.isArray(raidRoute) || raidRoute.length > 8) {
+          continue;
+        }
+
+        // Count existing raiders
+        var existingRaiders = Object.values(Game.creeps).filter(function(c) {
+          return c.memory.role === "RAIDER" &&
+            (c.memory as any).campaignId === raidCid &&
+            c.ticksToLive && c.ticksToLive > 100;
+        });
+
+        if (existingRaiders.length < 2) {
+          return {
+            ...base,
+            targetRoom: raidCamp.targetRoom,
+            campaignId: raidCid,
+            state: "TRAVELING",
+            killCount: 0,
+            containersDamaged: 0,
+          } as Partial<CreepMemory>;
+        }
       }
       return base;
     }

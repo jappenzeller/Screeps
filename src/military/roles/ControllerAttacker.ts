@@ -13,6 +13,7 @@
 
 import { moveToRoom } from "../../utils/movement";
 import { recordAttack } from "../MilitaryManager";
+import * as WaveCoordinator from "../WaveCoordinator";
 
 export interface ControllerAttackerMemory extends CreepMemory {
   role: "CONTROLLER_ATTACKER";
@@ -22,6 +23,7 @@ export interface ControllerAttackerMemory extends CreepMemory {
   attackState: "TRAVELING" | "APPROACHING" | "ATTACKING" | "DONE";
   attacked: boolean;
   approachRoom?: string;  // Route through this room before entering target
+  waveId?: string;        // Wave coordination ID (if part of a wave)
 }
 
 export function runControllerAttacker(creep: Creep): void {
@@ -43,6 +45,40 @@ export function runControllerAttacker(creep: Creep): void {
     // Not worth traveling home with 600 tick lifespan - just suicide
     creep.suicide();
     return;
+  }
+
+  // === Wave Rally Check ===
+  // If part of a wave, check if we should rally instead of proceeding
+  if (mem.waveId) {
+    var rallyPoint = WaveCoordinator.shouldRally(creep);
+    if (rallyPoint) {
+      // Wave not yet released - rally instead of attacking
+      if (creep.room.name !== rallyPoint.room) {
+        // Move to rally room
+        moveToRoom(creep, rallyPoint.room, "#ffaa00", { avoidDanger: false });
+        creep.say("RALLY");
+        return;
+      }
+
+      // In rally room - move to rally position
+      var dist = Math.max(
+        Math.abs(creep.pos.x - rallyPoint.x),
+        Math.abs(creep.pos.y - rallyPoint.y)
+      );
+
+      if (dist > 5) {
+        creep.moveTo(rallyPoint.x, rallyPoint.y, {
+          visualizePathStyle: { stroke: "#ffaa00" },
+          reusePath: 5,
+        });
+        creep.say("→RALLY");
+      } else {
+        // At rally point - wait for release
+        creep.say("READY");
+      }
+      return;
+    }
+    // Wave has been released - continue to target
   }
 
   // === Cross-room movement ===

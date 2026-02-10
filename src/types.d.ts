@@ -427,6 +427,7 @@ interface Memory {
   settings?: SettingsFlags;
   combat?: CombatMemory;
   military?: MilitaryMemory;
+  waveCoordinator?: WaveCoordinatorMemory;
 }
 
 // Military Manager types
@@ -434,6 +435,12 @@ interface MilitaryMemory {
   campaigns: Record<string, any>;
   nextCampaignId: number;
   posture: "PEACEFUL" | "ALERT" | "OFFENSIVE";
+}
+
+// Wave Coordinator types
+interface WaveCoordinatorMemory {
+  waves: Record<string, any>;
+  nextWaveId: number;
 }
 
 // ==================== Decision Logging Types ====================
@@ -606,6 +613,7 @@ interface Memory {
   combat?: CombatMemory;
   decisions?: DecisionMemory;
   military?: MilitaryMemory;
+  waveCoordinator?: WaveCoordinatorMemory;
 }
 
 // Global console declaration for Screeps

@@ -7,9 +7,9 @@ const MAX_HISTORY = 50;
 
 const QUICK_COMMANDS = [
   { label: 'CPU Stats', command: 'JSON.stringify({ used: Game.cpu.getUsed(), bucket: Game.cpu.bucket, limit: Game.cpu.limit })' },
-  { label: 'Energy Stats', command: '(() => { const rooms = Object.values(Game.rooms).filter(r => r.controller?.my); return JSON.stringify(rooms.map(r => ({ room: r.name, available: r.energyAvailable, capacity: r.energyCapacityAvailable, storage: r.storage?.store.energy }))); })()' },
+  { label: 'Energy Stats', command: '(() => { const rooms = Object.values(Game.rooms).filter(r => r.controller && r.controller.my); return JSON.stringify(rooms.map(r => ({ room: r.name, available: r.energyAvailable, capacity: r.energyCapacityAvailable, storage: r.storage ? r.storage.store.energy : null }))); })()' },
   { label: 'Creep Counts', command: 'JSON.stringify(Object.values(Game.creeps).reduce((a, c) => { a[c.memory.role] = (a[c.memory.role]||0)+1; return a }, {}))' },
-  { label: 'Empire State', command: 'JSON.stringify(Memory.empire?.state)' },
+  { label: 'Empire State', command: 'JSON.stringify(Memory.empire ? Memory.empire.state : null)' },
   { label: 'Memory Size', command: 'JSON.stringify({ bytes: RawMemory.get().length, kb: (RawMemory.get().length/1024).toFixed(1) })' },
 ];
 

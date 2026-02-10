@@ -16,6 +16,7 @@ import * as MilitaryManager from "../military/MilitaryManager";
 import * as CounterIntel from "../military/CounterIntel";
 import * as CampaignChain from "../military/CampaignChain";
 import * as CampaignEventLog from "../military/CampaignEventLog";
+import * as WaveCoordinator from "../military/WaveCoordinator";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -127,6 +128,11 @@ military.targets()   - Evaluate potential next campaign targets
 military.timeline(id) - Show chronological event log for campaign
 military.conquest(id) - Show post-conquest demolish/claim status
 military.cleanup()   - Remove completed campaigns from memory
+military.wave(id, n) - Create wave attack with n attackers (default 3)
+military.waves()     - Show active wave status
+military.release(id) - Manually release a wave to attack
+military.abortWave(id) - Abort a wave attack
+military.raiders(id) - Show raider status (economic disruption creeps)
 `);
   };
 
@@ -2160,6 +2166,70 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       }
 
       return "Removed " + removed + " completed/aborted campaigns";
+    },
+
+    // Wave coordination commands
+    wave: function(campaignId: string, size?: number) {
+      if (!campaignId) {
+        console.log("Usage: military.wave('campaign_1', 3)");
+        console.log("  Creates a wave attack with 3 (or specified) attackers");
+        console.log("  Attackers rally before entering target room together");
+        return "Error: specify campaign ID";
+      }
+
+      var waveId = WaveCoordinator.createWave(campaignId, size);
+      if (waveId) {
+        return "Created " + waveId + " for campaign " + campaignId;
+      }
+      return "Failed to create wave (campaign not found or already has active wave)";
+    },
+
+    waves: function() {
+      console.log(WaveCoordinator.status());
+      return "OK";
+    },
+
+    release: function(waveId: string) {
+      if (!waveId) {
+        console.log("Usage: military.release('wave_1')");
+        console.log("  Manually releases a wave to attack");
+        return "Error: specify wave ID";
+      }
+
+      return WaveCoordinator.releaseWave(waveId);
+    },
+
+    abortWave: function(waveId: string) {
+      if (!waveId) {
+        console.log("Usage: military.abortWave('wave_1')");
+        return "Error: specify wave ID";
+      }
+
+      return WaveCoordinator.abortWave(waveId);
+    },
+
+    raiders: function(campaignId?: string) {
+      var raiders = Object.values(Game.creeps).filter(function(c) {
+        if (c.memory.role !== "RAIDER") return false;
+        if (campaignId && (c.memory as any).campaignId !== campaignId) return false;
+        return true;
+      });
+
+      if (raiders.length === 0) {
+        console.log("No active raiders" + (campaignId ? " for " + campaignId : ""));
+        return "OK";
+      }
+
+      console.log("=== Active Raiders ===");
+      for (var i = 0; i < raiders.length; i++) {
+        var r = raiders[i];
+        var mem = r.memory as any;
+        console.log(r.name + " → " + mem.targetRoom +
+          " [" + mem.state + "] TTL:" + r.ticksToLive +
+          " Kills:" + (mem.killCount || 0) +
+          " Containers:" + (mem.containersDamaged || 0));
+      }
+      return "OK";
     },
   };
 }

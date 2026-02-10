@@ -51,7 +51,7 @@ export const DEFAULT_CONFIG: EmpireConfig = {
  * Get config, merging with any overrides in Memory
  */
 export function getConfig(): EmpireConfig {
-  const overrides = Memory.empire?.config || {};
+  const overrides = (Memory.empire && Memory.empire.config) || {};
   // Deep merge config with overrides
   return {
     expansion: {

@@ -13,6 +13,7 @@ import * as CampaignChain from "./CampaignChain";
 import * as ConquestCoordinator from "./ConquestCoordinator";
 import * as CampaignRecovery from "./CampaignRecovery";
 import * as CampaignEventLog from "./CampaignEventLog";
+import * as WaveCoordinator from "./WaveCoordinator";
 
 // ============================================
 // Types
@@ -152,6 +153,18 @@ function getDecoysForCampaign(campaignId: string): Creep[] {
   return result;
 }
 
+function getRaidersForCampaign(campaignId: string): Creep[] {
+  var result: Creep[] = [];
+  for (var name in Game.creeps) {
+    var creep = Game.creeps[name];
+    if (creep.memory.role === "RAIDER" &&
+        (creep.memory as any).campaignId === campaignId) {
+      result.push(creep);
+    }
+  }
+  return result;
+}
+
 // ============================================
 // Home Defense Awareness
 // ============================================
@@ -212,6 +225,9 @@ function withinSpawnBudget(): boolean {
 export function run(): void {
   // Campaign health checks (periodic + post-reset)
   CampaignRecovery.runRecovery();
+
+  // Run wave coordination
+  WaveCoordinator.runWaves();
 
   var mem = getMilitaryMemory();
 
@@ -1445,10 +1461,11 @@ export function startTowerDrain(campaignId: string): string {
 // ============================================
 
 export interface MilitarySpawnRequest {
-  role: "CONTROLLER_ATTACKER" | "DECOY";
+  role: "CONTROLLER_ATTACKER" | "DECOY" | "RAIDER";
   campaignId: string;
   targetRoom: string;
   priority: number;
+  waveId?: string;  // If part of a wave attack
 }
 
 /**
@@ -1478,24 +1495,58 @@ export function getSpawnRequests(homeRoom: string): MilitarySpawnRequest[] {
 
     var attack = campaign.controllerAttack;
 
-    // === ATTACKING phase: spawn CONTROLLER_ATTACKERs ===
+    // === ATTACKING phase: spawn CONTROLLER_ATTACKERs (wave or solo) ===
     if (campaign.state === "ATTACKING" && attack) {
-      // Check if there's already an attacker in pipeline
-      var existingAttackers = getAttackersForCampaign(id).filter(function(c) {
-        return !(c.memory as any).attacked;
-      });
+      // Check for wave-based spawning
+      var activeWave = WaveCoordinator.getActiveWave(id);
+      var waveSpawnNeed = WaveCoordinator.getWaveSpawnNeed(id);
 
-      if (existingAttackers.length === 0) {
-        // Check timing
-        var timeSinceLastAttack = Game.time - attack.lastAttackTick;
-        var spawnWindow = ATTACK_COOLDOWN - TRAVEL_TIME - SPAWN_TIME;
+      if (activeWave && waveSpawnNeed > 0) {
+        // Wave needs more members
+        requests.push({
+          role: "CONTROLLER_ATTACKER",
+          campaignId: id,
+          targetRoom: campaign.targetRoom,
+          priority: 100 - attackPenalty,
+          waveId: activeWave.id,
+        });
+      } else if (!activeWave) {
+        // No active wave - use original solo spawn logic
+        var existingAttackers = getAttackersForCampaign(id).filter(function(c) {
+          return !(c.memory as any).attacked;
+        });
 
-        if (timeSinceLastAttack >= spawnWindow || attack.lastAttackTick === 0) {
+        if (existingAttackers.length === 0) {
+          // Check timing
+          var timeSinceLastAttack = Game.time - attack.lastAttackTick;
+          var spawnWindow = ATTACK_COOLDOWN - TRAVEL_TIME - SPAWN_TIME;
+
+          if (timeSinceLastAttack >= spawnWindow || attack.lastAttackTick === 0) {
+            requests.push({
+              role: "CONTROLLER_ATTACKER",
+              campaignId: id,
+              targetRoom: campaign.targetRoom,
+              priority: 100 - attackPenalty
+            });
+          }
+        }
+      }
+
+      // === Spawn RAIDERs for economic disruption ===
+      // Spawn raiders if campaign has been attacking for a while
+      if (attack.attackCount >= 2) {
+        var raiders = getRaidersForCampaign(id);
+        var aliveRaiders = raiders.filter(function(c) {
+          return c.ticksToLive && c.ticksToLive > 100;
+        });
+
+        // Keep 1-2 raiders active per campaign
+        if (aliveRaiders.length < 2) {
           requests.push({
-            role: "CONTROLLER_ATTACKER",
+            role: "RAIDER",
             campaignId: id,
             targetRoom: campaign.targetRoom,
-            priority: 100 - attackPenalty
+            priority: 70 - attackPenalty  // Lower priority than attackers
           });
         }
       }

@@ -325,6 +325,22 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
     fallback: [CLAIM, MOVE],
     moveMode: "pattern",
   },
+
+  /**
+   * RAIDER - Economic disruption creep
+   * Kills haulers/harvesters and destroys containers
+   * ATTACK + MOVE for melee combat with good mobility
+   * WORK parts for dismantling containers
+   */
+  RAIDER: {
+    pattern: [ATTACK, MOVE],
+    prefix: [WORK, TOUGH, TOUGH],  // WORK for dismantle, TOUGH for buffer
+    maxRepeats: 8,
+    minEnergy: 330, // 1 WORK + 2 TOUGH + 1 ATTACK + 2 MOVE
+    fallback: [WORK, ATTACK, ATTACK, MOVE, MOVE, MOVE],
+    moveMode: "pattern",
+    sortForCombat: true,
+  },
 };
 
 /**

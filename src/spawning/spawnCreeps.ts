@@ -12,6 +12,7 @@
 import { getSpawnCandidate } from "./utilitySpawning";
 import * as DuoManager from "../combat/DuoManager";
 import * as MilitaryManager from "../military/MilitaryManager";
+import * as WaveCoordinator from "../military/WaveCoordinator";
 
 /**
  * Main spawning function - uses utility-based decision making
@@ -57,6 +58,12 @@ export function spawnCreeps(room: Room): void {
           bodyCost += BODYPART_COST[candidate.body[pi]];
         }
         MilitaryManager.reportSpawned(campaignId, bodyCost);
+
+        // Register with wave if part of a wave attack
+        var waveId = (candidate.memory as any).waveId;
+        if (waveId) {
+          WaveCoordinator.addMember(waveId, name);
+        }
       }
     }
   } else if (result !== ERR_NOT_ENOUGH_ENERGY) {

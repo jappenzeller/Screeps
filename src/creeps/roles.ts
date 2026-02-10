@@ -20,6 +20,7 @@ import { runControllerAttacker } from "../military/roles/ControllerAttacker";
 import { runDecoy } from "../military/roles/Decoy";
 import { run as runDemolisher } from "../military/roles/Demolisher";
 import { run as runReclaimBlocker } from "../military/roles/ReclaimBlocker";
+import { runRaider } from "../military/roles/Raider";
 
 // Body configurations moved to src/spawning/bodyConfig.ts
 // Use buildBody() from src/spawning/bodyBuilder.ts for body generation
@@ -51,6 +52,7 @@ export const ROLE_RUNNERS: Record<string, RoleRunner> = {
   DECOY: runDecoy,
   DEMOLISHER: runDemolisher,
   RECLAIM_BLOCKER: runReclaimBlocker,
+  RAIDER: runRaider,
 };
 
 export function runCreep(creep: Creep): void {
