@@ -16,7 +16,7 @@ const ROOM_TYPES: Array<{ value: RoomIntel['roomType']; label: string }> = [
   { value: 'sourceKeeper', label: 'Source Keeper' },
   { value: 'center', label: 'Center' },
   { value: 'highway', label: 'Highway' },
-  { value: 'highwayIntersection', label: 'Intersection' },
+  // Removed: highwayIntersection doesn't exist in game data
 ];
 
 const MINERALS: Array<{ value: MineralConstant | 'any'; label: string; color: string }> = [
@@ -206,7 +206,7 @@ export function FilterPanel({ filters, onChange, stats }: FilterPanelProps) {
         type="button"
         onClick={() =>
           onChange({
-            roomTypes: new Set(['normal', 'sourceKeeper', 'center', 'highway', 'highwayIntersection']),
+            roomTypes: new Set(['normal', 'sourceKeeper', 'center', 'highway'] as const),
             minSources: 0,
             maxSources: 99,
             mineralFilter: null,

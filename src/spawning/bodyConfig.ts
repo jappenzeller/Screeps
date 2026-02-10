@@ -271,6 +271,33 @@ export const BODY_CONFIGS: Record<string, BodyConfig> = {
     moveMode: "pattern",
     sortForCombat: true,
   },
+
+  /**
+   * CONTROLLER_ATTACKER - Attacks hostile room controllers
+   * CLAIM creeps have 600-tick lifespan (not 1500)
+   * attackController() removes 300 x CLAIM_PARTS from ticksToDowngrade
+   * At 2300 energy: [CLAIM x3, MOVE x3] = 2100 energy, removes 900 ticks
+   */
+  CONTROLLER_ATTACKER: {
+    pattern: [CLAIM, MOVE],
+    maxRepeats: 3, // 3 CLAIM + 3 MOVE at RCL 6 (2100 energy)
+    minEnergy: 700, // 1 CLAIM + 1 MOVE minimum
+    fallback: [CLAIM, MOVE],
+    moveMode: "pattern",
+  },
+
+  /**
+   * DECOY - Cheap tower drain creep
+   * Walks toward enemy towers to drain their energy
+   * Disposable - only survives a few hits
+   */
+  DECOY: {
+    pattern: [TOUGH, MOVE],
+    maxRepeats: 5,
+    minEnergy: 60, // 1 TOUGH + 1 MOVE
+    fallback: [TOUGH, MOVE],
+    moveMode: "pattern",
+  },
 };
 
 /**

@@ -9,12 +9,20 @@ interface ColonyCardProps {
 }
 
 export function ColonyCard({ colony, freshness }: ColonyCardProps) {
+  // Normalize energy - API may return number or object
+  const energyStored = typeof colony.energy === 'object' && colony.energy !== null
+    ? colony.energy.stored
+    : colony.energy;
+  const energyCap = typeof colony.energy === 'object' && colony.energy !== null
+    ? colony.energy.capacity
+    : (colony.energyCapacity ?? 0);
+
   const rclPercent = colony.rclProgressTotal > 0
     ? (colony.rclProgress / colony.rclProgressTotal) * 100
     : 0;
 
-  const energyPercent = colony.energyCapacity
-    ? (colony.energy / colony.energyCapacity) * 100
+  const energyPercent = energyCap > 0
+    ? (energyStored / energyCap) * 100
     : 0;
 
   // Get top 3 roles by count
@@ -58,7 +66,7 @@ export function ColonyCard({ colony, freshness }: ColonyCardProps) {
       <div className="mb-3">
         <div className="flex items-center justify-between text-sm mb-1">
           <span className="text-[#888]">Energy</span>
-          <span className="text-[#00ff88]">{formatNumber(colony.energy)}</span>
+          <span className="text-[#00ff88]">{formatNumber(energyStored)}</span>
         </div>
         <div className="h-1.5 bg-[#333] rounded-full overflow-hidden">
           <div

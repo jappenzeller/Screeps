@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { RoomIntel, ScoredCandidate } from '../../types/intel';
 import { formatFreshness } from '../../utils/formatting';
-import { getRoomType } from '../../utils/roomCoords';
 
 interface RoomDetailProps {
   room: RoomIntel | null;
@@ -24,7 +23,6 @@ const ROOM_TYPE_LABELS: Record<string, string> = {
   sourceKeeper: 'Source Keeper',
   center: 'Center',
   highway: 'Highway',
-  highwayIntersection: 'Intersection',
 };
 
 export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
@@ -36,10 +34,11 @@ export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
     );
   }
 
-  const roomType = room.roomType || getRoomType(room.roomName);
+  const roomType = room.roomType || 'normal';
   const lastScannedAgo = room.lastScanned
     ? Math.floor((Date.now() - room.lastScanned) / 1000)
     : null;
+  const myUsername = 'Montblanc0';
 
   return (
     <div className="bg-[#1a1a1a] border border-[#333] rounded-lg overflow-hidden">
@@ -61,57 +60,53 @@ export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Ownership Status */}
-        {(room.isOwned || room.isReserved) && (
-          <div className="flex items-center gap-2 flex-wrap">
-            {room.isOwned && (
+        {/* Ownership Status - using owner field directly, no isOwned boolean */}
+        {room.owner && (
+          <div>
+            <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Owner</div>
+            <div className="flex items-center gap-2 flex-wrap">
               <span
                 className={`px-2 py-1 text-xs rounded ${
-                  room.owner === 'Montblanc0'
+                  room.owner === myUsername
                     ? 'bg-[#00ff8833] text-[#00ff88]'
                     : 'bg-[#ff444433] text-[#ff4444]'
                 }`}
               >
-                Owned: {room.owner}
+                {room.owner}
               </span>
-            )}
-            {room.isReserved && (
+              {room.ownerRcl && (
+                <span className="text-xs text-[#666]">RCL {room.ownerRcl}</span>
+              )}
+              {room.owner === myUsername && (
+                <Link
+                  to={`/colony/${room.roomName}`}
+                  className="px-2 py-1 text-xs text-[#4488ff] hover:text-[#66aaff] transition-colors"
+                >
+                  View Colony →
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Reservation - using reservation object, no isReserved boolean */}
+        {room.reservation && (
+          <div>
+            <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Reserved</div>
+            <div className="flex items-center gap-2">
               <span
                 className={`px-2 py-1 text-xs rounded ${
-                  room.reservedBy === 'Montblanc0'
+                  room.reservation.username === myUsername
                     ? 'bg-[#4488ff33] text-[#4488ff]'
                     : 'bg-[#ffcc0033] text-[#ffcc00]'
                 }`}
               >
-                Reserved: {room.reservedBy}
+                {room.reservation.username}
               </span>
-            )}
-            {room.isOwned && room.owner === 'Montblanc0' && (
-              <Link
-                to={`/colony/${room.roomName}`}
-                className="px-2 py-1 text-xs text-[#4488ff] hover:text-[#66aaff] transition-colors"
-              >
-                View Colony →
-              </Link>
-            )}
-          </div>
-        )}
-
-        {/* Controller Info */}
-        {room.controller && (
-          <div>
-            <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Controller</div>
-            <div className="flex items-center gap-3">
-              <span className="text-lg font-bold text-[#4488ff]">RCL {room.controller.level}</span>
-              {room.controller.safeMode && (
-                <span className="text-xs text-[#00ff88]">Safe Mode Active</span>
-              )}
+              <span className="text-xs text-[#666]">
+                {room.reservation.ticksToEnd} ticks
+              </span>
             </div>
-            {room.controller.reservation && (
-              <div className="text-xs text-[#888] mt-1">
-                Reserved by {room.controller.reservation.username} ({room.controller.reservation.ticksToEnd} ticks)
-              </div>
-            )}
           </div>
         )}
 
@@ -136,7 +131,7 @@ export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
           )}
         </div>
 
-        {/* Mineral */}
+        {/* Mineral - using mineral.type, not mineral.mineralType */}
         {room.mineral && (
           <div>
             <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Mineral</div>
@@ -144,11 +139,11 @@ export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
               <span
                 className="px-2 py-1 text-sm font-bold rounded"
                 style={{
-                  backgroundColor: (MINERAL_COLORS[room.mineral.mineralType] || '#888') + '33',
-                  color: MINERAL_COLORS[room.mineral.mineralType] || '#888',
+                  backgroundColor: (MINERAL_COLORS[room.mineral.type] || '#888') + '33',
+                  color: MINERAL_COLORS[room.mineral.type] || '#888',
                 }}
               >
-                {room.mineral.mineralType}
+                {room.mineral.type}
               </span>
               <span className="text-xs text-[#666]">
                 ({room.mineral.pos.x}, {room.mineral.pos.y})
@@ -157,53 +152,76 @@ export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
           </div>
         )}
 
-        {/* Hostiles */}
-        {room.hostiles && room.hostiles.length > 0 && (
+        {/* Terrain */}
+        {room.terrain && (
+          <div>
+            <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Terrain</div>
+            <div className="flex gap-3 text-xs">
+              <span className="text-[#aaa]">Plains: {room.terrain.plainPercent}%</span>
+              <span className="text-[#886622]">Swamp: {room.terrain.swampPercent}%</span>
+              <span className="text-[#666]">Wall: {room.terrain.wallPercent}%</span>
+            </div>
+          </div>
+        )}
+
+        {/* Hostiles - room.hostiles is a number, not array */}
+        {room.hostiles > 0 && (
           <div>
             <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Hostiles</div>
-            <div className="space-y-1">
-              {room.hostiles.map((h) => (
-                <div key={h.owner} className="flex items-center justify-between text-sm">
-                  <span className="text-[#ff4444]">{h.owner}</span>
-                  <span className="text-[#888]">{h.count} creeps</span>
-                </div>
-              ))}
-            </div>
+            <span className="text-[#ff4444]">{room.hostiles} hostile creeps</span>
+            {room.hostileDetails && room.hostileDetails.length > 0 && (
+              <div className="space-y-1 mt-1">
+                {room.hostileDetails.map((h) => (
+                  <div key={h.id} className="flex items-center justify-between text-xs">
+                    <span className="text-[#ff4444]">{h.owner}</span>
+                    <span className="text-[#888]">
+                      {h.bodyParts} parts {h.hasCombat ? '⚔' : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Structures */}
-        {room.structures && room.structures.length > 0 && (
+        {/* Hostile Structures - using hostileStructures, not structures[] */}
+        {room.hostileStructures && (room.hostileStructures.towers > 0 || room.hostileStructures.spawns > 0) && (
           <div>
-            <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Structures</div>
-            <div className="flex flex-wrap gap-1">
-              {room.structures.map((s) => (
-                <span
-                  key={s.type}
-                  className="px-2 py-0.5 text-xs bg-[#222] text-[#888] rounded"
-                >
-                  {s.type}: {s.count}
+            <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Hostile Structures</div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {room.hostileStructures.towers > 0 && (
+                <span className="px-2 py-0.5 bg-[#ff444433] text-[#ff4444] rounded">
+                  Towers: {room.hostileStructures.towers}
                 </span>
-              ))}
+              )}
+              {room.hostileStructures.spawns > 0 && (
+                <span className="px-2 py-0.5 bg-[#ff444433] text-[#ff4444] rounded">
+                  Spawns: {room.hostileStructures.spawns}
+                </span>
+              )}
+              {room.hostileStructures.hasTerminal && (
+                <span className="px-2 py-0.5 bg-[#ff444433] text-[#ff4444] rounded">
+                  Terminal
+                </span>
+              )}
             </div>
           </div>
         )}
 
-        {/* Invader Core */}
-        {room.hasInvaderCore && (
+        {/* Invader Core - using invaderCore, not hasInvaderCore */}
+        {room.invaderCore && (
           <div className="flex items-center gap-2 text-[#ff4444]">
             <span className="text-lg">⚠</span>
             <span className="text-sm">Invader Core Present</span>
           </div>
         )}
 
-        {/* Distance to Colony */}
-        {room.nearestColony && (
+        {/* Distance from Home */}
+        {room.distanceFromHome !== undefined && room.distanceFromHome > 0 && (
           <div>
-            <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Nearest Colony</div>
+            <div className="text-xs text-[#888] mb-1 uppercase tracking-wider">Distance</div>
             <div className="text-sm text-[#eee]">
-              {room.nearestColony}{' '}
-              <span className="text-[#888]">({room.distanceToColony} rooms away)</span>
+              {room.distanceFromHome} rooms from home
             </div>
           </div>
         )}
@@ -229,6 +247,12 @@ export function RoomDetail({ room, candidate, onClose }: RoomDetailProps) {
                 <div>
                   <span className="text-[#888]">Swamp: </span>
                   <span className="text-[#eee]">{Math.round(candidate.swampRatio * 100)}%</span>
+                </div>
+              )}
+              {candidate.nearestColony && (
+                <div>
+                  <span className="text-[#888]">Near: </span>
+                  <span className="text-[#eee]">{candidate.nearestColony}</span>
                 </div>
               )}
             </div>

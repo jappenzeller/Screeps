@@ -537,7 +537,57 @@ interface DecisionMemory {
   totalCreepDecisions: number;
 }
 
-// Extend Memory to include decision logging
+// Military campaign types
+type MilitaryCampaignPhase =
+  | "PLANNING"
+  | "SCOUTING"
+  | "ATTACKING"
+  | "WAITING_SAFE_MODE"
+  | "WAITING_COOLDOWN"
+  | "TOWER_DRAINING"
+  | "CLAIMING"
+  | "SECURING"
+  | "COMPLETE"
+  | "ABORTED"
+  | "PAUSED";
+
+interface MilitaryControllerAttackState {
+  controllerPos: { x: number; y: number };
+  approachDirection: "south" | "west" | "east" | "north";
+  lastAttackTick: number;
+  attackCount: number;
+  currentTargetRCL: number;
+  currentTicksToDowngrade: number;
+  estimatedTicksRemaining: number;
+  towerPositions: { x: number; y: number; lastEnergy: number }[];
+  safeModeActive: boolean;
+  safeModeEndsAt: number;
+  upgradeBlockedUntil: number;
+  defendersSeen: boolean;
+  defendersLastSeen: number;
+  towerDrainNeeded: boolean;
+}
+
+interface MilitaryCampaignState {
+  id: string;
+  type: "CONTROLLER_ATTACK" | "ROOM_ASSAULT" | "TOWER_DRAIN";
+  targetRoom: string;
+  homeRoom: string;
+  supportRooms: string[];
+  state: MilitaryCampaignPhase;
+  stateChangedAt: number;
+  createdAt: number;
+  targetOwner: string;
+  controllerAttack?: MilitaryControllerAttackState;
+}
+
+interface MilitaryMemory {
+  campaigns: { [campaignId: string]: MilitaryCampaignState };
+  nextCampaignId: number;
+  posture: "PEACEFUL" | "ALERT" | "OFFENSIVE";
+}
+
+// Extend Memory to include decision logging and military
 interface Memory {
   advisor?: AdvisorData;
   traffic?: { [roomName: string]: TrafficMemory };
@@ -547,6 +597,7 @@ interface Memory {
   settings?: SettingsFlags;
   combat?: CombatMemory;
   decisions?: DecisionMemory;
+  military?: MilitaryMemory;
 }
 
 // Global console declaration for Screeps

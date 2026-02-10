@@ -6,7 +6,7 @@ export interface ColonySummary {
   rcl: number;
   rclProgress: number;
   rclProgressTotal: number;
-  energy: number;
+  energy: number | { available: number; capacity: number; stored: number };
   energyCapacity?: number;
   creepCount: number;
   creepsByRole: Record<string, number>;

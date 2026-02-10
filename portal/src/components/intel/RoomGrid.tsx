@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import type { RoomIntel, ScoredCandidate, EnemyZone, IntelFilters } from '../../types/intel';
 import {
   coordsToRoomName,
@@ -18,13 +18,12 @@ interface RoomGridProps {
   onSelectRoom: (roomName: string | null) => void;
 }
 
-// Room colors by type
 const ROOM_COLORS: Record<string, string> = {
   normal: '#222222',
   sourceKeeper: '#332200',
   center: '#002233',
   highway: '#1a1a1a',
-  highwayIntersection: '#111111',
+  highwayIntersection: '#151515',
   owned: '#003300',
   hostile: '#330000',
   reserved: '#002244',
@@ -42,8 +41,11 @@ const MINERAL_COLORS: Record<string, string> = {
 };
 
 const CELL_SIZE = 20;
-const MIN_ZOOM = 0.25;
+const CELL_GAP = 1; // 1px gap between cells for grid lines
+const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 4;
+const DRAG_THRESHOLD = 4; // px before mousedown counts as drag
+const FIT_ZOOM_CAP = 1.5; // max zoom for auto-fit
 
 export function RoomGrid({
   rooms,
@@ -60,46 +62,49 @@ export function RoomGrid({
   // View state
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [hoveredRoom, setHoveredRoom] = useState<string | null>(null);
 
-  // Calculate grid bounds from all known rooms plus colonies
-  const allRoomNames = [...Object.keys(rooms), ...colonies];
-  const baseBounds = getRoomBounds(allRoomNames);
-  const bounds = baseBounds ? expandBounds(baseBounds, 2) : null;
+  // Drag state as refs to avoid re-render during drag
+  const isDraggingRef = useRef(false);
+  const didDragRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const dragStartPanRef = useRef({ x: 0, y: 0 });
 
-  // Filter rooms based on current filters
-  const filteredRooms = useCallback(() => {
+  // Track whether we've done initial centering
+  const hasCenteredRef = useRef(false);
+
+  // ===== MEMOIZED DERIVED DATA =====
+
+  const bounds = useMemo(() => {
+    const allRoomNames = [...Object.keys(rooms), ...colonies];
+    const base = getRoomBounds(allRoomNames);
+    return base ? expandBounds(base, 2) : null;
+  }, [rooms, colonies]);
+
+  const coloniesSet = useMemo(() => new Set(colonies), [colonies]);
+
+  const filteredRooms = useMemo(() => {
     if (!bounds) return {};
-
     const result: Record<string, RoomIntel> = {};
+    const myUsername = 'Montblanc0';
     for (const [name, room] of Object.entries(rooms)) {
-      const roomType = room.roomType || getRoomType(name);
-
-      // Room type filter
+      const roomType = room.roomType || 'normal';
       if (!filters.roomTypes.has(roomType)) continue;
-
-      // Source count filter
       if (room.sources.length < filters.minSources) continue;
       if (room.sources.length > filters.maxSources) continue;
-
-      // Mineral filter
       if (filters.mineralFilter && filters.mineralFilter !== 'any') {
-        if (!room.mineral || room.mineral.mineralType !== filters.mineralFilter) continue;
+        // API uses mineral.type, not mineral.mineralType
+        if (!room.mineral || room.mineral.type !== filters.mineralFilter) continue;
       }
-
-      // Ownership filters
-      if (filters.showOwnedOnly && room.owner !== 'Montblanc0') continue;
-      if (filters.showHostileOnly && (!room.isOwned || room.owner === 'Montblanc0')) continue;
-
+      // API uses owner field directly, no isOwned boolean
+      if (filters.showOwnedOnly && room.owner !== myUsername) continue;
+      if (filters.showHostileOnly && (!room.owner || room.owner === myUsername)) continue;
       result[name] = room;
     }
     return result;
   }, [rooms, bounds, filters]);
 
-  // Get candidate scores as a map for quick lookup
-  const candidateMap = useCallback(() => {
+  const candidateLookup = useMemo(() => {
     const map: Record<string, ScoredCandidate> = {};
     for (const c of candidates) {
       map[c.roomName] = c;
@@ -107,8 +112,7 @@ export function RoomGrid({
     return map;
   }, [candidates]);
 
-  // Get enemy rooms as a set
-  const enemyRoomsSet = useCallback(() => {
+  const enemyRoomsSet = useMemo(() => {
     const set = new Set<string>();
     for (const zone of enemies) {
       for (const room of zone.rooms) {
@@ -118,32 +122,29 @@ export function RoomGrid({
     return set;
   }, [enemies]);
 
-  // Convert screen coordinates to room name
+  // ===== COORDINATE CONVERSION =====
+
   const screenToRoom = useCallback(
     (screenX: number, screenY: number): string | null => {
       if (!bounds || !canvasRef.current) return null;
-
       const rect = canvasRef.current.getBoundingClientRect();
       const canvasX = screenX - rect.left;
       const canvasY = screenY - rect.top;
-
       const worldX = (canvasX - pan.x) / (CELL_SIZE * zoom);
       const worldY = (canvasY - pan.y) / (CELL_SIZE * zoom);
-
       const gx = Math.floor(worldX);
       const gy = Math.floor(worldY);
-
-      if (gx < 0 || gy < 0) return null;
-      if (gx > bounds.maxX - bounds.minX) return null;
-      if (gy > bounds.maxY - bounds.minY) return null;
-
+      const gridWidth = bounds.maxX - bounds.minX + 1;
+      const gridHeight = bounds.maxY - bounds.minY + 1;
+      if (gx < 0 || gy < 0 || gx >= gridWidth || gy >= gridHeight) return null;
       const coords = gridToCoords(gx, gy, bounds);
       return coordsToRoomName(coords);
     },
     [bounds, pan, zoom]
   );
 
-  // Draw the canvas
+  // ===== DRAWING =====
+
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
@@ -151,152 +152,188 @@ export function RoomGrid({
 
     const width = canvas.width;
     const height = canvas.height;
-
-    // Clear
-    ctx.fillStyle = '#111111';
-    ctx.fillRect(0, 0, width, height);
-
-    const filtered = filteredRooms();
-    const candidatesLookup = candidateMap();
-    const enemyRooms = enemyRoomsSet();
-
     const gridWidth = bounds.maxX - bounds.minX + 1;
     const gridHeight = bounds.maxY - bounds.minY + 1;
+
+    // Clear
+    ctx.fillStyle = '#0d0d0d';
+    ctx.fillRect(0, 0, width, height);
+
+    // Calculate visible range (viewport culling)
+    const startGX = Math.max(0, Math.floor(-pan.x / (CELL_SIZE * zoom)));
+    const startGY = Math.max(0, Math.floor(-pan.y / (CELL_SIZE * zoom)));
+    const endGX = Math.min(gridWidth, Math.ceil((width - pan.x) / (CELL_SIZE * zoom)));
+    const endGY = Math.min(gridHeight, Math.ceil((height - pan.y) / (CELL_SIZE * zoom)));
 
     ctx.save();
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
 
-    // Draw grid cells
-    for (let gy = 0; gy < gridHeight; gy++) {
-      for (let gx = 0; gx < gridWidth; gx++) {
+    // Draw visible cells
+    for (let gy = startGY; gy < endGY; gy++) {
+      for (let gx = startGX; gx < endGX; gx++) {
         const coords = gridToCoords(gx, gy, bounds);
         const roomName = coordsToRoomName(coords);
-        const room = filtered[roomName];
-        const roomType = room?.roomType || getRoomType(roomName);
+        const room = filteredRooms[roomName];
+        const isColony = coloniesSet.has(roomName);
 
         const x = gx * CELL_SIZE;
         const y = gy * CELL_SIZE;
+        const cellInner = CELL_SIZE - CELL_GAP;
 
-        // Determine cell color
-        let bgColor = ROOM_COLORS[roomType] || ROOM_COLORS.normal;
+        // --- Background ---
+        if (!room && !isColony) {
+          // Not in filtered set: dark empty cell
+          ctx.fillStyle = '#141414';
+          ctx.fillRect(x, y, cellInner, cellInner);
+        } else {
+          // Determine color
+          const roomType = room?.roomType || getRoomType(roomName);
+          let bgColor = ROOM_COLORS[roomType] || ROOM_COLORS.normal;
 
-        if (room) {
-          if (room.isOwned) {
-            bgColor = room.owner === 'Montblanc0' ? ROOM_COLORS.owned : ROOM_COLORS.hostile;
-          } else if (room.isReserved) {
-            bgColor = room.reservedBy === 'Montblanc0' ? ROOM_COLORS.reserved : ROOM_COLORS.hostileReserved;
+          if (room) {
+            // API uses owner field directly, no isOwned boolean
+            if (room.owner) {
+              bgColor = room.owner === 'Montblanc0' ? ROOM_COLORS.owned : ROOM_COLORS.hostile;
+            } else if (room.reservation) {
+              bgColor = room.reservation.username === 'Montblanc0' ? ROOM_COLORS.reserved : ROOM_COLORS.hostileReserved;
+            }
           }
-        }
+          if (isColony) {
+            bgColor = '#004400';
+          }
 
-        // Check if it's a colony
-        const isColony = colonies.includes(roomName);
-        if (isColony) {
-          bgColor = '#004400';
-        }
+          // Enemy zone overlay
+          if (filters.showEnemyZones && enemyRoomsSet.has(roomName)) {
+            bgColor = '#440000';
+          }
 
-        // Draw cell background
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(x + 0.5, y + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
+          ctx.fillStyle = bgColor;
+          ctx.fillRect(x, y, cellInner, cellInner);
 
-        // Draw candidate overlay
-        if (filters.showCandidates && candidatesLookup[roomName]) {
-          const candidate = candidatesLookup[roomName];
-          const alpha = Math.min(candidate.score / 100, 1) * 0.5;
-          ctx.fillStyle = `rgba(68, 136, 255, ${alpha})`;
-          ctx.fillRect(x + 0.5, y + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
-        }
+          // --- Source dots ---
+          if (room && room.sources) {
+            ctx.fillStyle = '#ffcc00';
+            const sourceCount = room.sources.length;
+            for (let i = 0; i < sourceCount; i++) {
+              const sx = x + 4 + i * 5;
+              const sy = y + 4;
+              ctx.beginPath();
+              ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
 
-        // Draw enemy zone overlay
-        if (filters.showEnemyZones && enemyRooms.has(roomName)) {
-          ctx.fillStyle = 'rgba(255, 68, 68, 0.3)';
-          ctx.fillRect(x + 0.5, y + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
-        }
-
-        // Draw source indicators (small yellow dots)
-        if (room && room.sources.length > 0 && zoom >= 0.5) {
-          ctx.fillStyle = '#ffcc00';
-          const sourceSize = Math.max(2, 3 * zoom);
-          for (let i = 0; i < room.sources.length; i++) {
-            const sx = x + 4 + i * 6;
-            const sy = y + CELL_SIZE - 5;
+          // --- Mineral dot ---
+          // API uses mineral.type, not mineral.mineralType
+          if (room && room.mineral && room.mineral.type) {
+            const mColor = MINERAL_COLORS[room.mineral.type] || '#888';
+            ctx.fillStyle = mColor;
             ctx.beginPath();
-            ctx.arc(sx, sy, sourceSize / zoom, 0, Math.PI * 2);
+            ctx.arc(x + cellInner - 4, y + cellInner - 4, 3, 0, Math.PI * 2);
             ctx.fill();
           }
+
+          // --- Colony star ---
+          if (isColony) {
+            ctx.fillStyle = '#00ff88';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('★', x + cellInner / 2, y + cellInner / 2);
+          }
+
+          // --- Candidate overlay ---
+          if (filters.showCandidates && candidateLookup[roomName]) {
+            const candidate = candidateLookup[roomName];
+            // Higher score = more opaque highlight
+            const alpha = Math.min(candidate.score / 100, 1) * 0.5;
+            ctx.fillStyle = `rgba(68, 136, 255, ${alpha})`;
+            ctx.fillRect(x + 1, y + 1, cellInner - 2, cellInner - 2);
+            ctx.strokeStyle = '#4488ff';
+            ctx.lineWidth = 1 / zoom;
+            ctx.strokeRect(x + 1, y + 1, cellInner - 2, cellInner - 2);
+          }
         }
 
-        // Draw mineral indicator
-        if (room?.mineral && zoom >= 0.5) {
-          const mineralColor = MINERAL_COLORS[room.mineral.mineralType] || '#888';
-          ctx.fillStyle = mineralColor;
-          const mineralSize = Math.max(2, 4 * zoom);
-          ctx.beginPath();
-          ctx.arc(x + CELL_SIZE - 5, y + CELL_SIZE - 5, mineralSize / zoom, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Draw colony marker
-        if (isColony) {
-          ctx.fillStyle = '#00ff88';
-          ctx.font = `bold ${Math.max(8, 10 * zoom)}px monospace`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('★', x + CELL_SIZE / 2, y + CELL_SIZE / 2);
-        }
-
-        // Draw selection/hover highlight
+        // --- Selection / hover highlight (always, even for empty cells) ---
         if (roomName === selectedRoom) {
           ctx.strokeStyle = '#00ff88';
           ctx.lineWidth = 2 / zoom;
-          ctx.strokeRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+          ctx.strokeRect(x + 1, y + 1, cellInner - 2, cellInner - 2);
         } else if (roomName === hoveredRoom) {
           ctx.strokeStyle = '#4488ff';
           ctx.lineWidth = 1 / zoom;
-          ctx.strokeRect(x + 1, y + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+          ctx.strokeRect(x + 1, y + 1, cellInner - 2, cellInner - 2);
         }
       }
     }
 
-    // Draw room labels when zoomed in enough
-    if (zoom >= 1.5) {
-      ctx.fillStyle = '#888888';
-      ctx.font = `${Math.max(6, 8 * zoom)}px monospace`;
+    // --- Room labels at high zoom ---
+    // At zoom >= 2, CELL_SIZE * zoom >= 40px, enough for small text
+    if (zoom >= 2) {
+      ctx.fillStyle = '#aaaaaa';
+      ctx.font = '5px monospace';
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
+      ctx.textBaseline = 'bottom';
 
-      for (let gy = 0; gy < gridHeight; gy++) {
-        for (let gx = 0; gx < gridWidth; gx++) {
+      for (let gy = startGY; gy < endGY; gy++) {
+        for (let gx = startGX; gx < endGX; gx++) {
           const coords = gridToCoords(gx, gy, bounds);
           const roomName = coordsToRoomName(coords);
           const x = gx * CELL_SIZE;
           const y = gy * CELL_SIZE;
-          ctx.fillText(roomName, x + CELL_SIZE / 2, y + 2);
+          ctx.fillText(roomName, x + (CELL_SIZE - CELL_GAP) / 2, y + CELL_SIZE - CELL_GAP - 1);
         }
       }
     }
 
     ctx.restore();
 
-    // Draw hovered room name in corner
+    // --- HUD (drawn in screen space, not world space) ---
     if (hoveredRoom) {
       ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(10, height - 30, 100, 24);
-      ctx.fillStyle = '#eee';
+      ctx.fillRect(8, height - 32, 120, 24);
+      ctx.fillStyle = '#eeeeee';
       ctx.font = '12px monospace';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(hoveredRoom, 16, height - 18);
+      ctx.fillText(hoveredRoom, 14, height - 20);
     }
 
-    // Draw zoom level
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = '#555';
     ctx.font = '10px monospace';
     ctx.textAlign = 'right';
-    ctx.fillText(`${Math.round(zoom * 100)}%`, width - 10, height - 10);
-  }, [bounds, pan, zoom, filteredRooms, candidateMap, enemyRoomsSet, colonies, filters, selectedRoom, hoveredRoom]);
+    ctx.fillText(`${Math.round(zoom * 100)}%`, width - 8, height - 8);
+  }, [bounds, pan, zoom, filteredRooms, candidateLookup, enemyRoomsSet, coloniesSet, filters, selectedRoom, hoveredRoom]);
 
-  // Handle resize
+  // ===== FIT VIEW =====
+
+  const fitView = useCallback(() => {
+    if (!bounds || !canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const gridWidth = bounds.maxX - bounds.minX + 1;
+    const gridHeight = bounds.maxY - bounds.minY + 1;
+
+    const padFraction = 0.85;
+    const zoomX = (canvas.width * padFraction) / (gridWidth * CELL_SIZE);
+    const zoomY = (canvas.height * padFraction) / (gridHeight * CELL_SIZE);
+    const newZoom = Math.max(MIN_ZOOM, Math.min(FIT_ZOOM_CAP, Math.min(zoomX, zoomY)));
+
+    const totalWidth = gridWidth * CELL_SIZE * newZoom;
+    const totalHeight = gridHeight * CELL_SIZE * newZoom;
+
+    setPan({
+      x: (canvas.width - totalWidth) / 2,
+      y: (canvas.height - totalHeight) / 2,
+    });
+    setZoom(newZoom);
+  }, [bounds]);
+
+  // ===== EFFECTS =====
+
+  // Resize canvas
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -313,89 +350,82 @@ export function RoomGrid({
     return () => window.removeEventListener('resize', resize);
   }, [draw]);
 
-  // Redraw when dependencies change
+  // Redraw on state change
   useEffect(() => {
     draw();
   }, [draw]);
 
-  // Mouse handlers
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0) {
-      setIsDragging(true);
-      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-    }
-  };
+  // Auto-fit on first data load only
+  useEffect(() => {
+    if (hasCenteredRef.current || !bounds || !canvasRef.current) return;
+    if (Object.keys(rooms).length === 0) return;
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) {
+    hasCenteredRef.current = true;
+    fitView();
+  }, [bounds, rooms, fitView]);
+
+  // ===== MOUSE HANDLERS =====
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    isDraggingRef.current = true;
+    didDragRef.current = false;
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+    dragStartPanRef.current = { x: pan.x, y: pan.y };
+  }, [pan]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isDraggingRef.current) {
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+      if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+        didDragRef.current = true;
+      }
       setPan({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y,
+        x: dragStartPanRef.current.x + dx,
+        y: dragStartPanRef.current.y + dy,
       });
     } else {
       const roomName = screenToRoom(e.clientX, e.clientY);
       setHoveredRoom(roomName);
     }
-  };
+  }, [screenToRoom]);
 
-  const handleMouseUp = (e: React.MouseEvent) => {
-    if (isDragging) {
-      setIsDragging(false);
-    } else if (e.button === 0) {
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+
+    // If we didn't actually drag, treat as click
+    if (!didDragRef.current && e.button === 0) {
       const roomName = screenToRoom(e.clientX, e.clientY);
       onSelectRoom(roomName === selectedRoom ? null : roomName);
     }
-  };
+  }, [screenToRoom, selectedRoom, onSelectRoom]);
 
-  const handleMouseLeave = () => {
-    setIsDragging(false);
+  const handleMouseLeave = useCallback(() => {
+    isDraggingRef.current = false;
     setHoveredRoom(null);
-  };
+  }, []);
 
-  const handleWheel = (e: React.WheelEvent) => {
+  const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
 
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
-
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom * delta));
-
-    // Zoom towards mouse position
     const scale = newZoom / zoom;
-    setPan({
-      x: mouseX - (mouseX - pan.x) * scale,
-      y: mouseY - (mouseY - pan.y) * scale,
-    });
+
+    setPan(prev => ({
+      x: mouseX - (mouseX - prev.x) * scale,
+      y: mouseY - (mouseY - prev.y) * scale,
+    }));
     setZoom(newZoom);
-  };
+  }, [zoom]);
 
-  // Center view on colonies
-  const centerOnColonies = useCallback(() => {
-    if (!bounds || !canvasRef.current || colonies.length === 0) return;
-
-    const colonyBounds = getRoomBounds(colonies);
-    if (!colonyBounds) return;
-
-    const centerX = (colonyBounds.minX + colonyBounds.maxX) / 2 - bounds.minX;
-    const centerY = (colonyBounds.minY + colonyBounds.maxY) / 2 - bounds.minY;
-
-    const canvas = canvasRef.current;
-    const newZoom = 1;
-    setPan({
-      x: canvas.width / 2 - centerX * CELL_SIZE * newZoom - CELL_SIZE / 2,
-      y: canvas.height / 2 - centerY * CELL_SIZE * newZoom - CELL_SIZE / 2,
-    });
-    setZoom(newZoom);
-  }, [bounds, colonies]);
-
-  // Center on load
-  useEffect(() => {
-    centerOnColonies();
-  }, [centerOnColonies]);
+  // ===== RENDER =====
 
   if (!bounds) {
     return (
@@ -421,24 +451,24 @@ export function RoomGrid({
       <div className="absolute top-2 right-2 flex gap-1">
         <button
           type="button"
-          onClick={() => setZoom(Math.min(MAX_ZOOM, zoom * 1.25))}
+          onClick={() => setZoom(z => Math.min(MAX_ZOOM, z * 1.25))}
           className="w-8 h-8 bg-[#1a1a1a] border border-[#333] rounded text-[#888] hover:text-[#eee] hover:border-[#555]"
         >
           +
         </button>
         <button
           type="button"
-          onClick={() => setZoom(Math.max(MIN_ZOOM, zoom * 0.8))}
+          onClick={() => setZoom(z => Math.max(MIN_ZOOM, z * 0.8))}
           className="w-8 h-8 bg-[#1a1a1a] border border-[#333] rounded text-[#888] hover:text-[#eee] hover:border-[#555]"
         >
           −
         </button>
         <button
           type="button"
-          onClick={centerOnColonies}
+          onClick={fitView}
           className="px-2 h-8 bg-[#1a1a1a] border border-[#333] rounded text-[#888] hover:text-[#eee] hover:border-[#555] text-xs"
         >
-          Center
+          Fit
         </button>
       </div>
     </div>

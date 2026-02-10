@@ -33,6 +33,7 @@ import { ExpansionManager, eventBus, initializeEmpireMemory } from "./empire";
 import { getMilestones, getMilestonePhase } from "./core/ColonyMilestones";
 import * as DuoManager from "./combat/DuoManager";
 import { DecisionLogger, registerDecisionCommands } from "./logging/DecisionLogger";
+import * as MilitaryManager from "./military/MilitaryManager";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -94,6 +95,9 @@ export function loop(): void {
 
   // Run combat duo manager (state transitions and cleanup)
   DuoManager.run();
+
+  // Run military manager (campaigns, controller attacks)
+  MilitaryManager.run();
 
   // Run all creeps
   runCreeps();

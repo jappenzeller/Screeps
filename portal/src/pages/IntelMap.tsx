@@ -10,10 +10,9 @@ import { fetchColonies } from '../api/colonies';
 import type { IntelResponse, CandidateResponse, EnemyResponse, IntelFilters, RoomIntel } from '../types/intel';
 import type { ColoniesResponse } from '../api/colonies';
 import { POLL_INTERVALS } from '../utils/constants';
-import { getRoomType } from '../utils/roomCoords';
 
 const DEFAULT_FILTERS: IntelFilters = {
-  roomTypes: new Set(['normal', 'sourceKeeper', 'center', 'highway', 'highwayIntersection']),
+  roomTypes: new Set(['normal', 'sourceKeeper', 'center', 'highway'] as const),
   minSources: 0,
   maxSources: 99,
   mineralFilter: null,
@@ -77,22 +76,26 @@ export function IntelMap() {
     let ownedRooms = 0;
     let hostileRooms = 0;
 
+    const myUsername = 'Montblanc0';
+
     for (const room of Object.values(rooms)) {
-      const roomType = room.roomType || getRoomType(room.roomName);
+      const roomType = room.roomType || 'normal';
 
       // Apply same filters as RoomGrid
       if (!filters.roomTypes.has(roomType)) continue;
       if (room.sources.length < filters.minSources) continue;
       if (room.sources.length > filters.maxSources) continue;
       if (filters.mineralFilter && filters.mineralFilter !== 'any') {
-        if (!room.mineral || room.mineral.mineralType !== filters.mineralFilter) continue;
+        // API uses mineral.type, not mineral.mineralType
+        if (!room.mineral || room.mineral.type !== filters.mineralFilter) continue;
       }
-      if (filters.showOwnedOnly && room.owner !== 'Montblanc0') continue;
-      if (filters.showHostileOnly && (!room.isOwned || room.owner === 'Montblanc0')) continue;
+      // API uses owner field directly, no isOwned boolean
+      if (filters.showOwnedOnly && room.owner !== myUsername) continue;
+      if (filters.showHostileOnly && (!room.owner || room.owner === myUsername)) continue;
 
       filteredRooms++;
-      if (room.owner === 'Montblanc0') ownedRooms++;
-      if (room.isOwned && room.owner !== 'Montblanc0') hostileRooms++;
+      if (room.owner === myUsername) ownedRooms++;
+      if (room.owner && room.owner !== myUsername) hostileRooms++;
     }
 
     return { totalRooms, filteredRooms, ownedRooms, hostileRooms };

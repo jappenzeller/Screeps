@@ -28,6 +28,7 @@ import { ExpansionManager } from "../empire";
 import * as DuoManager from "../combat/DuoManager";
 import { DecisionLogger } from "../logging/DecisionLogger";
 import { getActiveDirective } from "../empire/IntegrationManager";
+import * as MilitaryManager from "../military/MilitaryManager";
 
 // TTL thresholds for proactive replacement spawning
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
@@ -144,7 +145,9 @@ type SpawnRole =
   | "PIONEER"
   | "ROAD_BUILDER"
   | "RANGED_ATTACKER"
-  | "COMBAT_HEALER";
+  | "COMBAT_HEALER"
+  | "CONTROLLER_ATTACKER"
+  | "DECOY";
 
 const ALL_ROLES: SpawnRole[] = [
   "PIONEER",
@@ -165,6 +168,8 @@ const ALL_ROLES: SpawnRole[] = [
   "ROAD_BUILDER",
   "RANGED_ATTACKER",
   "COMBAT_HEALER",
+  "CONTROLLER_ATTACKER",
+  "DECOY",
 ];
 
 export interface SpawnCandidate {
@@ -876,6 +881,10 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return rangedAttackerUtility(state);
     case "COMBAT_HEALER":
       return combatHealerUtility(state);
+    case "CONTROLLER_ATTACKER":
+      return controllerAttackerUtility(state);
+    case "DECOY":
+      return decoyUtility(state);
     default:
       return 0;
   }
@@ -1716,6 +1725,48 @@ function combatHealerUtility(state: ColonyState): number {
   return healerRequest.priority;
 }
 
+/**
+ * Controller Attacker utility - queries MilitaryManager for spawn needs
+ *
+ * Only spawns when MilitaryManager has an active attack campaign needing a creep.
+ * Priority: 60 (above remote mining, below home economy)
+ */
+function controllerAttackerUtility(state: ColonyState): number {
+  var need = MilitaryManager.needsControllerAttacker(state.room.name);
+  if (need.needed) {
+    return 60; // Moderate priority
+  }
+  return 0;
+}
+
+/**
+ * Decoy utility - spawns during tower drain operations
+ *
+ * Only spawns when MilitaryManager has an active campaign in TOWER_DRAINING phase.
+ * Priority: 30 (low priority, cheap)
+ */
+function decoyUtility(state: ColonyState): number {
+  var mem = MilitaryManager.getMilitaryMemory();
+
+  for (var id in mem.campaigns) {
+    var campaign = mem.campaigns[id];
+    if (campaign.homeRoom !== state.room.name) continue;
+    if (campaign.state !== "TOWER_DRAINING") continue;
+
+    // Count existing decoys for this campaign
+    var existingDecoys = Object.values(Game.creeps).filter(function(c) {
+      return c.memory.role === "DECOY" &&
+        (c.memory as any).campaignId === id;
+    });
+
+    if (existingDecoys.length < 3) {
+      return 30; // Low priority, cheap
+    }
+  }
+
+  return 0;
+}
+
 // ============================================
 // Body Building Functions
 // ============================================
@@ -1977,6 +2028,40 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
           duoId: healReq.duoId,
           targetRoom: healReq.targetRoom,
         };
+      }
+      return base;
+    }
+
+    case "CONTROLLER_ATTACKER": {
+      // Find the campaign needing an attacker
+      var need = MilitaryManager.needsControllerAttacker(state.room.name);
+      if (need.campaignId) {
+        var campaign = MilitaryManager.getCampaign(need.campaignId);
+        if (campaign) {
+          return {
+            ...base,
+            targetRoom: campaign.targetRoom,
+            campaignId: need.campaignId,
+            attackState: "TRAVELING",
+            attacked: false,
+          } as Partial<CreepMemory>;
+        }
+      }
+      return base;
+    }
+
+    case "DECOY": {
+      // Find the campaign in TOWER_DRAINING phase
+      var milMem = MilitaryManager.getMilitaryMemory();
+      for (var cid in milMem.campaigns) {
+        var camp = milMem.campaigns[cid];
+        if (camp.homeRoom === state.room.name && camp.state === "TOWER_DRAINING") {
+          return {
+            ...base,
+            targetRoom: camp.targetRoom,
+            campaignId: cid,
+          } as Partial<CreepMemory>;
+        }
       }
       return base;
     }

@@ -12,6 +12,7 @@ import { analyzeRoute, isSourceKeeperRoom } from "./movement";
 import * as DuoManager from "../combat/DuoManager";
 import { getUtilityScores } from "../spawning/utilitySpawning";
 import { getIntegrationData } from "../empire/IntegrationManager";
+import * as MilitaryManager from "../military/MilitaryManager";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -107,6 +108,12 @@ combat.cancel(duoId) - Cancel a duo
 combat.toggle()      - Toggle duo combat system on/off
 integration()        - Show integration status for all expanding colonies
 integration("E44N37") - Show integration diagnostics for specific room
+military.status()    - Show active military campaigns
+military.attack(home, target) - Start controller attack campaign
+military.abort(id)   - Abort a campaign
+military.pause(id)   - Pause a campaign
+military.resume(id)  - Resume a paused campaign
+military.progress(id) - Show detailed attack progress
 `);
   };
 
@@ -1844,5 +1851,76 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
 
     console.log(lines.join("\n"));
     return "OK";
+  };
+
+  // Military manager commands
+  global.military = {
+    status: function() {
+      console.log(MilitaryManager.status());
+      return "OK";
+    },
+
+    attack: function(homeRoom: string, targetRoom: string) {
+      if (!homeRoom || !targetRoom) {
+        console.log("Usage: military.attack('E46N37', 'E44N39')");
+        console.log("  homeRoom: Colony to spawn attackers from (required)");
+        console.log("  targetRoom: Enemy room to downgrade (required)");
+        return "Error: specify home and target rooms";
+      }
+
+      var campaignId = MilitaryManager.createCampaign({
+        type: "CONTROLLER_ATTACK",
+        homeRoom: homeRoom,
+        targetRoom: targetRoom,
+      });
+
+      return "Created campaign: " + campaignId;
+    },
+
+    abort: function(campaignId: string) {
+      if (!campaignId) {
+        console.log("Usage: military.abort('campaign_1')");
+        return "Error: specify campaign ID";
+      }
+
+      return MilitaryManager.abortCampaign(campaignId);
+    },
+
+    pause: function(campaignId: string) {
+      if (!campaignId) {
+        console.log("Usage: military.pause('campaign_1')");
+        return "Error: specify campaign ID";
+      }
+
+      return MilitaryManager.pauseCampaign(campaignId);
+    },
+
+    resume: function(campaignId: string) {
+      if (!campaignId) {
+        console.log("Usage: military.resume('campaign_1')");
+        return "Error: specify campaign ID";
+      }
+
+      return MilitaryManager.resumeCampaign(campaignId);
+    },
+
+    progress: function(campaignId: string) {
+      if (!campaignId) {
+        console.log("Usage: military.progress('campaign_1')");
+        return "Error: specify campaign ID";
+      }
+
+      console.log(MilitaryManager.attackProgress(campaignId));
+      return "OK";
+    },
+
+    drain: function(campaignId: string) {
+      if (!campaignId) {
+        console.log("Usage: military.drain('campaign_1')");
+        return "Error: specify campaign ID";
+      }
+
+      return MilitaryManager.startTowerDrain(campaignId);
+    },
   };
 }
