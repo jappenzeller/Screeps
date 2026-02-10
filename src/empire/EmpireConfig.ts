@@ -28,7 +28,7 @@ export interface EmpireConfig {
 
 export const DEFAULT_CONFIG: EmpireConfig = {
   expansion: {
-    maxSimultaneous: 1,
+    maxSimultaneous: 3,
     minEconomyScore: 50,
     minReserves: 50000,
     minParentRCL: 4,
