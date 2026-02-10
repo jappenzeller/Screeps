@@ -115,6 +115,13 @@ export class RenewalManager {
     // Base score: how much TTL room we have
     const ttlRoom = 1500 - ttl;
 
+    // Harvesters should rarely be near spawn — lower their score
+    // since they're losing mining time standing here
+    if (creep.memory.role === "HARVESTER") {
+      // Only renew harvesters if they have significant TTL room
+      if (ttlRoom < 400) return 0; // Not worth the spawn blockage
+    }
+
     // Weight by creep value (expensive creeps more valuable to renew)
     const valueWeight = creepCost / 1000;
 
@@ -143,9 +150,9 @@ export class RenewalManager {
  * Only for critical creeps with very low TTL that are the last of their kind
  */
 export function shouldEmergencyRenew(creep: Creep): boolean {
-  const ttl = creep.ticksToLive || 0;
-  const bodyParts = creep.body.length;
-  const role = creep.memory.role;
+  var ttl = creep.ticksToLive || 0;
+  var bodyParts = creep.body.length;
+  var role = creep.memory.role;
 
   // Only for large, stationary roles (not haulers - they're cheap and mobile)
   if (bodyParts < 30) return false;
@@ -154,14 +161,32 @@ export function shouldEmergencyRenew(creep: Creep): boolean {
   // Only if TTL is critically low
   if (ttl > 150) return false;
 
+  // Distance check — can we even make it to spawn?
+  var spawn = creep.pos.findClosestByRange(FIND_MY_SPAWNS);
+  if (!spawn) return false;
+  var distance = creep.pos.getRangeTo(spawn);
+  if (distance >= ttl) return false; // Can't make it
+
+  // Profitability check — is the trip worth it?
+  var workParts = creep.getActiveBodyparts(WORK);
+  var harvestRate = workParts * 2;
+  var roundTrip = distance * 2;
+  var renewalTicks = 20;
+  var miningLost = (roundTrip + renewalTicks) * harvestRate;
+  var bodyCost = creep.body.reduce(function(sum, part) { return sum + BODYPART_COST[part.type]; }, 0);
+  if (miningLost > bodyCost) return false;
+
   // Only if we're the last one with healthy TTL
-  const healthyCount = Object.values(Game.creeps).filter(
-    (c) =>
-      c.memory.role === role &&
-      c.memory.room === creep.memory.room &&
-      c.name !== creep.name &&
-      (c.ticksToLive || 0) > 200
-  ).length;
+  var healthyCount = 0;
+  for (var name in Game.creeps) {
+    var c = Game.creeps[name];
+    if (c.memory.role === role &&
+        c.memory.room === creep.memory.room &&
+        c.name !== creep.name &&
+        (c.ticksToLive || 0) > 200) {
+      healthyCount++;
+    }
+  }
 
   return healthyCount === 0; // We're the last healthy one
 }

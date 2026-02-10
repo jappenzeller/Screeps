@@ -21,27 +21,44 @@ function shouldGoRenew(creep: Creep): boolean {
   if (!creep.ticksToLive) return false;
 
   // Don't renew undersized creeps - let them die and spawn bigger replacements
-  const bodyCost = creep.body.reduce((sum, part) => sum + BODYPART_COST[part.type], 0);
-  const capacity = creep.room.energyCapacityAvailable;
+  var bodyCost = creep.body.reduce(function(sum, part) { return sum + BODYPART_COST[part.type]; }, 0);
+  var capacity = creep.room.energyCapacityAvailable;
   if (bodyCost < capacity * 0.5) {
     return false;
   }
 
-  const distance = getSpawnDistance(creep);
-  const roundTrip = distance * 2;
-  const buffer = 30;
+  var distance = getSpawnDistance(creep);
+
+  // Profitability check: is the round trip worth more than just respawning?
+  // Calculate mining output lost during travel + renewal time at spawn
+  var workParts = creep.getActiveBodyparts(WORK);
+  var harvestRate = workParts * 2; // energy per tick harvesting
+  var roundTrip = distance * 2;
+  var renewalTicks = 20; // approximate time spent at spawn renewing
+  var totalDowntime = roundTrip + renewalTicks;
+  var miningLost = totalDowntime * harvestRate;
+
+  // If mining lost during renewal exceeds spawn cost, just let it die
+  // The replacement will spawn while this one is still alive, covering the gap
+  if (miningLost > bodyCost) {
+    return false;
+  }
+
+  var buffer = 30;
 
   // Leave when TTL barely covers round trip + buffer
   return creep.ticksToLive < roundTrip + buffer;
 }
 
 function getRenewalTarget(creep: Creep): number {
-  const distance = getSpawnDistance(creep);
-  const roundTrip = distance * 2;
-  const workPeriod = 500; // ticks working at source between renewal trips
-  const buffer = 30;
+  var distance = getSpawnDistance(creep);
+  var roundTrip = distance * 2;
+  // Longer work period for longer distances to amortize travel cost
+  // But cap at 1200 to avoid spending too long at spawn
+  var workPeriod = Math.min(1200, 500 + roundTrip * 3);
+  var buffer = 30;
 
-  return roundTrip + workPeriod + buffer;
+  return Math.min(1400, roundTrip + workPeriod + buffer);
 }
 
 function runRenewal(creep: Creep): boolean {
