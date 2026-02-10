@@ -17,7 +17,9 @@
  * 600-tick lifespan (CLAIM body).
  */
 
-export interface ReclaimBlockerMemory extends CreepMemory {
+// ReclaimBlockerMemory is stored on creep.memory as any - not extending CreepMemory
+// due to state type conflict
+export interface ReclaimBlockerMemory {
   role: "RECLAIM_BLOCKER";
   room: string;
   targetRoom: string;
@@ -26,7 +28,7 @@ export interface ReclaimBlockerMemory extends CreepMemory {
 }
 
 export function run(creep: Creep): void {
-  var mem = creep.memory as ReclaimBlockerMemory;
+  var mem = creep.memory as unknown as ReclaimBlockerMemory;
 
   switch (mem.state) {
     case "TRAVELING":

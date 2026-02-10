@@ -23,7 +23,9 @@
  * Safety: If hostile combat creeps appear, flee to exit.
  */
 
-export interface DemolisherMemory extends CreepMemory {
+// DemolisherMemory is stored on creep.memory as any - not extending CreepMemory
+// due to state type conflict
+export interface DemolisherMemory {
   role: "DEMOLISHER";
   room: string;           // Spawning room
   targetRoom: string;
@@ -56,7 +58,7 @@ function getDemolishPriority(structureType: string): number {
 }
 
 export function run(creep: Creep): void {
-  var mem = creep.memory as DemolisherMemory;
+  var mem = creep.memory as unknown as DemolisherMemory;
 
   // --- Safety check: flee from combat creeps ---
   if (creep.room.name === mem.targetRoom) {

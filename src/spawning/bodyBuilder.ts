@@ -219,4 +219,6 @@ export const ROLE_MIN_COST: Record<string, number> = {
   ROAD_BUILDER: getMinEnergyCost("ROAD_BUILDER"),
   CONTROLLER_ATTACKER: getMinEnergyCost("CONTROLLER_ATTACKER"),
   DECOY: getMinEnergyCost("DECOY"),
+  DEMOLISHER: getMinEnergyCost("DEMOLISHER"),
+  RECLAIM_BLOCKER: getMinEnergyCost("RECLAIM_BLOCKER"),
 };

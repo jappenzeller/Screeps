@@ -148,7 +148,9 @@ type SpawnRole =
   | "RANGED_ATTACKER"
   | "COMBAT_HEALER"
   | "CONTROLLER_ATTACKER"
-  | "DECOY";
+  | "DECOY"
+  | "DEMOLISHER"
+  | "RECLAIM_BLOCKER";
 
 const ALL_ROLES: SpawnRole[] = [
   "PIONEER",
@@ -171,6 +173,8 @@ const ALL_ROLES: SpawnRole[] = [
   "COMBAT_HEALER",
   "CONTROLLER_ATTACKER",
   "DECOY",
+  "DEMOLISHER",
+  "RECLAIM_BLOCKER",
 ];
 
 export interface SpawnCandidate {
@@ -886,6 +890,10 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
       return controllerAttackerUtility(state);
     case "DECOY":
       return decoyUtility(state);
+    case "DEMOLISHER":
+      return demolisherUtility(state);
+    case "RECLAIM_BLOCKER":
+      return reclaimBlockerUtility(state);
     default:
       return 0;
   }
@@ -1796,6 +1804,72 @@ function decoyUtility(state: ColonyState): number {
   return 0;
 }
 
+/**
+ * Demolisher utility - spawns during conquest DEMOLISHING phase
+ *
+ * Only spawns when MilitaryManager has an active campaign in CLAIMING/SECURING
+ * with conquest phase DEMOLISHING.
+ * Priority: 55 (above remote mining, below home economy)
+ */
+function demolisherUtility(state: ColonyState): number {
+  if (state.energyCapacity < 800) return 0;
+
+  var mem = MilitaryManager.getMilitaryMemory();
+
+  for (var id in mem.campaigns) {
+    var campaign = mem.campaigns[id];
+    if (campaign.state !== "CLAIMING" && campaign.state !== "SECURING") continue;
+
+    var conquest = campaign.controllerAttack && (campaign.controllerAttack as any).conquest;
+    if (!conquest) continue;
+    if (conquest.phase === "DONE") continue;
+    if (conquest.phase !== "DEMOLISHING") continue;
+
+    // Check if this colony is in range
+    var route = Game.map.findRoute(state.room.name, campaign.targetRoom);
+    if (route === ERR_NO_PATH || !Array.isArray(route)) continue;
+    if (route.length > 6) continue;
+
+    // Check if we need more demolishers
+    if (conquest.demolishersAlive < 2) {
+      return 55; // Fixed priority — above remote mining
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Reclaim blocker utility - spawns during conquest BLOCKING phase
+ *
+ * Only spawns when enemy CLAIM creeps are detected trying to reclaim
+ * a fallen controller.
+ * Priority: 70 (high — blocking reclaim is critical)
+ */
+function reclaimBlockerUtility(state: ColonyState): number {
+  if (state.energyCapacity < 700) return 0;
+
+  var mem = MilitaryManager.getMilitaryMemory();
+
+  for (var id in mem.campaigns) {
+    var campaign = mem.campaigns[id];
+
+    var conquest = campaign.controllerAttack && (campaign.controllerAttack as any).conquest;
+    if (!conquest) continue;
+    if (conquest.phase !== "BLOCKING") continue;
+    if (conquest.blockerAlive) continue;
+
+    // Check range
+    var route = Game.map.findRoute(state.room.name, campaign.targetRoom);
+    if (route === ERR_NO_PATH || !Array.isArray(route)) continue;
+    if (route.length > 6) continue;
+
+    return 70; // High — blocking is critical
+  }
+
+  return 0;
+}
+
 // ============================================
 // Body Building Functions
 // ============================================
@@ -2096,6 +2170,55 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
             campaignId: cid,
           } as Partial<CreepMemory>;
         }
+      }
+      return base;
+    }
+
+    case "DEMOLISHER": {
+      // Find the campaign in CLAIMING/SECURING phase with DEMOLISHING conquest
+      var demMilMem = MilitaryManager.getMilitaryMemory();
+      for (var demCid in demMilMem.campaigns) {
+        var demCamp = demMilMem.campaigns[demCid];
+        if (demCamp.state !== "CLAIMING" && demCamp.state !== "SECURING") continue;
+
+        var conquest = demCamp.controllerAttack && (demCamp.controllerAttack as any).conquest;
+        if (!conquest || conquest.phase !== "DEMOLISHING") continue;
+
+        var demRoute = Game.map.findRoute(state.room.name, demCamp.targetRoom);
+        if (demRoute === ERR_NO_PATH || !Array.isArray(demRoute) || demRoute.length > 6) {
+          continue;
+        }
+        return {
+          ...base,
+          targetRoom: demCamp.targetRoom,
+          campaignId: demCid,
+          state: "TRAVELING",
+          targetId: undefined,
+        } as Partial<CreepMemory>;
+      }
+      return base;
+    }
+
+    case "RECLAIM_BLOCKER": {
+      // Find the campaign in conquest BLOCKING phase
+      var blkMilMem = MilitaryManager.getMilitaryMemory();
+      for (var blkCid in blkMilMem.campaigns) {
+        var blkCamp = blkMilMem.campaigns[blkCid];
+
+        var blkConquest = blkCamp.controllerAttack && (blkCamp.controllerAttack as any).conquest;
+        if (!blkConquest || blkConquest.phase !== "BLOCKING") continue;
+        if (blkConquest.blockerAlive) continue;
+
+        var blkRoute = Game.map.findRoute(state.room.name, blkCamp.targetRoom);
+        if (blkRoute === ERR_NO_PATH || !Array.isArray(blkRoute) || blkRoute.length > 6) {
+          continue;
+        }
+        return {
+          ...base,
+          targetRoom: blkCamp.targetRoom,
+          campaignId: blkCid,
+          state: "TRAVELING",
+        } as Partial<CreepMemory>;
       }
       return base;
     }

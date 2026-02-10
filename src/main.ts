@@ -36,6 +36,7 @@ import { DecisionLogger, registerDecisionCommands } from "./logging/DecisionLogg
 import * as MilitaryManager from "./military/MilitaryManager";
 import { drawMilitaryVisuals } from "./military/MilitaryVisuals";
 import { checkAntiDowngrade } from "./military/AntiDowngrade";
+import { runFullRecovery } from "./military/CampaignRecovery";
 
 // One-time initialization
 declare const global: { [key: string]: unknown };
@@ -44,6 +45,10 @@ if (!global._initialized) {
   logger.setLevel(CONFIG.LOG_LEVEL);
   registerConsoleCommands();
   registerDecisionCommands();
+
+  // Recover military campaigns after global reset
+  runFullRecovery();
+
   global._initialized = true;
   console.log("=== Screeps Bot Initialized ===");
 }

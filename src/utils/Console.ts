@@ -15,6 +15,7 @@ import { getIntegrationData } from "../empire/IntegrationManager";
 import * as MilitaryManager from "../military/MilitaryManager";
 import * as CounterIntel from "../military/CounterIntel";
 import * as CampaignChain from "../military/CampaignChain";
+import * as CampaignEventLog from "../military/CampaignEventLog";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -122,6 +123,8 @@ military.escort(id)  - Request escort duo for campaign
 military.history()   - Show campaign history and stats
 military.intel(id)   - Show counter-intelligence report for campaign
 military.targets()   - Evaluate potential next campaign targets
+military.timeline(id) - Show chronological event log for campaign
+military.conquest(id) - Show post-conquest demolish/claim status
 military.cleanup()   - Remove completed campaigns from memory
 `);
   };
@@ -2061,6 +2064,73 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     targets: function() {
       var targets = CampaignChain.evaluateTargets();
       console.log(CampaignChain.displayTargets(targets));
+      return "OK";
+    },
+
+    timeline: function(campaignId?: string) {
+      var mem = (Memory as any).military;
+      if (!mem || !mem.campaigns) {
+        console.log("No campaigns");
+        return "OK";
+      }
+
+      if (!campaignId) {
+        // Show first active campaign
+        for (var id in mem.campaigns) {
+          if (mem.campaigns[id].state === "COMPLETE" ||
+              mem.campaigns[id].state === "ABORTED") continue;
+          campaignId = id;
+          break;
+        }
+      }
+
+      if (!campaignId) {
+        console.log("No active campaigns");
+        return "OK";
+      }
+
+      var campaign = mem.campaigns[campaignId];
+      if (!campaign) return "Campaign not found: " + campaignId;
+
+      var lines = CampaignEventLog.getTimeline(campaign, 30);
+
+      console.log("=== Timeline: " + campaignId + " (" + campaign.targetRoom + ") ===");
+      for (var i = 0; i < lines.length; i++) {
+        console.log(lines[i]);
+      }
+
+      return "OK";
+    },
+
+    conquest: function(campaignId?: string) {
+      var mem = (Memory as any).military;
+      if (!mem || !mem.campaigns) {
+        console.log("No campaigns");
+        return "OK";
+      }
+
+      for (var id in mem.campaigns) {
+        var campaign = mem.campaigns[id];
+        if (campaignId && id !== campaignId) continue;
+
+        var conquest = campaign.controllerAttack &&
+                       campaign.controllerAttack.conquest;
+        if (!conquest) {
+          if (!campaignId) continue; // Skip campaigns without conquest state
+          console.log("[" + id + "] No conquest state (campaign in " + campaign.state + ")");
+          continue;
+        }
+
+        console.log("[" + id + "] " + campaign.targetRoom + " — " + conquest.phase);
+        console.log("  Structures left: " + conquest.structuresRemaining);
+        console.log("  Spawns clear: " + conquest.spawnsDestroyed +
+          " | Towers clear: " + conquest.towersDestroyed);
+        console.log("  Demolishers: " + conquest.demolishersAlive +
+          " (sent: " + conquest.demolishersSent + ")");
+        console.log("  Blocker alive: " + conquest.blockerAlive);
+        console.log("  Claim triggered: " + conquest.claimTriggered);
+      }
+
       return "OK";
     },
 

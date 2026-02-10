@@ -89,6 +89,25 @@ export function drawMilitaryVisuals(): void {
       );
     }
 
+    // --- Conquest overlay ---
+    var conquest = attack.conquest;
+    if (conquest && (campaign.state === "CLAIMING" || campaign.state === "SECURING")) {
+      var cY = 4;
+      visual.text(
+        "CONQUEST: " + conquest.phase,
+        1, cY,
+        { align: "left", font: "0.6 monospace", color: "#44ff44" }
+      );
+      visual.text(
+        "Structures: " + conquest.structuresRemaining +
+        " | Demolishers: " + conquest.demolishersAlive +
+        " | Spawns:" + (conquest.spawnsDestroyed ? "Y" : "N") +
+        " Towers:" + (conquest.towersDestroyed ? "Y" : "N"),
+        1, cY + 1,
+        { align: "left", font: "0.45 monospace", color: "#88ff88" }
+      );
+    }
+
     // --- Stats footer ---
     var stats = attack.stats;
     if (stats) {
