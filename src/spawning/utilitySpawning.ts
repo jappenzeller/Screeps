@@ -1001,6 +1001,18 @@ function haulerUtility(deficit: number, state: ColonyState): number {
  * - Infrastructure (builders) takes priority over upgrading
  */
 function upgraderUtility(deficit: number, state: ColonyState): number {
+  // RCL 1 override: FIRST - before any other checks including deficit.
+  // At RCL 1, upgrading is the #1 priority to unlock extensions/containers.
+  // Target calculation sets upgraderTarget=0 without controller container,
+  // so deficit is 0 and the normal path would return 0 immediately.
+  if (state.rcl <= 1) {
+    var existingUpgradersRcl1 = state.counts.UPGRADER || 0;
+    if (existingUpgradersRcl1 >= 1) {
+      return 5; // Already have one, low priority for second
+    }
+    return 80; // First upgrader: high priority
+  }
+
   // Pioneer phase: pioneers upgrade, not specialists
   if (isPioneerPhase(state.room)) return 0;
 
@@ -1047,19 +1059,6 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
 
   const hasStorage = !!state.room.storage;
   const energy = getEnergyState(state.room);
-
-  // RCL 1 override: ALWAYS allow at least 1 upgrader.
-  // Getting to RCL 2 costs only 200 energy and is the most critical milestone.
-  // Budget checks at RCL 1 cause deadlocks where builders consume all income
-  // and the colony can never progress.
-  if (state.rcl <= 1) {
-    var existingUpgradersRcl1 = state.counts.UPGRADER || 0;
-    if (existingUpgradersRcl1 >= 1) {
-      return 5; // Already have one, low priority for second
-    }
-    // First upgrader at RCL 1: high priority, skip all budget checks
-    return 80;
-  }
 
   // Young colony budget check (RCL 2-3 without storage)
   // Prevent spawning upgraders that income can't sustain
