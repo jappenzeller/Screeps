@@ -765,6 +765,13 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     upgraderTarget = rcl < 8 ? Math.min(rcl, 3) : 1;
   }
 
+  // FLOOR: RCL 1-3 without storage MUST have upgrader target >= 1
+  // This is non-negotiable — without upgrading, colony can never progress.
+  // Safety net in case any conditional logic above failed.
+  if (isEarlyColony && upgraderTarget < 1) {
+    upgraderTarget = 1;
+  }
+
   // Pioneer target: only during pioneer phase
   var pioneerTarget = 0;
   if (isPioneerPhase(room)) {
@@ -1010,23 +1017,23 @@ function haulerUtility(deficit: number, state: ColonyState): number {
  * - Infrastructure (builders) takes priority over upgrading
  */
 function upgraderUtility(deficit: number, state: ColonyState): number {
+  // RCL 1-3 without storage: ALWAYS allow first upgrader.
+  // This bypass must be FIRST — before pioneer check, before deficit check,
+  // before budget check, before EVERYTHING. Budget checks create deadlocks
+  // where builders/haulers consume all income and upgraders never spawn,
+  // permanently stalling RCL progression.
+  var hasStorageEarly = !!state.room.storage;
+  if (state.rcl <= 3 && !hasStorageEarly) {
+    var existingUpgradersEarly = state.counts.UPGRADER || 0;
+    if (existingUpgradersEarly === 0) {
+      return 80; // First upgrader: high priority, skip ALL other checks
+    }
+    // Have 1+ upgrader — continue to normal logic for 2nd+
+    // but the budget check below will be skipped for early colonies
+  }
+
   // Pioneer phase: pioneers upgrade, not specialists
   if (isPioneerPhase(state.room)) return 0;
-
-  // RCL 1-2 override: FIRST - before deficit check.
-  // At RCL 1-2, upgrading is critical to unlock extensions/containers/storage.
-  // The target calculation may return 0 due to various gates, but we MUST
-  // have at least one upgrader to progress.
-  if (state.rcl <= 2) {
-    var existingUpgraders = state.counts.UPGRADER || 0;
-    if (existingUpgraders >= 2) {
-      return 0; // Already have enough for early RCL
-    }
-    if (existingUpgraders >= 1) {
-      return 5; // Already have one, low priority for second
-    }
-    return 80; // First upgrader: high priority
-  }
 
   if (deficit <= 0) return 0;
 
@@ -1072,20 +1079,16 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   const hasStorage = !!state.room.storage;
   const energy = getEnergyState(state.room);
 
-  // Young colony budget check (RCL 2-3 without storage)
-  // Prevent spawning upgraders that income can't sustain
-  if (!hasStorage && state.rcl <= 3) {
+  // Young colony budget check (RCL 2-3 without storage) — for 2nd+ upgrader ONLY
+  // First upgrader is guaranteed by the bypass at the top of this function.
+  // This check only limits spawning additional upgraders beyond the first.
+  var existingUpgradersBudget = state.counts.UPGRADER || 0;
+  if (!hasStorage && state.rcl <= 3 && existingUpgradersBudget >= 1) {
     const budget = getEnergyBudget(state);
-    const existingUpgraders = state.counts.UPGRADER || 0;
 
-    // REACTIVE: If economy is already in deficit, limit to 1 upgrader
-    // (to prevent controller downgrade, but don't add to the problem)
+    // REACTIVE: If economy is already in deficit, don't spawn 2nd upgrader
     if (budget.availableBudget < 0 && energy.stored < 5000) {
-      if (existingUpgraders >= 1) {
-        return 0; // Already have 1 upgrader, don't spawn more during deficit
-      }
-      // Allow spawning 1 upgrader with low priority to prevent downgrade
-      return 5;
+      return 0; // Already have 1 upgrader, don't spawn more during deficit
     }
 
     // PROACTIVE: Check if a new upgrader would push us into deficit
@@ -1159,21 +1162,20 @@ function builderUtility(deficit: number, state: ColonyState): number {
   const energy = getEnergyState(state.room);
   const hasStorage = !!state.room.storage;
 
-  // Young colony budget check (RCL 1-3 without storage)
-  // Prevent spawning builders that income can't sustain
+  // Young colony budget check (RCL 1-3 without storage) — for 2nd+ builder ONLY
+  // First builder is ALWAYS allowed at RCL 1-3. Extensions, containers, and towers
+  // are required to progress. Budget checks on the first builder create death spirals.
   if (!hasStorage && state.rcl <= 3) {
-    const existingBuilders = state.counts.BUILDER || 0;
+    var existingBuilders = state.counts.BUILDER || 0;
 
-    // BYPASS: At RCL 1-2, always allow first builder for critical infrastructure
-    // Extensions and containers are required to progress - blocking builders = death spiral
-    // Skip budget check for the first builder at very early RCL
-    if (state.rcl <= 2 && existingBuilders === 0) {
-      // Allow first builder regardless of budget
+    // BYPASS: At RCL 1-3 without storage, always allow first builder
+    if (existingBuilders === 0) {
+      // Allow first builder regardless of budget — skip entire budget block
     } else {
+      // Budget check for 2nd+ builder only
       const budget = getEnergyBudget(state);
 
-      // REACTIVE: If economy is already in deficit, suppress builder spawning entirely
-      // This catches cases where existing builders are burning more than income
+      // REACTIVE: If economy is already in deficit, suppress additional builders
       if (budget.availableBudget < 0 && energy.stored < 5000) {
         return 0; // Economy is hemorrhaging, don't spawn more consumers
       }
