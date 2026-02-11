@@ -741,15 +741,17 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     haulerTarget = Math.max(haulerTarget, 2);
   }
 
-  // Upgrader target: milestone-gated
+  // Upgrader target: always need upgraders to progress RCL
+  // Early colonies: at least 1 upgrader (can use source containers or dropped energy)
+  // Mature colonies: scale with RCL
   let upgraderTarget = 0;
   if (isEarlyColony) {
-    if (!m.hasControllerContainer) {
-      upgraderTarget = 0; // No controller container = upgraders ZZZ
-    } else if (m.allExtensions) {
+    // Early colony (RCL 1-3, no storage): always have at least 1 upgrader
+    // Upgraders can pick up energy from source containers or dropped resources
+    if (m.allExtensions) {
       upgraderTarget = Math.min(rcl, 3); // Infrastructure done, push RCL
     } else {
-      upgraderTarget = 1; // Building extensions, limit upgraders
+      upgraderTarget = 1; // Building extensions or early RCL, have 1 upgrader
     }
   } else {
     // RCL 4+ or has storage: normal scaling
