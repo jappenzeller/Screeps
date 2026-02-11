@@ -1010,20 +1010,23 @@ function haulerUtility(deficit: number, state: ColonyState): number {
  * - Infrastructure (builders) takes priority over upgrading
  */
 function upgraderUtility(deficit: number, state: ColonyState): number {
-  // RCL 1 override: FIRST - before any other checks including deficit.
-  // At RCL 1, upgrading is the #1 priority to unlock extensions/containers.
-  // Target calculation sets upgraderTarget=0 without controller container,
-  // so deficit is 0 and the normal path would return 0 immediately.
-  if (state.rcl <= 1) {
-    var existingUpgradersRcl1 = state.counts.UPGRADER || 0;
-    if (existingUpgradersRcl1 >= 1) {
+  // Pioneer phase: pioneers upgrade, not specialists
+  if (isPioneerPhase(state.room)) return 0;
+
+  // RCL 1-2 override: FIRST - before deficit check.
+  // At RCL 1-2, upgrading is critical to unlock extensions/containers/storage.
+  // The target calculation may return 0 due to various gates, but we MUST
+  // have at least one upgrader to progress.
+  if (state.rcl <= 2) {
+    var existingUpgraders = state.counts.UPGRADER || 0;
+    if (existingUpgraders >= 2) {
+      return 0; // Already have enough for early RCL
+    }
+    if (existingUpgraders >= 1) {
       return 5; // Already have one, low priority for second
     }
     return 80; // First upgrader: high priority
   }
-
-  // Pioneer phase: pioneers upgrade, not specialists
-  if (isPioneerPhase(state.room)) return 0;
 
   if (deficit <= 0) return 0;
 
