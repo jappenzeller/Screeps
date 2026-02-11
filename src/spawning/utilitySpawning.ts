@@ -1048,7 +1048,20 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   const hasStorage = !!state.room.storage;
   const energy = getEnergyState(state.room);
 
-  // Young colony budget check (RCL 1-3 without storage)
+  // RCL 1 override: ALWAYS allow at least 1 upgrader.
+  // Getting to RCL 2 costs only 200 energy and is the most critical milestone.
+  // Budget checks at RCL 1 cause deadlocks where builders consume all income
+  // and the colony can never progress.
+  if (state.rcl <= 1) {
+    var existingUpgradersRcl1 = state.counts.UPGRADER || 0;
+    if (existingUpgradersRcl1 >= 1) {
+      return 5; // Already have one, low priority for second
+    }
+    // First upgrader at RCL 1: high priority, skip all budget checks
+    return 80;
+  }
+
+  // Young colony budget check (RCL 2-3 without storage)
   // Prevent spawning upgraders that income can't sustain
   if (!hasStorage && state.rcl <= 3) {
     const budget = getEnergyBudget(state);
