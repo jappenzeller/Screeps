@@ -75,8 +75,10 @@ export class SmartRoadPlanner {
     const hotspots = this.monitor.getHotspots(10);
 
     if (hotspots.length === 0 || hotspots[0].visits < MIN_VISITS_FOR_ROAD) {
-      // Fallback to static planning if no traffic data or low traffic
-      return this.planStaticRoads(maxToPlace);
+      // No traffic data yet — don't build roads speculatively.
+      // Wait for traffic monitor to accumulate real usage data.
+      // Static planning wastes builder energy on paths that may not be optimal.
+      return 0;
     }
 
     // Build roads at highest-traffic tiles first
@@ -179,7 +181,11 @@ export class SmartRoadPlanner {
 
   private shouldPlanRoads(): boolean {
     const rcl = this.room.controller ? this.room.controller.level : 0;
-    if (rcl < 3) return false;
+
+    // Don't build roads until RCL 4 with storage
+    // Pre-storage, builder energy is better spent on upgrades
+    if (rcl < 4) return false;
+    if (!this.room.storage) return false;
 
     // Extensions should be mostly done first
     const maxExt = CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION][rcl];
