@@ -828,75 +828,177 @@ export class ColonyManager {
     var mem = Memory.colonies && Memory.colonies[this.roomName];
     if (!mem || !mem.remotes) return;
 
-    var derived = this.deriveRemoteTargets();
+    // Only auto-discover remotes at RCL 4+ (remote mining unlocks at RCL 4)
+    var room = Game.rooms[this.roomName];
+    var rcl = room && room.controller ? room.controller.level : 0;
+    if (rcl < 4) return;
+
+    var candidates = this.deriveAllRemoteTargets();
     var added: string[] = [];
 
-    // Only auto-add new distance-1 rooms (don't remove existing)
-    for (var i = 0; i < derived.length; i++) {
-      var roomName = derived[i];
-      if (!mem.remotes[roomName]) {
-        var intel = Memory.intel && Memory.intel[roomName];
-        var sources = intel && intel.sources ? intel.sources.length : 2;
+    for (var i = 0; i < candidates.length; i++) {
+      var candidate = candidates[i];
+      // Don't overwrite existing remotes (preserves manual config/pauses)
+      if (mem.remotes[candidate.roomName]) continue;
 
-        mem.remotes[roomName] = {
-          room: roomName,
-          homeColony: this.roomName,
-          distance: 1,
-          sources: sources,
-          active: true,
-          activatedAt: Game.time,
-          miners: [],
-          haulers: [],
-        };
-        added.push(roomName);
-      }
+      mem.remotes[candidate.roomName] = {
+        room: candidate.roomName,
+        homeColony: this.roomName,
+        distance: candidate.distance,
+        via: candidate.via,
+        sources: candidate.sources,
+        active: true,
+        activatedAt: Game.time,
+        miners: [],
+        haulers: [],
+      };
+      added.push(candidate.roomName + "(D" + candidate.distance + ")");
     }
 
     if (added.length > 0) {
-      console.log("[Colony] " + this.roomName + " added remotes: " + added.join(", "));
+      console.log("[Colony] " + this.roomName + " auto-added remotes: " + added.join(", "));
     }
+  }
+
+  /**
+   * Remote candidate with metadata for distance and path
+   */
+  private deriveAllRemoteTargets(): Array<{
+    roomName: string;
+    distance: number;
+    via?: string;
+    sources: number;
+  }> {
+    var homeRoom = this.roomName;
+    var exits = Game.map.describeExits(homeRoom);
+    if (!exits) return [];
+
+    var intel = Memory.intel || {};
+    var firstSpawn = Object.values(Game.spawns)[0];
+    var myUsername = firstSpawn && firstSpawn.owner
+      ? firstSpawn.owner.username
+      : "";
+
+    var candidates: Array<{
+      roomName: string;
+      distance: number;
+      via?: string;
+      sources: number;
+    }> = [];
+    var distance1Rooms: string[] = [];
+
+    // === Distance 1: all safe adjacent rooms with sources ===
+    for (var dir in exits) {
+      var roomName = exits[dir as ExitKey];
+      if (!roomName) continue;
+
+      if (!this.isValidRemoteTarget(roomName, myUsername, intel)) continue;
+
+      var ri = intel[roomName];
+      var sources = ri && ri.sources ? ri.sources.length : 0;
+      if (sources === 0) continue;
+
+      candidates.push({
+        roomName: roomName,
+        distance: 1,
+        sources: sources,
+      });
+      distance1Rooms.push(roomName);
+    }
+
+    // === Distance 2: rooms beyond adjacent, require 2 sources ===
+    for (var i = 0; i < distance1Rooms.length; i++) {
+      var viaRoom = distance1Rooms[i];
+      var viaExits = Game.map.describeExits(viaRoom);
+      if (!viaExits) continue;
+
+      for (var dir2 in viaExits) {
+        var d2Room = viaExits[dir2 as ExitKey];
+        if (!d2Room) continue;
+
+        // Skip if it's the home room or already a distance-1 target
+        if (d2Room === homeRoom) continue;
+        if (distance1Rooms.indexOf(d2Room) !== -1) continue;
+        // Skip if already in candidates (reachable via different path)
+        if (candidates.some(function(c) { return c.roomName === d2Room; })) continue;
+
+        if (!this.isValidRemoteTarget(d2Room, myUsername, intel)) continue;
+
+        var ri2 = intel[d2Room];
+        var sources2 = ri2 && ri2.sources ? ri2.sources.length : 0;
+
+        // Distance 2 must have 2 sources to be worth the hauler cost
+        if (sources2 < 2) continue;
+
+        // Verify actual pathability using Game.map.findRoute
+        var route = Game.map.findRoute(homeRoom, d2Room, {
+          routeCallback: function(checkRoom: string) {
+            // Avoid owned rooms (not ours)
+            var roomIntel = intel[checkRoom];
+            if (roomIntel && roomIntel.owner && roomIntel.owner !== myUsername) {
+              return Infinity; // blocked
+            }
+            // Avoid SK rooms
+            if (roomIntel && roomIntel.roomType === "sourceKeeper") {
+              return Infinity;
+            }
+            return 1; // normal cost
+          }
+        });
+
+        // Route must exist and be exactly 2 hops
+        if (route === ERR_NO_PATH) continue;
+        if ((route as any).length !== 2) continue;
+
+        // Determine via room from the route
+        var actualVia = (route as Array<{exit: ExitConstant, room: string}>)[0].room;
+
+        candidates.push({
+          roomName: d2Room,
+          distance: 2,
+          via: actualVia,
+          sources: sources2,
+        });
+      }
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Check if a room is a valid remote mining target
+   */
+  private isValidRemoteTarget(roomName: string, myUsername: string, intel: Record<string, any>): boolean {
+    var ri = intel[roomName];
+
+    // Must have intel
+    if (!ri || !ri.lastScanned) return false;
+
+    // Skip rooms without sources
+    if (!ri.sources || ri.sources.length === 0) return false;
+
+    // Skip source keeper rooms
+    if (ri.roomType === "sourceKeeper") return false;
+
+    // Skip highway rooms (no controller)
+    if (ri.roomType === "highway" || ri.roomType === "center") return false;
+
+    // Skip owned rooms (not ours)
+    if (ri.owner && ri.owner !== myUsername) return false;
+
+    // Skip rooms reserved by others
+    if (ri.reservation && ri.reservation.username !== myUsername) return false;
+
+    return true;
   }
 
   /**
    * Derive valid remote mining targets from exits + Memory.intel.
    * Used for initial population and periodic re-sync.
+   * Backward compatibility wrapper for deriveAllRemoteTargets.
    */
   private deriveRemoteTargets(): string[] {
-    const homeRoom = this.roomName;
-    const exits = Game.map.describeExits(homeRoom);
-    if (!exits) return [];
-
-    const intel = Memory.intel || {};
-    const firstSpawn = Object.values(Game.spawns)[0];
-    const myUsername = firstSpawn && firstSpawn.owner
-      ? firstSpawn.owner.username
-      : "";
-
-    const targets: string[] = [];
-
-    for (const dir in exits) {
-      const roomName = exits[dir as ExitKey];
-      if (!roomName) continue;
-
-      const ri = intel[roomName];
-      if (!ri || !ri.lastScanned) continue;
-
-      // Skip rooms without sources
-      if (!ri.sources || ri.sources.length === 0) continue;
-
-      // Skip source keeper rooms
-      if (ri.roomType === "sourceKeeper") continue;
-
-      // Skip owned rooms
-      if (ri.owner && ri.owner !== myUsername) continue;
-
-      // Skip rooms reserved by others
-      if (ri.reservation && ri.reservation.username !== myUsername) continue;
-
-      targets.push(roomName);
-    }
-
-    return targets;
+    return this.deriveAllRemoteTargets().map(function(c) { return c.roomName; });
   }
 
   /**
