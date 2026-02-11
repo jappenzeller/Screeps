@@ -542,7 +542,7 @@ function getColonyState(room: Room): ColonyState {
   });
   var hasSourceContainers = sourceContainers.length > 0;
 
-  // Calculate actual energy income from FUNCTIONAL harvesters only
+  // Calculate actual energy income from FUNCTIONAL harvesters and pioneers
   // A harvester with 0 CARRY and no source containers contributes 0 income
   let energyIncome = 0;
   for (const c of creeps) {
@@ -552,6 +552,13 @@ function getColonyState(room: Room): ColonyState {
       // Only count income if energy can actually enter the economy
       if (workParts > 0 && (carryParts > 0 || hasSourceContainers)) {
         energyIncome += workParts * 2;
+      }
+    } else if (c.memory.role === "PIONEER") {
+      // Pioneers harvest ~40% of the time (rest is building/upgrading/traveling)
+      // They always have CARRY so energy enters economy
+      const workParts = c.getActiveBodyparts(WORK);
+      if (workParts > 0) {
+        energyIncome += workParts * 2 * 0.4;
       }
     }
   }
@@ -1152,19 +1159,28 @@ function builderUtility(deficit: number, state: ColonyState): number {
   // Young colony budget check (RCL 1-3 without storage)
   // Prevent spawning builders that income can't sustain
   if (!hasStorage && state.rcl <= 3) {
-    const budget = getEnergyBudget(state);
+    const existingBuilders = state.counts.BUILDER || 0;
 
-    // REACTIVE: If economy is already in deficit, suppress builder spawning entirely
-    // This catches cases where existing builders are burning more than income
-    if (budget.availableBudget < 0 && energy.stored < 5000) {
-      return 0; // Economy is hemorrhaging, don't spawn more consumers
-    }
+    // BYPASS: At RCL 1-2, always allow first builder for critical infrastructure
+    // Extensions and containers are required to progress - blocking builders = death spiral
+    // Skip budget check for the first builder at very early RCL
+    if (state.rcl <= 2 && existingBuilders === 0) {
+      // Allow first builder regardless of budget
+    } else {
+      const budget = getEnergyBudget(state);
 
-    // PROACTIVE: Check if a new builder would push us into deficit
-    // Builder burns 5 energy/WORK/tick at 50% uptime = 2.5 energy/tick
-    const estimatedBurn = 2.5;
-    if (!budget.canSustain(estimatedBurn)) {
-      return 0; // Can't afford another builder
+      // REACTIVE: If economy is already in deficit, suppress builder spawning entirely
+      // This catches cases where existing builders are burning more than income
+      if (budget.availableBudget < 0 && energy.stored < 5000) {
+        return 0; // Economy is hemorrhaging, don't spawn more consumers
+      }
+
+      // PROACTIVE: Check if a new builder would push us into deficit
+      // Builder burns 5 energy/WORK/tick at 50% uptime = 2.5 energy/tick
+      const estimatedBurn = 2.5;
+      if (!budget.canSustain(estimatedBurn)) {
+        return 0; // Can't afford another builder
+      }
     }
   }
 

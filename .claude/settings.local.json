@@ -111,7 +111,8 @@
       "Bash(powershell -ExecutionPolicy Bypass -File:*)",
       "Bash(aws cloudformation describe-stack-events:*)",
       "Bash(npm create:*)",
-      "Bash(aws s3 sync:*)"
+      "Bash(aws s3 sync:*)",
+      "Bash(aws s3 ls:*)"
     ]
   }
 }
