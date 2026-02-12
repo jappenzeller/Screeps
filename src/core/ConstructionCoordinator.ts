@@ -19,7 +19,7 @@ const CONSTRUCTION_PRIORITIES: ConstructionPriority[] = [
   { structureType: STRUCTURE_TOWER, priority: 3, minRCL: 3, maxConcurrentSites: 1 },
   { structureType: STRUCTURE_STORAGE, priority: 4, minRCL: 4, maxConcurrentSites: 1 },
   { structureType: STRUCTURE_LINK, priority: 4, minRCL: 5, maxConcurrentSites: 2 },
-  { structureType: STRUCTURE_ROAD, priority: 5, minRCL: 3, maxConcurrentSites: 5 },
+  // STRUCTURE_ROAD removed - handled by SmartRoadPlanner
   { structureType: STRUCTURE_TERMINAL, priority: 5, minRCL: 6, maxConcurrentSites: 1 },
   { structureType: STRUCTURE_LAB, priority: 6, minRCL: 6, maxConcurrentSites: 3 },
   { structureType: STRUCTURE_WALL, priority: 7, minRCL: 2, maxConcurrentSites: 5 },

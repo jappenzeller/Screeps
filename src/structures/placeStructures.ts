@@ -77,6 +77,7 @@ export function placeStructures(room: Room): void {
   // Priority order - place what's missing
   // Note: STRUCTURE_EXTENSION and STRUCTURE_CONTAINER are handled by
   // ExtensionPlanner and ContainerPlanner respectively (wired in main.ts)
+  // STRUCTURE_ROAD is handled by SmartRoadPlanner
   const structures: BuildableStructureConstant[] = [
     STRUCTURE_SPAWN,
     // STRUCTURE_EXTENSION - handled by ExtensionPlanner
@@ -87,7 +88,7 @@ export function placeStructures(room: Room): void {
     STRUCTURE_EXTRACTOR,
     STRUCTURE_LAB,
     // STRUCTURE_CONTAINER - handled by ContainerPlanner
-    STRUCTURE_ROAD,
+    // STRUCTURE_ROAD - handled by SmartRoadPlanner
   ];
 
   for (const type of structures) {
@@ -196,10 +197,7 @@ function findBuildPosition(
     return findLabPosition(room, terrain);
   }
 
-  // Roads: connect spawn to sources and controller
-  if (type === STRUCTURE_ROAD) {
-    return findRoadPosition(room, near, terrain);
-  }
+  // STRUCTURE_ROAD removed - handled by SmartRoadPlanner
 
   // Extensions: path-aware placement
   if (type === STRUCTURE_EXTENSION) {
@@ -389,39 +387,7 @@ function countNearbyExtensions(room: Room, x: number, y: number): number {
   return count;
 }
 
-function findRoadPosition(
-  room: Room,
-  spawnPos: RoomPosition,
-  terrain: RoomTerrain
-): { x: number; y: number } | null {
-  // Get path targets
-  const sources = room.find(FIND_SOURCES);
-  const controller = room.controller;
-  const targets: RoomPosition[] = [...sources.map((s) => s.pos)];
-  if (controller) targets.push(controller.pos);
-
-  // Find first path position that needs a road
-  for (const target of targets) {
-    const path = room.findPath(spawnPos, target, {
-      ignoreCreeps: true,
-      swampCost: 2,
-    });
-
-    for (const step of path) {
-      // Skip if already has road or site
-      const hasRoad =
-        room.lookForAt(LOOK_STRUCTURES, step.x, step.y).some((s) => s.structureType === STRUCTURE_ROAD);
-      const hasSite =
-        room.lookForAt(LOOK_CONSTRUCTION_SITES, step.x, step.y).some((s) => s.structureType === STRUCTURE_ROAD);
-
-      if (!hasRoad && !hasSite && isValidBuildPos(room, step.x, step.y, terrain)) {
-        return { x: step.x, y: step.y };
-      }
-    }
-  }
-
-  return null;
-}
+// findRoadPosition removed - roads handled by SmartRoadPlanner
 
 function isValidBuildPos(room: Room, x: number, y: number, terrain: RoomTerrain): boolean {
   if (x < 2 || x > 47 || y < 2 || y > 47) return false;
