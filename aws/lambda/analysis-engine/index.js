@@ -450,6 +450,9 @@ You are building a continuous understanding of this colony over time. Focus on:
 2. What has changed since the last observation?
 3. What correlations do you notice between metrics?
 4. What trends are developing?
+5. For healthy colonies: report on efficiency, resource trends, RCL progress rate, and stability metrics
+
+IMPORTANT: Always generate observations, even when everything is running smoothly. A stable, well-functioning colony is worth documenting - note what's working well, current efficiency metrics, and projected milestones.
 
 ${observationHistory ? `You have access to your previous observations below. Track patterns over time and note when things change.` : ""}
 ${hasCodeContext ? "You have access to the actual game code below. Reference specific code when relevant to your observations." : ""}`;
@@ -645,8 +648,10 @@ export async function handler(event) {
       const patterns = detectPatterns(snapshots, liveColony);
       console.log(`Detected ${patterns.length} patterns:`, patterns.map(p => p.id));
 
-      // Generate AI observations if patterns found OR enough data
-      if (patterns.length > 0 || snapshots.length >= 3) {
+      // Generate AI observations for ANY colony with data
+      // Even healthy colonies deserve observations about their state
+      const hasData = snapshots.length >= 1 || liveColony;
+      if (hasData) {
         try {
           const analysis = await analyzeWithClaude(roomName, snapshots, events, patterns, liveColony, signals, previousObservations);
           console.log(`Analysis for ${roomName}: ${analysis.observations?.length || 0} observations, ${analysis.patterns?.length || 0} patterns`);
@@ -674,11 +679,11 @@ export async function handler(event) {
           });
         }
       } else {
-        console.log(`Skipping AI analysis for ${roomName}: no patterns and insufficient data`);
+        console.log(`Skipping AI analysis for ${roomName}: no data available`);
         results.push({
           roomName,
           skipped: true,
-          reason: "No patterns detected and insufficient historical data",
+          reason: "No snapshots or live data available",
         });
       }
     }

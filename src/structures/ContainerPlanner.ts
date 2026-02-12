@@ -49,10 +49,17 @@ export class ContainerPlanner {
       }
     }
 
-    // Regenerate controller container position if missing and should exist (RCL 5+ with storage)
+    // Regenerate controller container position if missing and should exist (RCL 2+)
     // Handles rooms that had plans created before this position was added
     // Skip if controller already has a container
-    if (!plan.controller && this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
+    // Requires source containers to exist first (hauler economy must be online)
+    var sourceContainersExist = this.room.find(FIND_STRUCTURES, {
+      filter: function(s) {
+        return s.structureType === STRUCTURE_CONTAINER &&
+          s.pos.findInRange(FIND_SOURCES, 1).length > 0;
+      }
+    }).length > 0;
+    if (!plan.controller && this.room.controller && this.room.controller.level >= 2 && sourceContainersExist) {
       if (!ContainerPlanner.getControllerContainer(this.room)) {
         var controllerPos = this.findControllerContainerPosition();
         if (controllerPos) {
@@ -117,9 +124,10 @@ export class ContainerPlanner {
       }
     }
 
-    // Plan container near controller (RCL 5+ with storage, skip if already has one)
-    // Before storage exists, upgraders are better off collecting from source containers
-    if (this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
+    // Plan container near controller (RCL 2+, skip if already has one)
+    // This lets upgraders park at the controller instead of walking to source containers
+    // At RCL 5+ with links, the placeConstructionSites() check will skip if link exists
+    if (this.room.controller && this.room.controller.level >= 2) {
       if (!ContainerPlanner.getControllerContainer(this.room)) {
         const controllerPos = this.findControllerContainerPosition();
         if (controllerPos) {
@@ -243,9 +251,16 @@ export class ContainerPlanner {
       this.placeContainerSite(pos.x, pos.y);
     }
 
-    // Place controller container (RCL 5+ with storage) - only if controller doesn't already have one
+    // Place controller container (RCL 2+) - only if controller doesn't already have one
+    // Requires source containers first (hauler economy must be online to deliver)
     // Skip if controller link exists - links replace containers for upgrader energy
-    if (plan.controller && this.room.controller && this.room.controller.level >= 5 && this.room.storage) {
+    var hasSourceContainers = this.room.find(FIND_STRUCTURES, {
+      filter: function(s) {
+        return s.structureType === STRUCTURE_CONTAINER &&
+          s.pos.findInRange(FIND_SOURCES, 1).length > 0;
+      }
+    }).length > 0;
+    if (plan.controller && this.room.controller && this.room.controller.level >= 2 && hasSourceContainers) {
       if (!ContainerPlanner.getControllerContainer(this.room)) {
         // Check for controller link - skip container if link exists
         var controllerLinks = this.room.controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
