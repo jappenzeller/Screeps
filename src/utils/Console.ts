@@ -17,6 +17,7 @@ import * as CounterIntel from "../military/CounterIntel";
 import * as CampaignChain from "../military/CampaignChain";
 import * as CampaignEventLog from "../military/CampaignEventLog";
 import * as WaveCoordinator from "../military/WaveCoordinator";
+import * as TacticalSimulator from "../military/TacticalSimulator";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -133,6 +134,10 @@ military.waves()     - Show active wave status
 military.release(id) - Manually release a wave to attack
 military.abortWave(id) - Abort a wave attack
 military.raiders(id) - Show raider status (economic disruption creeps)
+military.simulate(room) - Simulate attack strategies (shows survival rates)
+military.simApproach(target, from, n) - Simulate wave of n from approach room
+military.towerDamage(room, x, y) - Check tower damage at a position
+military.intel(room) - Show fresh intel for a room
 `);
   };
 
@@ -2229,6 +2234,53 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
           " Kills:" + (mem.killCount || 0) +
           " Containers:" + (mem.containersDamaged || 0));
       }
+      return "OK";
+    },
+
+    // Tactical simulation commands
+    simulate: function(targetRoom: string) {
+      if (!targetRoom) {
+        console.log("Usage: military.simulate('E44N39')");
+        console.log("  Evaluates all approach strategies and survival rates");
+        console.log("  Run BEFORE starting a campaign to validate strategy");
+        return "Error: specify target room";
+      }
+
+      console.log(TacticalSimulator.simulate(targetRoom));
+      return "OK";
+    },
+
+    simApproach: function(targetRoom: string, approachRoom: string, waveSize?: number) {
+      if (!targetRoom || !approachRoom) {
+        console.log("Usage: military.simApproach('E44N39', 'E43N39', 3)");
+        console.log("  Simulates a wave attack from a specific approach room");
+        console.log("  waveSize: 1 for solo, 2-4 for waves (default 1)");
+        return "Error: specify target and approach rooms";
+      }
+
+      console.log(TacticalSimulator.simApproach(targetRoom, approachRoom, waveSize));
+      return "OK";
+    },
+
+    towerDamage: function(roomName: string, x: number, y: number) {
+      if (!roomName || x === undefined || y === undefined) {
+        console.log("Usage: military.towerDamage('E44N39', 6, 34)");
+        console.log("  Shows damage from each tower at the specified position");
+        return "Error: specify room name and coordinates";
+      }
+
+      console.log(TacticalSimulator.towerDamage(roomName, x, y));
+      return "OK";
+    },
+
+    roomIntel: function(roomName: string) {
+      if (!roomName) {
+        console.log("Usage: military.roomIntel('E44N39')");
+        console.log("  Shows current intel for a room (controller, towers, etc.)");
+        return "Error: specify room name";
+      }
+
+      console.log(TacticalSimulator.intel(roomName));
       return "OK";
     },
   };

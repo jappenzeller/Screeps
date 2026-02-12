@@ -14,6 +14,7 @@ import * as ConquestCoordinator from "./ConquestCoordinator";
 import * as CampaignRecovery from "./CampaignRecovery";
 import * as CampaignEventLog from "./CampaignEventLog";
 import * as WaveCoordinator from "./WaveCoordinator";
+import * as TacticalSimulator from "./TacticalSimulator";
 
 // ============================================
 // Types
@@ -42,6 +43,17 @@ export interface CampaignStats {
   campaignStartRCL: number;
 }
 
+export interface SimulationSummary {
+  ranAt: number;
+  bestStrategy: string;
+  bestApproach: string;
+  survivalRate: number;
+  estimatedCost: number;
+  estimatedDuration: number;
+  viable: boolean;
+  allStrategiesImpossible: boolean;
+}
+
 export interface ControllerAttackState {
   controllerPos: { x: number; y: number };
   approachDirection: "south" | "west" | "east" | "north";
@@ -59,6 +71,7 @@ export interface ControllerAttackState {
   defendersLastSeen: number;
   towerDrainNeeded: boolean;
   stats: CampaignStats;
+  simulation?: SimulationSummary;
 }
 
 export interface CampaignState {
@@ -325,14 +338,74 @@ export function createCampaign(params: CreateCampaignParams): string {
     return "ERROR";
   }
 
+  // === PRE-CAMPAIGN SIMULATION ===
+  // Run tactical simulation to validate attack feasibility
+  var simulationSummary: SimulationSummary | undefined;
+  var recommendedApproach: string | undefined;
+
+  var targetIntel = TacticalSimulator.buildIntelFromGame(params.targetRoom);
+  if (targetIntel && targetIntel.towers.length > 0) {
+    console.log("[Military] Running pre-campaign simulation for " + params.targetRoom + "...");
+
+    var approaches = TacticalSimulator.getApproachRooms(params.targetRoom);
+    var strategies = TacticalSimulator.evaluateAllStrategies(targetIntel, approaches);
+
+    // Find best viable strategy
+    var bestViable = strategies.find(function(s) { return s.viable; });
+    var allImpossible = strategies.every(function(s) { return !s.viable; });
+
+    if (allImpossible) {
+      console.log("[Military] ⚠ WARNING: ALL STRATEGIES SHOW 0% SURVIVAL");
+      console.log("[Military] Towers will kill attackers before reaching controller.");
+      console.log("[Military] Options:");
+      console.log("[Military]   1. Abort and find a different target");
+      console.log("[Military]   2. Continue anyway (will waste resources)");
+      console.log("[Military]   3. Use military.simulate('" + params.targetRoom + "') for details");
+      console.log("[Military] Campaign created but marked as HIGH RISK.");
+    } else if (bestViable) {
+      console.log("[Military] Best strategy: " + bestViable.name +
+        " (" + (bestViable.survivalRate * 100).toFixed(0) + "% survival)");
+      console.log("[Military] Estimated cost: " + bestViable.estimatedTotalCost +
+        " energy, ~" + Math.ceil(bestViable.estimatedDurationTicks / 3600 * 3) + " hours");
+      recommendedApproach = bestViable.approach;
+    }
+
+    // Store simulation summary
+    simulationSummary = {
+      ranAt: Game.time,
+      bestStrategy: bestViable ? bestViable.name : "NONE",
+      bestApproach: bestViable ? bestViable.approach : "unknown",
+      survivalRate: bestViable ? bestViable.survivalRate : 0,
+      estimatedCost: bestViable ? bestViable.estimatedTotalCost : Infinity,
+      estimatedDuration: bestViable ? bestViable.estimatedDurationTicks : Infinity,
+      viable: !allImpossible,
+      allStrategiesImpossible: allImpossible,
+    };
+  } else if (targetIntel && targetIntel.towers.length === 0) {
+    console.log("[Military] No towers detected — solo attacks should succeed.");
+    simulationSummary = {
+      ranAt: Game.time,
+      bestStrategy: "Solo (no towers)",
+      bestApproach: "any",
+      survivalRate: 1.0,
+      estimatedCost: 0,
+      estimatedDuration: 0,
+      viable: true,
+      allStrategiesImpossible: false,
+    };
+  } else {
+    console.log("[Military] No intel for " + params.targetRoom + " — simulation skipped.");
+    console.log("[Military] Simulation will run during SCOUTING phase when vision is acquired.");
+  }
+
   var id = "campaign_" + mem.nextCampaignId++;
 
   // Get target owner from intel or params
   var targetOwner = params.targetOwner || "unknown";
   if (targetOwner === "unknown") {
-    var intel = Memory.intel && Memory.intel[params.targetRoom];
-    if (intel && intel.owner) {
-      targetOwner = intel.owner;
+    var memIntel = Memory.intel && (Memory.intel as any)[params.targetRoom];
+    if (memIntel && memIntel.owner) {
+      targetOwner = memIntel.owner;
     }
   }
 
@@ -344,19 +417,34 @@ export function createCampaign(params: CreateCampaignParams): string {
     stateChangedAt: Game.time,
     createdAt: Game.time,
     targetOwner: targetOwner,
+    approachRoom: recommendedApproach,  // Auto-set from simulation
   };
 
   if (params.type === "CONTROLLER_ATTACK") {
+    // Determine approach direction from recommended approach room
+    var approachDir: "south" | "west" | "east" | "north" = "south";
+    if (recommendedApproach) {
+      var exits = Game.map.describeExits(params.targetRoom);
+      if (exits) {
+        if (exits[TOP] === recommendedApproach) approachDir = "north";
+        else if (exits[BOTTOM] === recommendedApproach) approachDir = "south";
+        else if (exits[LEFT] === recommendedApproach) approachDir = "west";
+        else if (exits[RIGHT] === recommendedApproach) approachDir = "east";
+      }
+    }
+
     campaign.controllerAttack = {
-      controllerPos: { x: 0, y: 0 },
-      approachDirection: "south",
+      controllerPos: targetIntel ? targetIntel.controllerPos : { x: 0, y: 0 },
+      approachDirection: approachDir,
       lastAttackTick: 0,
       attackCount: 0,
-      currentTargetRCL: 0,
-      currentTicksToDowngrade: 0,
+      currentTargetRCL: targetIntel ? targetIntel.controllerRCL : 0,
+      currentTicksToDowngrade: targetIntel ? targetIntel.controllerTimer : 0,
       estimatedTicksRemaining: 0,
       estimatedCyclesRemaining: 0,
-      towerPositions: [],
+      towerPositions: targetIntel ? targetIntel.towers.map(function(t) {
+        return { x: t.x, y: t.y, lastEnergy: t.energy };
+      }) : [],
       safeModeActive: false,
       safeModeEndsAt: 0,
       upgradeBlockedUntil: 0,
@@ -369,19 +457,27 @@ export function createCampaign(params: CreateCampaignParams): string {
         totalEnergySpent: 0,
         rclDowngrades: [],
         safeModeActivations: 0,
-        campaignStartTimer: 0,
-        campaignStartRCL: 0,
+        campaignStartTimer: targetIntel ? targetIntel.controllerTimer : 0,
+        campaignStartRCL: targetIntel ? targetIntel.controllerRCL : 0,
       },
+      simulation: simulationSummary,
     };
   }
 
   mem.campaigns[id] = campaign;
   mem.posture = "OFFENSIVE";
 
-  CampaignEventLog.log(campaign, "CAMPAIGN_CREATED",
-    "Target: " + params.targetRoom + " (" + targetOwner + ")");
+  var logMsg = "Target: " + params.targetRoom + " (" + targetOwner + ")";
+  if (simulationSummary) {
+    logMsg += " | Sim: " + simulationSummary.bestStrategy +
+      " (" + (simulationSummary.survivalRate * 100).toFixed(0) + "% survival)";
+  }
+  CampaignEventLog.log(campaign, "CAMPAIGN_CREATED", logMsg);
 
   console.log("[Military] Created campaign " + id + " targeting " + params.targetRoom);
+  if (recommendedApproach) {
+    console.log("[Military] Auto-selected approach: via " + recommendedApproach);
+  }
   return id;
 }
 
@@ -1365,6 +1461,21 @@ export function status(): string {
       // Show approach room if set
       if (campaign.approachRoom) {
         lines.push("  Approach: via " + campaign.approachRoom);
+      }
+
+      // Show simulation results
+      if (attack.simulation) {
+        var sim = attack.simulation;
+        var simAge = Game.time - sim.ranAt;
+        var survPct = (sim.survivalRate * 100).toFixed(0);
+        if (sim.allStrategiesImpossible) {
+          lines.push("  Simulation: ⚠ NO VIABLE STRATEGY (0% survival)");
+        } else {
+          lines.push("  Simulation: " + sim.bestStrategy + " (" + survPct + "% survival)");
+        }
+        if (simAge > 5000) {
+          lines.push("    (stale - ran " + simAge + " ticks ago)");
+        }
       }
 
       // Show escort duo status
