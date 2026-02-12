@@ -105,6 +105,19 @@ Monitors energy flow for utility spawning decisions:
 
 Gates structure placement by type and room phase. Ensures high-priority structures (containers, extensions) complete before lower-priority (roads).
 
+### MilitaryManager (src/military/MilitaryManager.ts)
+
+Coordinates offensive campaigns (controller attacks, room assaults). Uses TacticalSimulator for pre-attack validation to predict outcomes before committing resources.
+
+**Key Features:**
+
+- Campaign state machine (PLANNING → SCOUTING → ATTACKING → CLAIMING)
+- Pre-campaign simulation with automatic approach selection
+- Wave coordination for multi-creep attacks
+- Adaptation triggers (safe mode, defenders, tower drain)
+
+See [MILITARY_MANAGER_DESIGN.md](MILITARY_MANAGER_DESIGN.md) for full details.
+
 ## Colony Phases
 
 ```
@@ -243,6 +256,9 @@ src/
 │   ├── BootstrapManager.ts # Room bootstrap
 │   ├── ExpansionManager.ts # Empire expansion
 │   └── RoomEvaluator.ts    # Room scoring
+├── military/
+│   ├── MilitaryManager.ts  # Campaign coordinator
+│   └── TacticalSimulator.ts # Pre-attack simulation
 └── utils/
     ├── Console.ts          # Debug commands
     ├── AWSExporter.ts      # AWS integration

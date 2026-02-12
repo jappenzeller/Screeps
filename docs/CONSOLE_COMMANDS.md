@@ -195,6 +195,73 @@ integration("E44N37")    // Specific room
 // Shows: RCL, creep counts, stall detection, spawn directives
 ```
 
+## Military Commands
+
+### military.status()
+
+Show all campaigns and military posture.
+
+```javascript
+military.status()
+// Shows: Active campaigns, Target rooms, Progress
+```
+
+### military.attack(targetRoom, options?)
+
+Launch a controller attack campaign.
+
+```javascript
+military.attack("E44N39")
+military.attack("E44N39", { type: "CONTROLLER_ATTACK" })
+// Creates campaign and auto-selects best approach based on simulation
+```
+
+### military.simulate(targetRoom)
+
+Run tactical simulation for a target room.
+
+```javascript
+military.simulate("E44N39")
+// Shows: All 16 strategies (4 directions × 4 wave sizes)
+// Predicts survival rates, costs, and recommended approach
+```
+
+### military.simApproach(targetRoom, approachRoom, waveSize?)
+
+Test a specific approach strategy.
+
+```javascript
+military.simApproach("E44N39", "E45N39")       // Solo (default)
+military.simApproach("E44N39", "E45N39", 4)    // 4-creep wave
+// Shows: Path details, tower damage per tick, survival rate
+```
+
+### military.towerDamage(roomName, x, y)
+
+Calculate tower damage at a specific position.
+
+```javascript
+military.towerDamage("E44N39", 25, 25)
+// Shows: Total DPS from all towers at that position
+```
+
+### military.roomIntel(roomName)
+
+Show cached intel for a room.
+
+```javascript
+military.roomIntel("E44N39")
+// Shows: Controller, Towers, Owner, RCL
+```
+
+### military.abort(campaignId)
+
+Abort an active campaign.
+
+```javascript
+military.abort("campaign_1")
+```
+
 ## Defense Commands
 
 ### threats(roomName?)
@@ -314,6 +381,9 @@ checkSK("E45N36")
 | Expansion | `integration()` | Integration diagnostics |
 | Defense | `threats()` | Hostiles |
 | Defense | `safemode()` | Safe mode |
+| Military | `military.status()` | Campaign status |
+| Military | `military.attack("room")` | Launch attack |
+| Military | `military.simulate("room")` | Pre-attack simulation |
 | Debug | `moveStats()` | Movement |
 | Debug | `analyzeRoute(from, to)` | Route analysis |
 | Debug | `checkSK("room")` | SK room check |

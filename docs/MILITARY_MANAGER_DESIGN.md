@@ -93,6 +93,7 @@ With 3 CLAIM parts at 2300 energy cap:
 
 ```
 src/military/MilitaryManager.ts     — Top-level coordinator
+src/military/TacticalSimulator.ts   — Pre-attack simulation engine
 src/military/Campaign.ts            — Campaign state machine
 src/military/operations/ControllerAttack.ts  — The attack operation
 src/military/operations/TowerDrain.ts        — Decoy tower drain (backup)
@@ -770,7 +771,73 @@ Active Campaigns: 1
 
 ---
 
-## Component 7: Movement Integration
+## Component 7: TacticalSimulator (Pre-Attack Validation)
+
+The TacticalSimulator (`src/military/TacticalSimulator.ts`) predicts attack outcomes before committing resources. It runs simulations to determine the best approach direction and wave size.
+
+### Core Functions
+
+```typescript
+// Tower damage at a given range (Screeps formula)
+towerDamageAtRange(range: number): number
+// 600 at range ≤5, linear falloff to 150 at range ≥20
+
+// Total tower damage at a position
+calcTowerDamageAtPos(x: number, y: number, towers: TowerInfo[]): number
+
+// Simulate single creep approach
+simulateApproach(params: ApproachParams): ApproachResult
+// Returns: { survived, ticksAlive, damageTaken, pathLength }
+
+// Simulate wave attack with distributed damage
+simulateWave(params: WaveParams): WaveResult
+// Returns: { survived, ticksSurvived, totalDamage, survivors[] }
+
+// Evaluate all 16 strategies (4 directions × 4 wave sizes)
+evaluateAllStrategies(intel: TargetIntel, approachRooms: Record<string, string>): StrategySimulation[]
+```
+
+### Strategy Evaluation
+
+The simulator tests 16 combinations:
+
+- **4 Approach Directions**: north, south, east, west (via adjacent rooms)
+- **4 Wave Sizes**: 1 (solo), 2 (duo), 4 (squad), 8 (wave)
+
+Each strategy is scored by:
+
+1. **Survival Rate**: What % of creeps survive to reach controller?
+2. **Estimated Cost**: Energy cost × number of waves needed
+3. **Duration**: Ticks to complete downgrade
+
+### Pre-Campaign Integration
+
+When `createCampaign()` is called:
+
+1. Simulator builds intel from visible room or cached Memory.intel
+2. Evaluates all 16 strategies
+3. Auto-selects best viable approach room
+4. Warns if ALL strategies show 0% survival (attack is impossible)
+5. Stores simulation summary in campaign state for reference
+
+### Console Commands
+
+```javascript
+military.simulate("E44N39")          // Full strategy comparison
+military.simApproach("E44N39", "E45N39", 4)  // Specific approach test
+military.towerDamage("E44N39", 25, 25)       // Damage at position
+military.roomIntel("E44N39")                 // View cached intel
+```
+
+### Design Principles
+
+- **Pure Functions**: No game state mutations, can run offline
+- **Warn but Don't Block**: Impossible attacks still allowed (user override)
+- **Auto-Selection**: Best approach chosen automatically, not hardcoded
+
+---
+
+## Component 8: Movement Integration
 
 CONTROLLER_ATTACKER creeps need to route through E45N39 to reach E44N39. The route is:
 
@@ -784,7 +851,7 @@ However, inside E44N39, the creep should pathfind AWAY from the base (north of r
 
 ---
 
-## Component 8: Multi-Colony Support
+## Component 9: Multi-Colony Support
 
 Once E44N37 reaches RCL 4+, it can contribute CLAIM creeps too:
 
