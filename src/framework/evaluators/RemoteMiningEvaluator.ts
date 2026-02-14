@@ -22,7 +22,7 @@ import {
   RemoteAction,
   RoomIntelSnapshot,
 } from "../types";
-import { BaseEvaluator } from "../Evaluator";
+import { BaseEvaluator } from "../BaseEvaluator";
 
 // ============================================================================
 // REMOTE MINING EVALUATOR

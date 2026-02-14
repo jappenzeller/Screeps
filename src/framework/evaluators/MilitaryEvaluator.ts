@@ -22,7 +22,7 @@ import {
   MilitaryAction,
   ThreatLevel,
 } from "../types";
-import { BaseEvaluator } from "../Evaluator";
+import { BaseEvaluator } from "../BaseEvaluator";
 import * as CampaignChain from "../../military/CampaignChain";
 import * as MilitaryManager from "../../military/MilitaryManager";
 

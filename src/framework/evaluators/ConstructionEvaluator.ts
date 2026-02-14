@@ -22,7 +22,7 @@ import {
   ColonySnapshot,
   BuildAction,
 } from "../types";
-import { BaseEvaluator } from "../Evaluator";
+import { BaseEvaluator } from "../BaseEvaluator";
 
 // ============================================================================
 // TYPES

@@ -18,7 +18,7 @@ import {
   ColonySnapshot,
   SpawnAction,
 } from "../types";
-import { BaseEvaluator } from "../Evaluator";
+import { BaseEvaluator } from "../BaseEvaluator";
 
 // ============================================================================
 // TYPES
