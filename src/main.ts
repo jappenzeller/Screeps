@@ -38,6 +38,9 @@ import { drawMilitaryVisuals } from "./military/MilitaryVisuals";
 import { checkAntiDowngrade } from "./military/AntiDowngrade";
 import { runFullRecovery } from "./military/CampaignRecovery";
 
+// Declarative Framework (Phase 1)
+import { initializeFramework, runFramework } from "./framework";
+
 // One-time initialization
 declare const global: { [key: string]: unknown };
 
@@ -45,6 +48,9 @@ if (!global._initialized) {
   logger.setLevel(CONFIG.LOG_LEVEL);
   registerConsoleCommands();
   registerDecisionCommands();
+
+  // Initialize declarative framework (Phase 1)
+  initializeFramework();
 
   // Recover military campaigns after global reset
   runFullRecovery();
@@ -71,6 +77,9 @@ export function loop(): void {
 
   // Initialize empire memory structures
   initializeEmpireMemory();
+
+  // Run declarative framework (Phase 1 - observes and logs, doesn't override existing systems)
+  runFramework();
 
   // Gather intel for all visible rooms (populates Memory.intel)
   const homeRoom = Object.keys(Game.rooms).find(

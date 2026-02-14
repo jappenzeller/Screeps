@@ -109,7 +109,7 @@ function placeOne(room: Room, near: RoomPosition, type: BuildableStructureConsta
   return false;
 }
 
-function findBuildPosition(
+export function findBuildPosition(
   room: Room,
   near: RoomPosition,
   type: BuildableStructureConstant

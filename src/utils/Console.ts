@@ -18,6 +18,7 @@ import * as CampaignChain from "../military/CampaignChain";
 import * as CampaignEventLog from "../military/CampaignEventLog";
 import * as WaveCoordinator from "../military/WaveCoordinator";
 import * as TacticalSimulator from "../military/TacticalSimulator";
+import * as Framework from "../framework";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -138,6 +139,19 @@ military.simulate(room) - Simulate attack strategies (shows survival rates)
 military.simApproach(target, from, n) - Simulate wave of n from approach room
 military.towerDamage(room, x, y) - Check tower damage at a position
 military.intel(room) - Show fresh intel for a room
+
+--- Declarative Framework (Phase 1) ---
+framework()          - Show framework status
+worldstate()         - Show world state summary for all colonies
+worldstate("W1N1")   - Show detailed state for specific colony
+weights()            - Show weight table summary
+weights("spawning.roles.HARVESTER") - Show specific weight path
+setWeight(path, val) - Set a weight value
+resetWeights()       - Reset weights to defaults
+telemetry()          - Show telemetry stats
+setTelemetry(bool)   - Enable/disable telemetry
+exportTelemetry()    - Force telemetry export
+decisions(n)         - Show last n decisions (default 10)
 `);
   };
 
@@ -2283,5 +2297,43 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       console.log(TacticalSimulator.intel(roomName));
       return "OK";
     },
+  };
+
+  // ==================== DECLARATIVE FRAMEWORK COMMANDS ====================
+
+  global.framework = () => {
+    console.log(Framework.framework());
+  };
+
+  global.worldstate = (roomName?: string) => {
+    console.log(Framework.showWorldState(roomName));
+  };
+
+  global.weights = (path?: string) => {
+    console.log(Framework.showWeights(path));
+  };
+
+  global.setWeight = (path: string, value: unknown) => {
+    console.log(Framework.setWeight(path, value));
+  };
+
+  global.resetWeights = () => {
+    console.log(Framework.resetWeights());
+  };
+
+  global.telemetry = () => {
+    console.log(Framework.showTelemetry());
+  };
+
+  global.setTelemetry = (enabled: boolean) => {
+    console.log(Framework.setTelemetry(enabled));
+  };
+
+  global.exportTelemetry = () => {
+    console.log(Framework.exportTelemetry());
+  };
+
+  global.decisions = (count?: number) => {
+    console.log(Framework.recentDecisions(count));
   };
 }

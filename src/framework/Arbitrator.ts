@@ -1,0 +1,497 @@
+/**
+ * Arbitrator - Conflict resolution for competing options
+ *
+ * Multiple evaluators compete for the same resources (spawn time, construction
+ * site slots, energy). The arbitrator merges all scored options and allocates
+ * resources fairly based on scores.
+ */
+
+import {
+  Arbitrator,
+  ScoredOption,
+  FrameworkAction,
+  SpawnAction,
+  BuildAction,
+  RemoteAction,
+  MilitaryAction,
+  WorldState,
+  ColonySnapshot,
+  DecisionLogEntry,
+} from "./types";
+import { logger } from "../utils/Logger";
+import { buildBody, getMinCost } from "../spawning/bodyBuilder";
+import { findBuildPosition } from "../structures/placeStructures";
+import { ColonyManager } from "../core/ColonyManager";
+import * as MilitaryManager from "../military/MilitaryManager";
+
+// ============================================================================
+// COLONY ARBITRATOR
+// ============================================================================
+
+/**
+ * Resolves conflicts between competing options for a single colony.
+ */
+export class ColonyArbitrator implements Arbitrator {
+  private decisions: DecisionLogEntry[] = [];
+
+  /**
+   * Resolve scored options from all evaluators into executable actions.
+   */
+  resolve(
+    options: Map<string, ScoredOption<FrameworkAction>[]>,
+    state: WorldState,
+    colony: ColonySnapshot
+  ): FrameworkAction[] {
+    const actions: FrameworkAction[] = [];
+    this.decisions = [];
+
+    // Resolve each domain
+    const spawnAction = this.resolveSpawning(options.get("spawning") || [], state, colony);
+    if (spawnAction) actions.push(spawnAction);
+
+    const buildActions = this.resolveConstruction(options.get("construction") || [], state, colony);
+    actions.push(...buildActions);
+
+    const remoteActions = this.resolveRemotes(options.get("remotes") || [], state, colony);
+    actions.push(...remoteActions);
+
+    const militaryActions = this.resolveMilitary(options.get("military") || [], state, colony);
+    actions.push(...militaryActions);
+
+    return actions;
+  }
+
+  /**
+   * Get decisions made this tick (for telemetry)
+   */
+  getDecisions(): DecisionLogEntry[] {
+    return this.decisions;
+  }
+
+  // ========== SPAWNING RESOLUTION ==========
+
+  private resolveSpawning(
+    options: ScoredOption<FrameworkAction>[],
+    state: WorldState,
+    colony: ColonySnapshot
+  ): FrameworkAction | null {
+    if (options.length === 0) return null;
+
+    // Check if spawn is available
+    const room = Game.rooms[colony.roomName];
+    if (!room) return null;
+
+    const spawn = room.find(FIND_MY_SPAWNS).find((s) => !s.spawning);
+    if (!spawn) return null;
+
+    // Pick highest scored option
+    const sorted = [...options].sort((a, b) => b.score - a.score);
+    const winner = sorted[0];
+
+    // Only spawn if score is above threshold
+    if (winner.score < 10) {
+      logger.debug("Arbitrator", `${colony.roomName}: No spawn needed (top score: ${winner.score})`);
+      return null;
+    }
+
+    // Log the decision
+    this.logDecision(state.tick, colony.roomName, "spawning", winner, sorted.slice(1, 4));
+
+    return winner.action;
+  }
+
+  // ========== CONSTRUCTION RESOLUTION ==========
+
+  private resolveConstruction(
+    options: ScoredOption<FrameworkAction>[],
+    state: WorldState,
+    colony: ColonySnapshot
+  ): FrameworkAction[] {
+    const actions: FrameworkAction[] = [];
+
+    if (options.length === 0) return actions;
+
+    // Calculate available construction site budget
+    const maxSites = 100; // Game limit per player
+    const currentSites = colony.constructionSites.length;
+    let siteBudget = Math.min(5, maxSites - currentSites); // Max 5 new sites per tick
+
+    if (siteBudget <= 0) return actions;
+
+    // Sort by score
+    const sorted = [...options].sort((a, b) => b.score - a.score);
+
+    // Pick top N options up to budget
+    for (const option of sorted) {
+      if (siteBudget <= 0) break;
+      if (option.score < 5) break; // Minimum score threshold
+
+      const buildAction = option.action as BuildAction;
+
+      // Check if we already have too many sites of this type
+      const typeConfig = state.weights.construction.types[buildAction.structureType];
+      const currentTypeSites = colony.siteCounts[buildAction.structureType] || 0;
+      const maxConcurrent = typeConfig?.maxConcurrentSites || 3;
+
+      if (currentTypeSites >= maxConcurrent) continue;
+
+      actions.push(option.action);
+      siteBudget--;
+
+      // Log the decision
+      this.logDecision(state.tick, colony.roomName, "construction", option, []);
+    }
+
+    return actions;
+  }
+
+  // ========== REMOTE MINING RESOLUTION ==========
+
+  private resolveRemotes(
+    options: ScoredOption<FrameworkAction>[],
+    state: WorldState,
+    colony: ColonySnapshot
+  ): FrameworkAction[] {
+    const actions: FrameworkAction[] = [];
+
+    if (options.length === 0) return actions;
+
+    // Sort by score
+    const sorted = [...options].sort((a, b) => b.score - a.score);
+
+    // Get max active remotes from weights
+    const maxActive = state.weights.remotes.maxActive;
+    let currentActive = colony.activeRemoteCount;
+
+    for (const option of sorted) {
+      const remoteAction = option.action as RemoteAction;
+
+      if (remoteAction.type === "activate_remote") {
+        // Only activate if under limit and score is high enough
+        if (currentActive >= maxActive) continue;
+        if (option.score < 30) continue; // Minimum score for activation
+
+        actions.push(option.action);
+        currentActive++;
+
+        this.logDecision(state.tick, colony.roomName, "remotes", option, []);
+      } else if (remoteAction.type === "deactivate_remote") {
+        // Deactivate if score is very low
+        if (option.score > 20) continue;
+
+        actions.push(option.action);
+        currentActive--;
+
+        this.logDecision(state.tick, colony.roomName, "remotes", option, []);
+      } else if (remoteAction.type === "pause_remote") {
+        // Pause actions always execute (usually due to hostiles)
+        actions.push(option.action);
+        this.logDecision(state.tick, colony.roomName, "remotes", option, []);
+      }
+    }
+
+    return actions;
+  }
+
+  // ========== MILITARY RESOLUTION ==========
+
+  private resolveMilitary(
+    options: ScoredOption<FrameworkAction>[],
+    state: WorldState,
+    colony: ColonySnapshot
+  ): FrameworkAction[] {
+    const actions: FrameworkAction[] = [];
+
+    if (options.length === 0) return actions;
+
+    // Sort by score
+    const sorted = [...options].sort((a, b) => b.score - a.score);
+
+    // Execute high-priority military actions
+    for (const option of sorted) {
+      if (option.score < 50) break; // Military actions need high confidence
+
+      const militaryAction = option.action as MilitaryAction;
+
+      // Only one attack action per tick
+      if (militaryAction.type === "attack" && actions.some((a) => (a as MilitaryAction).type === "attack")) {
+        continue;
+      }
+
+      actions.push(option.action);
+      this.logDecision(state.tick, colony.roomName, "military", option, []);
+    }
+
+    return actions;
+  }
+
+  // ========== DECISION LOGGING ==========
+
+  private logDecision(
+    tick: number,
+    colony: string,
+    domain: string,
+    chosen: ScoredOption<FrameworkAction>,
+    alternatives: ScoredOption<FrameworkAction>[]
+  ): void {
+    this.decisions.push({
+      tick,
+      colony,
+      domain,
+      chosen: {
+        action: chosen.label,
+        score: chosen.score,
+        factors: chosen.factors,
+      },
+      alternatives: alternatives.map((alt) => ({
+        action: alt.label,
+        score: alt.score,
+      })),
+    });
+  }
+}
+
+// ============================================================================
+// ACTION EXECUTOR
+// ============================================================================
+
+/**
+ * Executes resolved actions.
+ * This is the only place where game API mutations happen.
+ */
+export class ActionExecutor {
+  /**
+   * Execute all resolved actions for a colony
+   */
+  execute(actions: FrameworkAction[], colony: ColonySnapshot): ExecutionResult[] {
+    const results: ExecutionResult[] = [];
+
+    for (const action of actions) {
+      try {
+        const result = this.executeAction(action, colony);
+        results.push(result);
+      } catch (error) {
+        logger.error("Executor", `Error executing action: ${error}`);
+        results.push({
+          action,
+          success: false,
+          error: String(error),
+        });
+      }
+    }
+
+    return results;
+  }
+
+  private executeAction(action: FrameworkAction, colony: ColonySnapshot): ExecutionResult {
+    switch (action.type) {
+      case "spawn":
+        return this.executeSpawn(action as SpawnAction, colony);
+      case "build":
+        return this.executeBuild(action as BuildAction, colony);
+      case "activate_remote":
+      case "deactivate_remote":
+      case "pause_remote":
+        return this.executeRemote(action as RemoteAction, colony);
+      case "attack":
+      case "defend":
+      case "retreat":
+      case "patrol":
+        return this.executeMilitary(action as MilitaryAction, colony);
+      default:
+        return { action, success: false, error: "Unknown action type" };
+    }
+  }
+
+  private executeSpawn(action: SpawnAction, colony: ColonySnapshot): ExecutionResult {
+    const room = Game.rooms[colony.roomName];
+    if (!room) {
+      return { action, success: false, error: "Room not visible" };
+    }
+
+    // Find available spawn
+    const spawn = room.find(FIND_MY_SPAWNS).find((s) => !s.spawning);
+    if (!spawn) {
+      return { action, success: false, error: "No available spawn" };
+    }
+
+    // Check minimum energy for role
+    const minCost = getMinCost(action.role);
+    if (room.energyAvailable < minCost) {
+      return { action, success: false, error: `Not enough energy (need ${minCost}, have ${room.energyAvailable})` };
+    }
+
+    // Build body based on available energy
+    const body = buildBody(action.role, room.energyCapacityAvailable);
+    if (body.length === 0) {
+      return { action, success: false, error: `Failed to build body for ${action.role}` };
+    }
+
+    // Create unique name
+    const name = `${action.role}_${Game.time}`;
+
+    // Set up memory - merge any action-provided memory
+    const memory: CreepMemory = {
+      role: action.role,
+      room: colony.roomName,
+      ...action.memory,
+    } as CreepMemory;
+
+    // Attempt to spawn
+    const result = spawn.spawnCreep(body, name, { memory });
+
+    if (result === OK) {
+      logger.info("Executor", `[${colony.roomName}] Spawning ${action.role} (framework)`);
+      return { action, success: true };
+    } else if (result === ERR_NOT_ENOUGH_ENERGY) {
+      return { action, success: false, error: "Not enough energy" };
+    } else {
+      return { action, success: false, error: `Spawn failed: ${result}` };
+    }
+  }
+
+  private executeBuild(action: BuildAction, colony: ColonySnapshot): ExecutionResult {
+    const room = Game.rooms[colony.roomName];
+    if (!room) {
+      return { action, success: false, error: "Room not visible" };
+    }
+
+    const spawn = room.find(FIND_MY_SPAWNS)[0];
+    if (!spawn) {
+      return { action, success: false, error: "No spawn found" };
+    }
+
+    // Use position from action if provided, otherwise find one
+    let pos: { x: number; y: number } | null = action.pos || null;
+    if (!pos) {
+      pos = findBuildPosition(room, spawn.pos, action.structureType);
+    }
+
+    if (!pos) {
+      return { action, success: false, error: `No valid position for ${action.structureType}` };
+    }
+
+    // Create construction site
+    const result = room.createConstructionSite(pos.x, pos.y, action.structureType);
+
+    if (result === OK) {
+      logger.info("Executor", `[${colony.roomName}] Placing ${action.structureType} at (${pos.x},${pos.y}) (framework)`);
+      return { action, success: true };
+    } else if (result === ERR_FULL) {
+      return { action, success: false, error: "Max construction sites reached" };
+    } else if (result === ERR_INVALID_TARGET) {
+      return { action, success: false, error: "Invalid target position" };
+    } else if (result === ERR_RCL_NOT_ENOUGH) {
+      return { action, success: false, error: "RCL not high enough" };
+    } else {
+      return { action, success: false, error: `Build failed: ${result}` };
+    }
+  }
+
+  private executeRemote(action: RemoteAction, colony: ColonySnapshot): ExecutionResult {
+    const manager = ColonyManager.getInstance(colony.roomName);
+    if (!manager) {
+      return { action, success: false, error: "Colony manager not found" };
+    }
+
+    switch (action.type) {
+      case "activate_remote": {
+        const success = manager.addRemote(action.room, action.distance || 1, action.via);
+        if (success) {
+          logger.info("Executor", `[${colony.roomName}] Activated remote ${action.room} (framework)`);
+          return { action, success: true };
+        }
+        return { action, success: false, error: "Failed to activate remote (already exists?)" };
+      }
+
+      case "deactivate_remote": {
+        const success = manager.removeRemote(action.room);
+        if (success) {
+          logger.info("Executor", `[${colony.roomName}] Deactivated remote ${action.room} (framework)`);
+          return { action, success: true };
+        }
+        return { action, success: false, error: "Failed to deactivate remote" };
+      }
+
+      case "pause_remote": {
+        const success = manager.toggleRemote(action.room, action.reason);
+        if (success) {
+          logger.info("Executor", `[${colony.roomName}] Paused remote ${action.room}: ${action.reason} (framework)`);
+          return { action, success: true };
+        }
+        return { action, success: false, error: "Failed to pause remote" };
+      }
+
+      default:
+        return { action, success: false, error: "Unknown remote action type" };
+    }
+  }
+
+  private executeMilitary(action: MilitaryAction, colony: ColonySnapshot): ExecutionResult {
+    switch (action.type) {
+      case "attack": {
+        // Create a new attack campaign via MilitaryManager
+        const result = MilitaryManager.createCampaign({
+          type: "CONTROLLER_ATTACK",
+          targetRoom: action.targetRoom,
+        });
+
+        if (result === "ERROR") {
+          return { action, success: false, error: "Failed to create attack campaign" };
+        }
+
+        logger.info("Executor", `[${colony.roomName}] Launched attack campaign against ${action.targetRoom} (framework)`);
+        return { action, success: true, note: `Campaign ID: ${result}` };
+      }
+
+      case "defend": {
+        // Defense is handled by existing tower/defender systems
+        // The framework just signals the need - ColonyManager handles spawning defenders
+        logger.debug("Executor", `[${colony.roomName}] Defense mode - existing systems active`);
+        return { action, success: true, note: "Defense handled by existing systems" };
+      }
+
+      case "retreat": {
+        // Retreat would pause/abort active campaigns
+        const mem = MilitaryManager.getMilitaryMemory();
+        let paused = 0;
+        for (const id in mem.campaigns) {
+          const campaign = mem.campaigns[id];
+          if (campaign.state !== "COMPLETE" && campaign.state !== "ABORTED" && campaign.state !== "PAUSED") {
+            MilitaryManager.pauseCampaign(id);
+            paused++;
+          }
+        }
+
+        if (paused > 0) {
+          logger.info("Executor", `[${colony.roomName}] Paused ${paused} campaign(s) for retreat`);
+        }
+        return { action, success: true, note: `Paused ${paused} campaigns` };
+      }
+
+      case "patrol": {
+        // Patrol would be handled by spawning defender/patrol creeps
+        // The existing remote defense system handles this
+        logger.debug("Executor", `[${colony.roomName}] Patrol requested for ${action.targetRoom}`);
+        return { action, success: true, note: "Patrol handled by existing remote defense" };
+      }
+
+      default:
+        return { action, success: false, error: "Unknown military action type" };
+    }
+  }
+}
+
+export interface ExecutionResult {
+  action: FrameworkAction;
+  success: boolean;
+  error?: string;
+  note?: string;
+}
+
+// ============================================================================
+// GLOBAL INSTANCES
+// ============================================================================
+
+export const arbitrator = new ColonyArbitrator();
+export const executor = new ActionExecutor();
