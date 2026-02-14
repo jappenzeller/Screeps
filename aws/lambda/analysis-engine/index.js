@@ -304,6 +304,68 @@ function detectPatterns(snapshots, liveColony) {
     });
   }
 
+  // ==================== Positive Patterns (Healthy States) ====================
+
+  // Economy stable: good energy reserves
+  const storedEnergy = energy.stored || 0;
+  if (storedEnergy > 100000 && storedEnergy < 800000) {
+    patterns.push({
+      id: "ECONOMY_STABLE",
+      severity: "INFO",
+      message: `Healthy energy reserves at ${storedEnergy.toLocaleString()} (optimal range)`,
+    });
+  }
+
+  // CPU efficient: bucket healthy
+  if (bucket > 8000) {
+    patterns.push({
+      id: "CPU_EFFICIENT",
+      severity: "INFO",
+      message: `CPU bucket healthy at ${bucket}/10000`,
+    });
+  }
+
+  // Workforce balanced: have miners and haulers
+  if (miners >= 2 && haulers >= 2 && upgraders >= 1) {
+    patterns.push({
+      id: "WORKFORCE_BALANCED",
+      severity: "INFO",
+      message: `Core workforce present: ${miners} miners, ${haulers} haulers, ${upgraders} upgraders`,
+    });
+  }
+
+  // RCL progressing well (compare snapshots)
+  if (snapshots.length >= 2 && (current.rcl || 0) < 8) {
+    const oldest = snapshots[snapshots.length - 1];
+    const progressDelta = (current.rclProgress || 0) - (oldest.rclProgress || 0);
+    const hoursPassed = ((current.timestamp || Date.now()) - (oldest.timestamp || Date.now())) / (1000 * 60 * 60);
+    const progressPerHour = hoursPassed > 0 ? progressDelta / hoursPassed : 0;
+
+    if (progressPerHour > 5000) {
+      patterns.push({
+        id: "RCL_PROGRESSING_FAST",
+        severity: "INFO",
+        message: `Strong RCL progress at ${Math.round(progressPerHour).toLocaleString()}/hour`,
+      });
+    } else if (progressPerHour > 2000) {
+      patterns.push({
+        id: "RCL_PROGRESSING",
+        severity: "INFO",
+        message: `Steady RCL progress at ${Math.round(progressPerHour).toLocaleString()}/hour`,
+      });
+    }
+  }
+
+  // Remote mining active (reuses remoteMiners/remoteHaulers from above)
+  const remoteRooms = remoteMining.rooms || 0;
+  if (remoteRooms > 0 && remoteMiners > 0 && remoteHaulers >= remoteMiners) {
+    patterns.push({
+      id: "REMOTE_MINING_ACTIVE",
+      severity: "INFO",
+      message: `Remote mining operational: ${remoteRooms} rooms, ${remoteMiners} miners, ${remoteHaulers} haulers`,
+    });
+  }
+
   return patterns;
 }
 

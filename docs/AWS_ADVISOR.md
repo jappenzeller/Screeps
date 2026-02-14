@@ -7,6 +7,7 @@ External monitoring system that:
 2. Stores metrics in DynamoDB
 3. Runs AI analysis (Claude API)
 4. Provides API endpoints for recommendations
+5. **Event-driven alerts for critical situations**
 
 ## Architecture
 
@@ -18,20 +19,56 @@ SCREEPS GAME
 AWS LAMBDA (data-collector)
     │ Every 5 minutes
     ▼
-DYNAMODB (metrics, snapshots)
-    │
-    ▼
-AWS LAMBDA (analysis-engine)
-    │ Hourly, Claude API
-    ▼
-DYNAMODB (recommendations)
-    │
-    ▼
-API GATEWAY
-    │
-    ▼
-DASHBOARD / CLAUDE CODE
+DYNAMODB (snapshots) ──────► DynamoDB Stream
+    │                              │
+    │                              ▼
+    │                    LAMBDA (stream-processor)
+    │                              │
+    │              ┌───────────────┼───────────────┐
+    │              ▼               ▼               ▼
+    │        EventBridge      EventBridge      EventBridge
+    │        (Metrics)        (Analysis)       (Alerts)
+    │              │               │               │
+    │              ▼               ▼               ▼
+    │        Metrics Writer   Step Functions   SNS Topic
+    │                              │         (Critical Alerts)
+    │                              ▼
+    └───────────────────► LAMBDA (analysis-engine)
+                               │ Claude API
+                               ▼
+                        DYNAMODB (observations, recommendations)
+                               │
+                               ▼
+                          API GATEWAY
+                               │
+                               ▼
+                        PORTAL / CLAUDE CODE
 ```
+
+## Implementation Status
+
+### Phase 1: Working Advisor (COMPLETED)
+- [x] Analysis engine generates observations for ALL colonies (not just problematic ones)
+- [x] Positive patterns added (ECONOMY_STABLE, CPU_EFFICIENT, WORKFORCE_BALANCED, RCL_PROGRESSING, REMOTE_MINING_ACTIVE)
+- [x] API endpoints configured for observations, signals, patterns
+- [x] Portal displays AI-generated observations
+
+### Phase 2: Event-Driven Analysis (COMPLETED)
+- [x] DynamoDB Streams enabled on snapshots table
+- [x] Stream Processor classifies events and routes to EventBridge
+- [x] EventBridge rules for metrics, analysis triggers, and critical alerts
+- [x] SNS topic for critical alerts (ThreatDetected, CriticalEnergyLevel, NoCreepsAlive)
+- [x] Step Functions workflow (BuildContext → AnalyzeWithClaude → WriteRecommendations)
+
+### Phase 3: Learning Loop (NOT STARTED)
+- [ ] Outcome Evaluator to track recommendation effectiveness
+- [ ] Pattern confidence scoring
+- [ ] Validated fix library
+
+### Phase 4: Adaptive Intelligence (NOT STARTED)
+- [ ] Embedding-based pattern discovery
+- [ ] Cross-colony knowledge transfer
+- [ ] Strategic decision engine
 
 ## Data Export (AWSExporter.ts)
 
@@ -172,13 +209,42 @@ Every response includes:
 ## Lambda Functions
 
 ### data-collector
-- **Trigger:** Every 5 minutes (EventBridge)
+- **Trigger:** Every 5 minutes (EventBridge Scheduler)
 - **Action:** Read segment 90, store in DynamoDB
 - **Runtime:** Node.js 20.x
 
+### stream-processor
+- **Trigger:** DynamoDB Streams (on snapshot insert)
+- **Action:** Classify events and emit to EventBridge
+- **Events Emitted:**
+  - `SnapshotCreated` → Metrics Writer
+  - `SignificantChange` → Analysis Workflow
+  - `ThreatDetected` → SNS + Analysis Workflow
+  - `EconomyAnomaly` → Analysis Workflow
+  - `RCLProgress` → Analysis Workflow
+  - `CriticalEnergyLevel` → SNS
+  - `NoCreepsAlive` → SNS
+- **Runtime:** Node.js 20.x
+
 ### analysis-engine
-- **Trigger:** Hourly (EventBridge)
-- **Action:** Analyze metrics, generate recommendations via Claude API
+- **Trigger:** Hourly (EventBridge Scheduler)
+- **Action:** Analyze metrics, generate observations via Claude API
+- **Pattern Detection:** Detects both problem patterns and healthy state patterns
+- **Runtime:** Node.js 20.x
+
+### context-builder
+- **Trigger:** Step Functions (AnalysisWorkflow)
+- **Action:** Build rich context from snapshots, events, knowledge
+- **Runtime:** Node.js 20.x
+
+### claude-analyzer
+- **Trigger:** Step Functions (AnalysisWorkflow)
+- **Action:** Call Claude API with context
+- **Runtime:** Node.js 20.x
+
+### recommendation-writer
+- **Trigger:** Step Functions (AnalysisWorkflow)
+- **Action:** Store recommendations in DynamoDB
 - **Runtime:** Node.js 20.x
 
 ### api
@@ -186,28 +252,95 @@ Every response includes:
 - **Action:** Serve data from DynamoDB
 - **Runtime:** Node.js 20.x
 
+## Event-Driven Architecture
+
+### EventBridge Event Bus
+**Name:** `screeps-advisor-events`
+
+### Event Types
+
+| Event | Source | Trigger | Target |
+|-------|--------|---------|--------|
+| `SnapshotCreated` | stream-processor | Every snapshot insert | Metrics Writer |
+| `SignificantChange` | stream-processor | Creep/storage changes | Analysis Workflow |
+| `ThreatDetected` | stream-processor | Hostiles detected | SNS + Analysis |
+| `EconomyAnomaly` | stream-processor | Energy drops >30% | Analysis Workflow |
+| `RCLProgress` | stream-processor | RCL progress >10% | Analysis Workflow |
+| `CriticalEnergyLevel` | stream-processor | Storage <5k + spawn <50% | SNS |
+| `NoCreepsAlive` | stream-processor | Creep count drops to 0 | SNS |
+
+### SNS Critical Alerts
+
+**Topic ARN:** `arn:aws:sns:us-east-1:488218643044:screeps-advisor-critical-alerts`
+
+Subscribe to receive email/SMS alerts:
+```bash
+aws sns subscribe \
+  --topic-arn arn:aws:sns:us-east-1:488218643044:screeps-advisor-critical-alerts \
+  --protocol email \
+  --notification-endpoint your@email.com
+```
+
+### Step Functions Workflow
+
+**Name:** `screeps-advisor-analysis-workflow`
+
+```
+BuildContext
+    │
+    │ Gather snapshots, events, knowledge, recommendations
+    ▼
+AnalyzeWithClaude
+    │
+    │ Generate observations via Claude API
+    ▼
+WriteRecommendations
+    │
+    │ Store to DynamoDB
+    ▼
+Success
+```
+
+## Pattern Detection
+
+### Problem Patterns (analysis-engine)
+| Pattern ID | Severity | Condition |
+|------------|----------|-----------|
+| `ENERGY_STARVATION` | HIGH | Storage <10k AND spawn <50% |
+| `HAULER_SHORTAGE` | MEDIUM | Haulers < harvesters |
+| `NO_UPGRADERS` | HIGH | 0 upgraders AND RCL <8 |
+| `CPU_BUCKET_LOW` | MEDIUM/HIGH | Bucket <5000/<2000 |
+| `REMOTE_HAULER_SHORTAGE` | MEDIUM | Remote haulers < miners |
+| `ACTIVE_THREAT` | CRITICAL | Hostiles present |
+| `TRAFFIC_BOTTLENECK` | LOW | Tile >100 visits |
+| `RCL_STALL` | HIGH | <1000 progress/hr with 100k+ energy |
+| `STORAGE_FULL` | MEDIUM | Storage >900k |
+| `NO_MINERS` | CRITICAL | 0 harvesters/miners |
+
+### Healthy State Patterns (analysis-engine)
+| Pattern ID | Severity | Condition |
+|------------|----------|-----------|
+| `ECONOMY_STABLE` | INFO | Storage 100k-800k |
+| `CPU_EFFICIENT` | INFO | Bucket >8000 |
+| `WORKFORCE_BALANCED` | INFO | 2+ miners, 2+ haulers, 1+ upgrader |
+| `RCL_PROGRESSING` | INFO | >2000 progress/hr |
+| `RCL_PROGRESSING_FAST` | INFO | >5000 progress/hr |
+| `REMOTE_MINING_ACTIVE` | INFO | Remote rooms active with adequate haulers |
+
 ## DynamoDB Tables
 
-### screeps-snapshots
-```
-Primary Key: roomName (S)
-Sort Key: timestamp (N)
-TTL: 30 days
-```
-
-### screeps-recommendations
-```
-Primary Key: id (S)
-Attributes: roomName, priority, category, description, createdAt
-TTL: 30 days
-```
-
-### screeps-intel
-```
-Primary Key: roomName (S)
-No TTL — rooms persist indefinitely
-Fields: lastScan, roomType, owner, ownerRcl, sources, mineral, terrain, exits, distanceFromHome, expansionScore
-```
+| Table | Primary Key | Sort Key | TTL | Purpose |
+|-------|-------------|----------|-----|---------|
+| `screeps-advisor-snapshots` | roomName (S) | timestamp (N) | 30d | Colony state snapshots |
+| `screeps-advisor-events` | roomName (S) | eventId (S) | 30d | Game events |
+| `screeps-advisor-recommendations` | id (S) | - | 30d | AI recommendations |
+| `screeps-advisor-observations` | roomName (S) | timestamp (N) | 30d | AI observations |
+| `screeps-advisor-signals` | roomName (S) | timestamp (N) | 30d | Metrics & threshold events |
+| `screeps-advisor-intel` | roomName (S) | - | - | Room intelligence |
+| `screeps-advisor-knowledge` | patternHash (S) | - | - | Learning/feedback loop |
+| `screeps-advisor-metrics-history` | roomName (S) | timestamp (N) | 30d | Historical metrics |
+| `screeps-advisor-recordings` | recordingId (S) | - | 30d | Room recordings metadata |
+| `screeps-advisor-pattern-state` | patternId (S) | - | - | Pattern detection state |
 
 ## Deployment
 

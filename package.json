@@ -7,7 +7,10 @@
     "build": "rollup -c",
     "watch": "rollup -c -w",
     "push": "rollup -c --environment DEST:main",
-    "push:sim": "rollup -c --environment DEST:sim"
+    "push:sim": "rollup -c --environment DEST:sim",
+    "test:server": "cd tests/server && npm test",
+    "test:server:quick": "cd tests/server && npm run test:quick",
+    "test:spawner": "cd tests/spawner && npm test"
   },
   "keywords": [
     "screeps",

@@ -172,6 +172,41 @@ function detectSignificantChanges(current, previous) {
     }
   }
 
+  // ==================== CRITICAL EVENTS (trigger SNS alerts) ====================
+
+  // Critical: No creeps alive
+  if (current.creepCount === 0 && previous.creepCount > 0) {
+    events.push(createEvent("NoCreepsAlive", {
+      roomName,
+      previousCount: previous.creepCount,
+      message: "All creeps have died - colony may collapse",
+    }));
+  }
+
+  // Critical: Energy critically low (below 5000 storage AND below 50% spawn energy)
+  const storageEnergy = current.storageEnergy || current.energy?.stored || 0;
+  const spawnEnergy = current.energyAvailable || current.energy?.available || 0;
+  const spawnCapacity = current.energyCapacity || current.energy?.capacity || 300;
+  if (storageEnergy < 5000 && spawnEnergy < spawnCapacity * 0.5) {
+    events.push(createEvent("CriticalEnergyLevel", {
+      roomName,
+      storageEnergy,
+      spawnEnergy,
+      spawnCapacity,
+      message: "Critical energy shortage - economy failing",
+    }));
+  }
+
+  // Critical: High threat with significant damage potential
+  if (current.threatLevel >= 3 || (current.hostileCount || 0) >= 5) {
+    events.push(createEvent("ThreatDetected", {
+      roomName,
+      threatLevel: current.threatLevel || 0,
+      hostileCount: current.hostileCount || 0,
+      message: "High threat level detected - defense needed",
+    }));
+  }
+
   return events;
 }
 

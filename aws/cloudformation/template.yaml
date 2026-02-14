@@ -299,6 +299,54 @@ Resources:
         - Id: outcome-evaluator
           Arn: !GetAtt OutcomeEvaluatorFunction.Arn
 
+  # ==================== Critical Alerts (SNS) ====================
+  CriticalAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${ProjectName}-critical-alerts
+      DisplayName: Screeps Critical Alerts
+
+  # Rule for critical events -> SNS alerts
+  CriticalAlertsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${ProjectName}-critical-alerts
+      EventBusName: !Ref ScreepsEventBus
+      EventPattern:
+        source:
+          - screeps.advisor
+        detail-type:
+          - ThreatDetected
+          - CriticalEnergyLevel
+          - NoCreepsAlive
+          - SpawnerDestroyed
+      State: ENABLED
+      Targets:
+        - Id: sns-alert
+          Arn: !Ref CriticalAlertsTopic
+          InputTransformer:
+            InputPathsMap:
+              roomName: "$.detail.roomName"
+              detailType: "$.detail-type"
+              timestamp: "$.detail.timestamp"
+              threatLevel: "$.detail.threatLevel"
+            InputTemplate: |
+              "SCREEPS ALERT: <detailType> in room <roomName>. Threat level: <threatLevel>. Time: <timestamp>"
+
+  CriticalAlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref CriticalAlertsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref CriticalAlertsTopic
+
   # ==================== S3 Analytics Bucket (for Athena/QuickSight) ====================
   AnalyticsBucket:
     Type: AWS::S3::Bucket
@@ -519,6 +567,10 @@ Resources:
                   - !GetAtt RecommendationsTable.Arn
                   - !Sub ${RecommendationsTable.Arn}/index/*
                   - !GetAtt IntelTable.Arn
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-observations
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-observations/index/*
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-signals
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-signals/index/*
               - Effect: Allow
                 Action:
                   - dynamodb:Query
@@ -935,6 +987,8 @@ Resources:
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
           INTEL_TABLE: !Ref IntelTable
           RECORDINGS_TABLE: !Ref RecordingsTable
+          OBSERVATIONS_TABLE: !Sub ${ProjectName}-observations
+          SIGNALS_TABLE: !Sub ${ProjectName}-signals
           ANALYTICS_BUCKET: !Ref AnalyticsBucket
           SCREEPS_TOKEN_SECRET: !Ref ScreepsTokenSecret
           SCREEPS_SHARD: !Ref ScreepsShard
@@ -1918,6 +1972,10 @@ Outputs:
   IntelTableName:
     Description: DynamoDB intel table name
     Value: !Ref IntelTable
+
+  CriticalAlertsTopicArn:
+    Description: SNS topic ARN for critical alerts
+    Value: !Ref CriticalAlertsTopic
 
   AnalyticsBucketName:
     Description: S3 analytics bucket for QuickSight/Athena

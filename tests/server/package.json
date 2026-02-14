@@ -1,0 +1,21 @@
+{
+  "name": "screeps-server-tests",
+  "version": "1.0.0",
+  "description": "Integration tests for Screeps bot using private server",
+  "scripts": {
+    "test": "ts-node src/index.ts --all",
+    "test:quick": "ts-node src/index.ts --all --quick",
+    "test:scenario": "ts-node src/index.ts --scenario",
+    "test:economic": "ts-node src/index.ts --category economic",
+    "test:combat": "ts-node src/index.ts --category combat"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "screeps-server-mockup": "^1.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "isolated-vm": "^5.0.4"
+  }
+}
