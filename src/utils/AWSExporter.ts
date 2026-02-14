@@ -8,6 +8,7 @@ import { StatsCollector, TrafficExport } from "./StatsCollector";
 import { EconomyTracker, ColonyEconomyMetrics } from "../core/EconomyTracker";
 import { RoomEvaluator, RoomScore } from "../empire/RoomEvaluator";
 import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/ExpansionReadiness";
+import { getCreepsByRoom, getHostileCreeps, shouldSkipExport } from "./cpuCache";
 
 // Segment allocation for AWS export
 const SEGMENT_COLONIES = 90;    // Colony snapshots (≤50KB target)
@@ -17,6 +18,11 @@ const SEGMENT_DIAGNOSTICS = 93; // Detailed diagnostics (on-demand, 100KB)
 
 // Module-level cache for delta tracking (survives within tick, resets on global reset)
 let lastExportTick: number = 0;
+
+// Expansion overview cache (expensive - only refresh every 100 ticks)
+let cachedExpansionOverview: ExpansionOverviewExport | null = null;
+let expansionOverviewTick = 0;
+const EXPANSION_OVERVIEW_CACHE_TICKS = 100;
 
 interface ExpansionCandidateExport {
   roomName: string;
@@ -887,6 +893,11 @@ export class AWSExporter {
    * Call this every 20 ticks or so
    */
   static export(): void {
+    // Skip export when CPU bucket is low
+    if (shouldSkipExport()) {
+      return;
+    }
+
     // Request multiple segments for next tick
     RawMemory.setActiveSegments([SEGMENT_COLONIES, SEGMENT_INTEL, SEGMENT_DIAGNOSTICS]);
 
@@ -1012,8 +1023,8 @@ export class AWSExporter {
       const room = Game.rooms[roomName];
       if (!room.controller?.my) continue;
 
-      // Get creeps for this room
-      const creeps = Object.values(Game.creeps).filter((c) => c.memory.room === roomName);
+      // Get creeps for this room (using cached lookup)
+      const creeps = getCreepsByRoom(roomName);
       const byRole: Record<string, number> = {};
       const creepDetails: CreepDetail[] = [];
 
@@ -1048,8 +1059,8 @@ export class AWSExporter {
         });
       }
 
-      // Get hostiles
-      const hostiles = room.find(FIND_HOSTILE_CREEPS);
+      // Get hostiles (using cached lookup)
+      const hostiles = getHostileCreeps(roomName);
       const hostileDPS = hostiles.reduce((sum, h) => {
         const attack = h.body.filter((p) => p.type === ATTACK && p.hits > 0).length * 30;
         const ranged = h.body.filter((p) => p.type === RANGED_ATTACK && p.hits > 0).length * 10;
@@ -1699,6 +1710,17 @@ export class AWSExporter {
    * Get expansion overview with candidates and parent readiness
    */
   private static getExpansionOverview(activeExpansions: EmpireExpansionExport[]): ExpansionOverviewExport {
+    // Use cached version if recent (expensive evaluation)
+    if (
+      cachedExpansionOverview &&
+      Game.time - expansionOverviewTick < EXPANSION_OVERVIEW_CACHE_TICKS
+    ) {
+      // Update only the dynamic parts (active expansions)
+      cachedExpansionOverview.active = activeExpansions;
+      cachedExpansionOverview.activeCount = activeExpansions.length;
+      return cachedExpansionOverview;
+    }
+
     const readiness = new ExpansionReadiness();
     const evaluator = new RoomEvaluator();
 
@@ -1742,7 +1764,7 @@ export class AWSExporter {
     }));
 
     var exp = Memory.empire && Memory.empire.expansion ? Memory.empire.expansion : null;
-    return {
+    cachedExpansionOverview = {
       canExpand,
       bestParent,
       empireBlockers,
@@ -1756,6 +1778,8 @@ export class AWSExporter {
       parentReadiness,
       history: exp ? exp.history : {},
     };
+    expansionOverviewTick = Game.time;
+    return cachedExpansionOverview;
   }
 
   /**
@@ -1840,9 +1864,8 @@ export class AWSExporter {
     const room = Game.rooms[roomName];
     if (!room || !room.controller?.my) return null;
 
-    // Get all creeps for this room
-    const creeps = Object.values(Game.creeps)
-      .filter((c) => c.memory.room === roomName)
+    // Get all creeps for this room (using cached lookup)
+    const creeps = getCreepsByRoom(roomName)
       .map((c) => ({
         name: c.name,
         role: c.memory.role || "UNKNOWN",

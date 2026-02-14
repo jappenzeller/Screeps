@@ -112,7 +112,12 @@
       "Bash(aws cloudformation describe-stack-events:*)",
       "Bash(npm create:*)",
       "Bash(aws s3 sync:*)",
-      "Bash(aws s3 ls:*)"
+      "Bash(aws s3 ls:*)",
+      "Bash(aws lambda invoke:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(where python:*)",
+      "Bash(aws iam put-role-policy:*)",
+      "Bash(aws cloudformation deploy:*)"
     ]
   }
 }

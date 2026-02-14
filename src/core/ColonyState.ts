@@ -1,4 +1,5 @@
 import { logger } from "../utils/Logger";
+import { getCreepsByRoom, getHostileCreeps, getDroppedEnergy } from "../utils/cpuCache";
 
 /**
  * Threat level for a room
@@ -227,17 +228,17 @@ export class ColonyStateManager {
       spawnNeedsEnergy,
       towersNeedEnergy,
       containersWithEnergy,
-      droppedResources: room.find(FIND_DROPPED_RESOURCES, {
-        filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount > 50,
-      }),
+      // Use cached dropped resource lookup
+      droppedResources: getDroppedEnergy(room.name),
     };
   }
 
   /**
-   * Refresh threat assessment
+   * Refresh threat assessment (uses cached hostile creep lookup)
    */
   private static refreshThreat(room: Room, structures: StructureCache): ThreatStatus {
-    const hostiles = room.find(FIND_HOSTILE_CREEPS);
+    // Use cached hostile creep lookup
+    const hostiles = getHostileCreeps(room.name);
 
     const healers = hostiles.filter((h) => h.getActiveBodyparts(HEAL) > 0);
     const ranged = hostiles.filter((h) => h.getActiveBodyparts(RANGED_ATTACK) > 0);
@@ -274,10 +275,11 @@ export class ColonyStateManager {
   }
 
   /**
-   * Refresh creep tracking
+   * Refresh creep tracking (uses global per-tick cache)
    */
   private static refreshCreeps(roomName: string): CreepStatus {
-    const all = Object.values(Game.creeps).filter((c) => c.memory.room === roomName);
+    // Use cached creep lookup instead of Object.values().filter()
+    const all = getCreepsByRoom(roomName);
     const byRole: Record<string, Creep[]> = {};
     const dying: Creep[] = [];
 
@@ -295,7 +297,7 @@ export class ColonyStateManager {
   }
 
   /**
-   * Refresh source assignments
+   * Refresh source assignments (uses cached creep lookup)
    */
   private static refreshSourceAssignments(
     room: Room,
@@ -304,23 +306,22 @@ export class ColonyStateManager {
   ): SourceAssignment[] {
     const assignments: SourceAssignment[] = [];
 
+    // Get harvesters for this room from cache
+    const roomCreeps = getCreepsByRoom(room.name);
+    const harvesters = roomCreeps.filter((c) => c.memory.role === "HARVESTER");
+
     for (const source of sources) {
       // Find container near source
       const nearbyContainer = structures.containers.find((c) => c.pos.inRangeTo(source.pos, 2));
 
-      // Find assigned harvester
-      const harvester = Object.values(Game.creeps).find(
-        (c) =>
-          c.memory.role === "HARVESTER" &&
-          c.memory.room === room.name &&
-          c.memory.sourceId === source.id
-      );
+      // Find assigned harvester from pre-filtered list
+      const harvester = harvesters.find((c) => c.memory.sourceId === source.id);
 
       assignments.push({
         sourceId: source.id,
-        creepName: harvester?.name ?? null,
+        creepName: harvester ? harvester.name : null,
         hasContainer: !!nearbyContainer,
-        containerId: nearbyContainer?.id ?? null,
+        containerId: nearbyContainer ? nearbyContainer.id : null,
       });
     }
 

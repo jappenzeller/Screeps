@@ -201,10 +201,18 @@ function getMineral(room: Room): RoomIntel["mineral"] {
   };
 }
 
+// Heap-level terrain analysis cache (terrain never changes)
+const terrainAnalysisCache: Record<string, RoomIntel["terrain"]> = {};
+
 /**
- * Analyze room terrain composition
+ * Analyze room terrain composition (cached permanently - terrain never changes)
  */
 function analyzeRoomTerrain(roomName: string): RoomIntel["terrain"] {
+  // Check heap cache first
+  if (terrainAnalysisCache[roomName]) {
+    return terrainAnalysisCache[roomName];
+  }
+
   const terrain = Game.map.getRoomTerrain(roomName);
   let swamp = 0,
     wall = 0,
@@ -220,11 +228,15 @@ function analyzeRoomTerrain(roomName: string): RoomIntel["terrain"] {
   }
 
   const total = 2500;
-  return {
+  const result = {
     swampPercent: Math.round((swamp / total) * 100),
     wallPercent: Math.round((wall / total) * 100),
     plainPercent: Math.round((plain / total) * 100),
   };
+
+  // Cache for future calls (survives until global reset)
+  terrainAnalysisCache[roomName] = result;
+  return result;
 }
 
 /**

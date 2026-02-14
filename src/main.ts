@@ -41,6 +41,9 @@ import { runFullRecovery } from "./military/CampaignRecovery";
 // Declarative Framework (Phase 1)
 import { initializeFramework, runFramework } from "./framework";
 
+// CPU caching utilities
+import { shouldSkipNonEssential, shouldSkipExpensiveEvaluations } from "./utils/cpuCache";
+
 // One-time initialization
 declare const global: { [key: string]: unknown };
 
@@ -78,8 +81,10 @@ export function loop(): void {
   // Initialize empire memory structures
   initializeEmpireMemory();
 
-  // Run declarative framework (Phase 1 - observes and logs, doesn't override existing systems)
-  runFramework();
+  // Run declarative framework (skip when CPU bucket is critically low)
+  if (!shouldSkipExpensiveEvaluations()) {
+    runFramework();
+  }
 
   // Gather intel for all visible rooms (populates Memory.intel)
   const homeRoom = Object.keys(Game.rooms).find(
@@ -97,13 +102,15 @@ export function loop(): void {
     runRoom(room);
   }
 
-  // Run empire expansion manager
-  const expansionManager = new ExpansionManager();
-  expansionManager.run();
+  // Run empire expansion manager (skip when CPU bucket is low)
+  if (!shouldSkipNonEssential()) {
+    const expansionManager = new ExpansionManager();
+    expansionManager.run();
 
-  // Check for automatic expansion every 100 ticks
-  if (Game.time % 100 === 0) {
-    expansionManager.checkAutoExpansion();
+    // Check for automatic expansion every 100 ticks
+    if (Game.time % 100 === 0) {
+      expansionManager.checkAutoExpansion();
+    }
   }
 
   // Process empire events
@@ -120,26 +127,29 @@ export function loop(): void {
     checkAntiDowngrade();
   }
 
-  // Draw military visuals in target rooms (every 3 ticks)
-  if (Game.time % 3 === 0) {
+  // Draw military visuals in target rooms (every 3 ticks, skip when bucket low)
+  if (Game.time % 3 === 0 && !shouldSkipNonEssential()) {
     drawMilitaryVisuals();
   }
 
   // Run all creeps
   runCreeps();
 
-  // Log status every 100 ticks
-  if (Game.time % 100 === 0) {
+  // Log status every 100 ticks (skip when bucket critically low)
+  if (Game.time % 100 === 0 && !shouldSkipNonEssential()) {
     logStatus();
   }
 
   // Export data to memory segment for AWS Lambda (every 20 ticks)
+  // AWSExporter.export() has its own bucket guard inside
   if (Game.time % 20 === 0) {
     AWSExporter.export();
   }
 
-  // Export decision logs to segment 93 (according to DecisionLogger.windowSize)
-  DecisionLogger.export();
+  // Export decision logs to segment 93 (skip when bucket low)
+  if (!shouldSkipNonEssential()) {
+    DecisionLogger.export();
+  }
 
   // End stats tracking for this tick
   StatsCollector.endTick();

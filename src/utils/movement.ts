@@ -3,6 +3,21 @@
  * With stuck detection, safe pathfinding, and border handling
  */
 
+// ============================================================================
+// HEAP-LEVEL CACHES (survive ticks, reset on global reset)
+// ============================================================================
+
+/**
+ * Route cache - room topology never changes, cache findRoute results permanently.
+ * Key format: "fromRoom:toRoom" or "fromRoom:toRoom:safe" for safe routes.
+ */
+const findRouteCache: Record<string, ReturnType<typeof Game.map.findRoute>> = {};
+
+/**
+ * Room type cache - highway/SK status never changes.
+ */
+const roomTypeCache: Record<string, { isHighway: boolean; isSK: boolean; parsed: { x: number; y: number; wx: number; wy: number } | null }> = {};
+
 /**
  * Parse room name into x/y coordinates.
  */
@@ -21,41 +36,60 @@ function parseRoomName(roomName: string): { x: number; y: number; wx: number; wy
 }
 
 /**
+ * Get cached room type info (highway/SK status and parsed coords).
+ * This is called hundreds of times per findRoute - caching is critical.
+ */
+function getRoomType(roomName: string): { isHighway: boolean; isSK: boolean; parsed: { x: number; y: number; wx: number; wy: number } | null } {
+  if (roomTypeCache[roomName]) return roomTypeCache[roomName];
+
+  const parsed = parseRoomName(roomName);
+  let isHighway = false;
+  let isSK = false;
+
+  if (parsed) {
+    const xMod = parsed.wx % 10;
+    const yMod = parsed.wy % 10;
+    isHighway = xMod === 0 || yMod === 0;
+    isSK = xMod >= 4 && xMod <= 6 && yMod >= 4 && yMod <= 6;
+  }
+
+  const result = { isHighway, isSK, parsed };
+  roomTypeCache[roomName] = result;
+  return result;
+}
+
+/**
  * Check if a room is a Source Keeper room based on coordinates.
  * SK rooms have coordinates where both x and y are between 4-6 (when mod 10).
  * Examples: W5N5, E15N25, W45N15
+ * Uses cached room type lookup.
  */
 export function isSourceKeeperRoom(roomName: string): boolean {
-  const parsed = parseRoomName(roomName);
-  if (!parsed) return false;
-
-  const xMod = parsed.wx % 10;
-  const yMod = parsed.wy % 10;
-
-  // SK rooms have coordinates 4-6 in both x and y
-  return xMod >= 4 && xMod <= 6 && yMod >= 4 && yMod <= 6;
+  return getRoomType(roomName).isSK;
 }
 
 /**
  * Check if a room is a highway (coordinates 0 in x or y mod 10).
+ * Uses cached room type lookup.
  */
 export function isHighwayRoom(roomName: string): boolean {
-  const parsed = parseRoomName(roomName);
-  if (!parsed) return false;
-
-  return parsed.wx % 10 === 0 || parsed.wy % 10 === 0;
+  return getRoomType(roomName).isHighway;
 }
 
 /**
  * Get the cost for routing through a room.
  * Returns Infinity for rooms that should be avoided entirely.
+ * Uses cached room type lookup to avoid repeated parsing.
  */
 function getSafeRouteCost(roomName: string, allowedRooms: string[]): number {
   // Always allow explicitly permitted rooms (start/end)
   if (allowedRooms.indexOf(roomName) !== -1) return 1;
 
+  // Get cached room type (SK/highway status)
+  const roomType = getRoomType(roomName);
+
   // Block Source Keeper rooms
-  if (isSourceKeeperRoom(roomName)) {
+  if (roomType.isSK) {
     return Infinity;
   }
 
@@ -82,7 +116,7 @@ function getSafeRouteCost(roomName: string, allowedRooms: string[]): number {
   }
 
   // Prefer highways
-  if (isHighwayRoom(roomName)) {
+  if (roomType.isHighway) {
     return 1;
   }
 
@@ -97,6 +131,45 @@ export function getSafeRouteCallback(allowedRooms?: string[]): (roomName: string
   return (roomName: string, _fromRoomName: string): number => {
     return getSafeRouteCost(roomName, allowed);
   };
+}
+
+// Per-tick cache for safe routes (intel can change)
+let safeRouteCacheTick = 0;
+let safeRouteCache: Record<string, ReturnType<typeof Game.map.findRoute>> = {};
+
+/**
+ * Cached findRoute - uses permanent cache for direct routes,
+ * per-tick cache for safe routes (intel can change).
+ */
+export function cachedFindRoute(
+  from: string,
+  to: string,
+  safe: boolean,
+  allowedRooms?: string[]
+): ReturnType<typeof Game.map.findRoute> {
+  if (safe) {
+    // Per-tick cache for safe routes
+    if (Game.time !== safeRouteCacheTick) {
+      safeRouteCache = {};
+      safeRouteCacheTick = Game.time;
+    }
+    const key = from + ":" + to;
+    if (safeRouteCache[key] !== undefined) return safeRouteCache[key];
+
+    const result = Game.map.findRoute(from, to, {
+      routeCallback: getSafeRouteCallback(allowedRooms || [from, to]),
+    });
+    safeRouteCache[key] = result;
+    return result;
+  } else {
+    // Permanent cache for direct routes (room topology never changes)
+    const key = from + ":" + to;
+    if (findRouteCache[key] !== undefined) return findRouteCache[key];
+
+    const result = Game.map.findRoute(from, to);
+    findRouteCache[key] = result;
+    return result;
+  }
 }
 
 /**
@@ -172,23 +245,20 @@ function findSafeWaypoint(fromRoom: string, targetRoom: string): string | null {
 export function analyzeRoute(fromRoom: string, toRoom: string): void {
   console.log(`[Route Analysis] ${fromRoom} -> ${toRoom}`);
 
-  // Check direct route
-  const directRoute = Game.map.findRoute(fromRoom, toRoom);
+  // Check direct route (cached)
+  const directRoute = cachedFindRoute(fromRoom, toRoom, false);
   if (directRoute === ERR_NO_PATH) {
     console.log("  Direct route: NO PATH");
   } else {
     console.log(`  Direct route: ${directRoute.length} rooms`);
     for (const step of directRoute) {
-      const isSK = isSourceKeeperRoom(step.room);
-      const isHW = isHighwayRoom(step.room);
-      console.log(`    -> ${step.room} (SK: ${isSK}, Highway: ${isHW})`);
+      const roomType = getRoomType(step.room);
+      console.log(`    -> ${step.room} (SK: ${roomType.isSK}, Highway: ${roomType.isHighway})`);
     }
   }
 
-  // Check safe route
-  const safeRoute = Game.map.findRoute(fromRoom, toRoom, {
-    routeCallback: getSafeRouteCallback([fromRoom, toRoom]),
-  });
+  // Check safe route (cached per-tick)
+  const safeRoute = cachedFindRoute(fromRoom, toRoom, true, [fromRoom, toRoom]);
   if (safeRoute === ERR_NO_PATH) {
     console.log("  Safe route: NO PATH (blocked by SK/hostile rooms)");
 
@@ -413,11 +483,9 @@ export function moveToRoom(
     }
   }
 
-  // CASE 3: Try to find safe route to target
+  // CASE 3: Try to find safe route to target (cached per-tick)
   if (avoidDanger) {
-    const route = Game.map.findRoute(creep.room.name, targetRoom, {
-      routeCallback: getSafeRouteCallback([creep.room.name, targetRoom]),
-    });
+    const route = cachedFindRoute(creep.room.name, targetRoom, true, [creep.room.name, targetRoom]);
 
     if (route === ERR_NO_PATH || route.length === 0) {
       // No safe direct route - find intermediate waypoint
@@ -456,13 +524,11 @@ function moveToRoomInternal(
     return false;
   }
 
-  // Find the exit direction to use
+  // Find the exit direction to use (cached)
   let exitDir: ExitConstant | ERR_NO_PATH | ERR_INVALID_ARGS;
 
   if (avoidDanger) {
-    const route = Game.map.findRoute(creep.room.name, targetRoom, {
-      routeCallback: getSafeRouteCallback([creep.room.name, targetRoom]),
-    });
+    const route = cachedFindRoute(creep.room.name, targetRoom, true, [creep.room.name, targetRoom]);
 
     if (route === ERR_NO_PATH || route.length === 0) {
       return false;
