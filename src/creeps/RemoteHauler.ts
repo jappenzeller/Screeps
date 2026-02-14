@@ -129,6 +129,8 @@ export function runRemoteHauler(creep: Creep): void {
   }
   if (creep.memory.state === "DELIVERING" && creep.store.getUsedCapacity() === 0) {
     creep.memory.state = "COLLECTING";
+    // Clear cached delivery target when switching to collecting
+    delete creep.memory.deliverTarget;
   }
 
   if (creep.memory.state === "COLLECTING") {
@@ -196,6 +198,93 @@ function collect(creep: Creep, targetRoom: string): void {
   }
 }
 
+/**
+ * Check if a room is in emergency mode (no harvesters or haulers).
+ * Cached per room per tick to avoid repeated creep iteration.
+ */
+function checkEmergencyMode(room: Room): boolean {
+  // Room properties reset each tick - no stale data risk
+  if (room._remoteHaulerEmergency !== undefined) {
+    return room._remoteHaulerEmergency;
+  }
+
+  // Use room.find instead of Object.values(Game.creeps).filter
+  // This only checks creeps physically in the room, which is close enough
+  const homeCreeps = room.find(FIND_MY_CREEPS);
+  let hasHarvesters = false;
+  let hasHaulers = false;
+
+  for (const creep of homeCreeps) {
+    const role = creep.memory.role;
+    if (role === "HARVESTER") hasHarvesters = true;
+    if (role === "HAULER") hasHaulers = true;
+    if (hasHarvesters && hasHaulers) break;
+  }
+
+  room._remoteHaulerEmergency = !hasHarvesters || !hasHaulers;
+  return room._remoteHaulerEmergency;
+}
+
+/**
+ * Find delivery target using cheap findClosestByRange instead of findClosestByPath.
+ * Priority: Emergency spawn/ext > Storage > Controller container > Spawn/ext > Any container
+ */
+function findDeliveryTarget(creep: Creep): AnyStoreStructure | null {
+  const homeRoom = creep.memory.room;
+  const room = Game.rooms[homeRoom];
+  if (!room) return null;
+
+  // === EMERGENCY: Bootstrap mode - spawn/ext first ===
+  if (checkEmergencyMode(room)) {
+    const emergencyTarget = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
+      filter: (s) =>
+        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+    }) as AnyStoreStructure | null;
+    if (emergencyTarget) {
+      creep.say("SOS");
+      return emergencyTarget;
+    }
+  }
+
+  // Priority 1: Storage (direct property lookup - free)
+  const storage = room.storage;
+  if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+    return storage;
+  }
+
+  // Priority 2: Controller container (small findInRange - cheap)
+  const controller = room.controller;
+  if (controller) {
+    const containers = controller.pos.findInRange(FIND_STRUCTURES, 3, {
+      filter: (s) =>
+        s.structureType === STRUCTURE_CONTAINER &&
+        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+    });
+    if (containers.length > 0) {
+      return containers[0] as AnyStoreStructure;
+    }
+  }
+
+  // Priority 3: Spawn/extensions (findClosestByRange, NOT byPath)
+  const spawnExt = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
+    filter: (s) =>
+      (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+      s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+  }) as AnyStoreStructure | null;
+  if (spawnExt) return spawnExt;
+
+  // Priority 4: Any container with space (findClosestByRange)
+  const container = creep.pos.findClosestByRange(FIND_STRUCTURES, {
+    filter: (s) =>
+      s.structureType === STRUCTURE_CONTAINER &&
+      s.store.getFreeCapacity(RESOURCE_ENERGY) > 100,
+  }) as AnyStoreStructure | null;
+  if (container) return container;
+
+  return null;
+}
+
 function deliver(creep: Creep, homeRoom: string): void {
   // Travel to home room if not there
   if (creep.room.name !== homeRoom) {
@@ -204,90 +293,36 @@ function deliver(creep: Creep, homeRoom: string): void {
   }
 
   // Opportunistic renewal - try when in home room and near spawn
-  // This runs every tick we're in home room, but only acts if adjacent to spawn
   if (tryRenew(creep)) {
     return; // Spent tick renewing
   }
 
-  // === EMERGENCY: Fill spawn/extensions when home economy is dead ===
-  // If no harvesters AND no haulers exist, remote haulers are the only
-  // way to get energy into spawn. Override normal delivery priority.
-  const homeCreeps = Object.values(Game.creeps).filter(
-    (c) => c.memory.room === homeRoom
-  );
-  const hasHarvesters = homeCreeps.some((c) => c.memory.role === "HARVESTER");
-  const hasHaulers = homeCreeps.some((c) => c.memory.role === "HAULER");
-
-  if (!hasHarvesters || !hasHaulers) {
-    const spawnOrExt = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-      filter: (s) =>
-        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    });
-    if (spawnOrExt) {
-      if (creep.transfer(spawnOrExt, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, spawnOrExt, ROAD_OPTS_DELIVER);
-      }
-      creep.say("SOS");
-      return;
-    }
-  }
-  // === END EMERGENCY ===
-
-  // Priority 1: Storage
-  const storage = creep.room.storage;
-  if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-    if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, ROAD_OPTS_DELIVER);
-    }
-    return;
-  }
-
-  // Priority 2: Containers near controller
-  const controller = creep.room.controller;
-  if (controller) {
-    const controllerContainer = controller.pos.findInRange(FIND_STRUCTURES, 3, {
-      filter: (s) =>
-        s.structureType === STRUCTURE_CONTAINER &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    })[0] as StructureContainer | undefined;
-
-    if (controllerContainer) {
-      if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, controllerContainer, ROAD_OPTS_DELIVER);
+  // Try cached target first (Game.getObjectById is essentially free)
+  const cachedId = creep.memory.deliverTarget;
+  if (cachedId) {
+    const cached = Game.getObjectById(cachedId);
+    if (cached && cached.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+      if (creep.transfer(cached, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, cached, ROAD_OPTS_DELIVER);
       }
       return;
     }
+    // Cache miss - target full or gone
+    delete creep.memory.deliverTarget;
   }
 
-  // Priority 3: Spawn/extensions that need energy
-  const spawn = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: (s) =>
-      (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-  });
-  if (spawn) {
-    if (creep.transfer(spawn, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, spawn, ROAD_OPTS_DELIVER);
+  // Find new target using cheap lookups
+  const target = findDeliveryTarget(creep);
+  if (target) {
+    creep.memory.deliverTarget = target.id;
+    if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, target, ROAD_OPTS_DELIVER);
     }
     return;
   }
 
-  // Priority 4: Any container with space
-  const container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-    filter: (s) =>
-      s.structureType === STRUCTURE_CONTAINER &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 100,
-  });
-  if (container) {
-    if (creep.transfer(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, container, ROAD_OPTS_DELIVER);
-    }
-    return;
-  }
-
-  // Nowhere to deliver - wait near storage or spawn
-  const waitTarget = storage || creep.room.find(FIND_MY_SPAWNS)[0];
+  // Nowhere to deliver - park near storage/spawn
+  const waitTarget = creep.room.storage || creep.room.find(FIND_MY_SPAWNS)[0];
   if (waitTarget && !creep.pos.inRangeTo(waitTarget, 3)) {
     smartMoveTo(creep, waitTarget, ROAD_OPTS_DELIVER);
   }

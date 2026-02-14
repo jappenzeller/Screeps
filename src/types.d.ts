@@ -40,6 +40,9 @@ interface CreepMemory {
   _renewTicks?: number;
   _renewWaitStart?: number; // Tick when started waiting at spawn for renewal
 
+  // Remote hauler delivery target cache (cleared on state change)
+  deliverTarget?: Id<AnyStoreStructure>;
+
   // Harvester/defender renewal state
   renewing?: boolean;
 
@@ -620,3 +623,9 @@ interface Memory {
 declare const console: {
   log(...args: unknown[]): void;
 };
+
+// Room interface extension for per-tick caching
+interface Room {
+  /** Cached per-tick: true if home room is in emergency (no harvesters/haulers) */
+  _remoteHaulerEmergency?: boolean;
+}
