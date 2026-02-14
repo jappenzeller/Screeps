@@ -2,43 +2,23 @@
 
 Integration tests for the Screeps bot using a local private server.
 
-## Current Status (WIP)
+## Current Status
 
 **Working:**
-- Server infrastructure code compiles
+- Server infrastructure compiles and runs
 - Native modules (isolated-vm, @screeps/driver) build successfully
-- Server starts and can execute ticks
-- Bot code deploys to server
+- Server starts and executes ticks
+- Bot code deploys and executes correctly
 - WorldBuilder creates rooms with terrain, sources, structures
+- ScenarioRunner properly configures room ownership after bot deployment
+- Economic Recovery scenario: **PASSING**
 
-**Root Cause Identified (Not Yet Fixed):**
+**Scenarios:**
 
-The bot doesn't spawn creeps due to ownership mismatch between structures and the bot user:
-
-1. **WorldBuilder creates structures with `user: "TestBot"` (string)**
-2. **`addBot()` creates a user with `_id: "0ccc1f7a3cf4361"` (ObjectId)**
-3. **`addBot()` also creates its OWN spawn and updates the controller** to use the user's `_id`
-4. **Result: Two spawns exist** - one with string owner, one with ObjectId owner
-5. **Storage/extensions still have string owner** - not linked to the actual user
-
-**Debug output shows:**
-```
-Before addBot:
-  Controller: { user: "TestBot", level: 5 }
-  Spawn: { user: "TestBot" }
-
-After addBot:
-  Controller: { user: "0ccc1f7a3cf4361", level: 1 }  // level reset!
-  Spawn 1: { user: "TestBot" }  // original, orphaned
-  Spawn 2: { user: "0ccc1f7a3cf4361" }  // new from addBot
-```
-
-**Fix Required:**
-Option A: Don't pre-create owned structures in WorldBuilder. Let `addBot()` create the spawn, then add other structures using the user's `_id` from the database.
-
-Option B: After calling `addBot()`, update all pre-created structures to use the user's `_id` instead of the username string.
-
-Option C: Don't use `addBot()` at all - manually create the user in the database and set up all structures with the correct `_id`.
+| Scenario          | Status  | Notes                            |
+|-------------------|---------|----------------------------------|
+| Economic Recovery | ✅ Pass | Bot bootstraps from zero creeps  |
+| Invader Defense   | ❌ Fail | Bot lacks remote defense logic   |
 
 ## Requirements
 
@@ -73,12 +53,14 @@ The bundled node-gyp in screeps packages is old and requires Python 2. Here's ho
    cd ../..
    ```
 
-4. Remove nested isolated-vm and build driver native module:
+4. Remove nested isolated-vm and build driver:
    ```bash
    rm -rf node_modules/@screeps/driver/node_modules/isolated-vm
    cd node_modules/@screeps/driver/native
    node-gyp rebuild
-   cd ../../../..
+   cd ..
+   npm run build
+   cd ../../..
    ```
 
 5. Verify server works:
@@ -197,8 +179,10 @@ tests/server/
 
 ### node-gyp errors during install
 
-The `@screeps/driver` package requires native compilation. Ensure you have:
-- Python 2.7 (not 3.x)
+The `@screeps/driver` package requires native compilation. Follow the Windows Setup
+section above which uses global node-gyp with Python 3. Ensure you have:
+
+- Python 3.x with global node-gyp@latest
 - C++ build tools for your platform
 
 ### Tests hang

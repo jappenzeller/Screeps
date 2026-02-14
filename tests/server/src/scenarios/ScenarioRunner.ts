@@ -9,7 +9,7 @@
  */
 
 import { ServerController } from "../server/ServerController";
-import { WorldBuilder, RoomBuilder } from "../server/WorldBuilder";
+import { WorldBuilder } from "../server/WorldBuilder";
 import { BotDeployer } from "../deployment/BotDeployer";
 import { generateHostileBotCode } from "../deployment/HostileBotGenerator";
 import { checkAssertion } from "./Assertions";
@@ -23,6 +23,7 @@ import {
   BotConfig,
   HostileBotConfig,
   InjectionConfig,
+  StructurePlacement,
 } from "../types";
 
 export interface RunnerConfig {
@@ -78,8 +79,8 @@ export class ScenarioRunner {
       }
       await world.build();
 
-      // 3. Deploy our main bot
-      await this.deployMainBot(scenario.bot, timeline);
+      // 3. Deploy our main bot and configure room
+      await this.deployMainBot(scenario.bot, scenario.rooms, timeline);
 
       // 4. Deploy hostile bots (if any)
       if (scenario.hostileBots) {
@@ -234,17 +235,19 @@ export class ScenarioRunner {
 
   /**
    * Set up a room from config
+   * NOTE: Only sets up terrain, sources, mineral, controller (without owner).
+   * Owned structures are added AFTER bot deployment via configureRoomForBot().
    */
   private async setupRoom(world: WorldBuilder, config: RoomConfig): Promise<void> {
     const room = world.addRoom(config.name);
 
-    // Add controller if owned
+    // Add controller WITHOUT owner - ownership set after bot deployment
     if (config.controllerPos) {
       room.addController(
         config.controllerPos.x,
         config.controllerPos.y,
-        config.rcl || 0,
-        config.owner || undefined
+        0,  // RCL set after addBot
+        undefined  // No owner - set after addBot
       );
     }
 
@@ -265,20 +268,13 @@ export class ScenarioRunner {
       );
     }
 
-    // Add structures
+    // Add ONLY unowned structures (roads, containers without owner)
     if (config.structures) {
       for (const struct of config.structures) {
-        room.addStructure(struct);
-      }
-    }
-
-    // Add storage with contents
-    if (config.storage) {
-      // Find if there's already a storage in structures
-      const storageStruct = config.structures?.find((s) => s.type === "storage");
-      if (storageStruct && config.owner) {
-        // Update storage energy (will be handled in WorldBuilder)
-        storageStruct.store = config.storage;
+        if (!struct.owner) {
+          room.addStructure(struct);
+        }
+        // Owned structures added in configureRoomForBot()
       }
     }
 
@@ -291,11 +287,16 @@ export class ScenarioRunner {
   }
 
   /**
-   * Deploy the main bot
+   * Deploy the main bot and configure room ownership
    */
-  private async deployMainBot(config: BotConfig, timeline: TimelineEvent[]): Promise<void> {
+  private async deployMainBot(
+    config: BotConfig,
+    roomConfigs: RoomConfig[],
+    timeline: TimelineEvent[]
+  ): Promise<void> {
     this.log(`  Deploying bot: ${config.username} in ${config.room}`);
 
+    // Deploy the bot (creates user + spawn)
     await this.deployer.deployTo(this.server, config.username, config.room, {
       gcl: config.gcl || 1,
       cpu: config.cpu || 100,
@@ -303,12 +304,137 @@ export class ScenarioRunner {
       position: { x: 25, y: 25 },
     });
 
+    // Configure room with correct user ID
+    await this.configureRoomForBot(config, roomConfigs);
+
     timeline.push({
       tick: 0,
       type: "bot_deployed",
       description: `Deployed ${config.username} in ${config.room}`,
       data: { username: config.username, room: config.room, rcl: config.rcl },
     });
+  }
+
+  /**
+   * Configure room structures after bot deployment
+   */
+  private async configureRoomForBot(
+    botConfig: BotConfig,
+    roomConfigs: RoomConfig[]
+  ): Promise<void> {
+    // Get the user's database ID
+    const userId = await this.server.getUserId(botConfig.username);
+    if (!userId) {
+      throw new Error(`User ${botConfig.username} not found in database`);
+    }
+
+    // Set controller RCL
+    await this.server.setControllerLevel(botConfig.room, botConfig.rcl, userId);
+    this.log(`  Set controller to RCL ${botConfig.rcl}`);
+
+    // Find the room config
+    const roomConfig = roomConfigs.find((r) => r.name === botConfig.room);
+
+    // Add owned structures from room config
+    let hasStorage = false;
+    if (roomConfig?.structures) {
+      for (const struct of roomConfig.structures) {
+        if (struct.owner) {
+          // Skip spawn - addBot already created one
+          if (struct.type === "spawn") continue;
+
+          // Track storage
+          if (struct.type === "storage") hasStorage = true;
+
+          // Build proper attributes for each structure type
+          const attrs = this.buildStructureAttrs(struct);
+          await this.server.addOwnedStructure(
+            botConfig.room,
+            struct.type,
+            struct.x,
+            struct.y,
+            userId,
+            attrs
+          );
+          this.log(`  Added ${struct.type} at (${struct.x},${struct.y})`);
+        }
+      }
+    }
+
+    // Add structures from bot config
+    if (botConfig.structures) {
+      for (const struct of botConfig.structures) {
+        if (struct.type === "spawn") continue;
+        if (struct.type === "storage") hasStorage = true;
+
+        const attrs = this.buildStructureAttrs(struct);
+        await this.server.addOwnedStructure(
+          botConfig.room,
+          struct.type,
+          struct.x,
+          struct.y,
+          userId,
+          attrs
+        );
+      }
+    }
+
+    // Add storage if storageEnergy specified and no storage exists
+    if (botConfig.storageEnergy && !hasStorage) {
+      await this.server.addOwnedStructure(
+        botConfig.room,
+        "storage",
+        26,
+        25,
+        userId,
+        { store: { energy: botConfig.storageEnergy } }
+      );
+      this.log(`  Added storage with ${botConfig.storageEnergy} energy`);
+    }
+  }
+
+  /**
+   * Build proper attributes for a structure type
+   */
+  private buildStructureAttrs(struct: StructurePlacement): Record<string, unknown> {
+    const attrs: Record<string, unknown> = {
+      hits: struct.hits || 10000,
+      hitsMax: struct.hits || 10000,
+    };
+
+    // Handle store/energy based on structure type
+    switch (struct.type) {
+      case "extension":
+        attrs.store = { energy: struct.energy || 0 };
+        attrs.storeCapacityResource = { energy: 50 };  // RCL 5-6
+        break;
+      case "tower":
+        attrs.store = { energy: struct.energy || 0 };
+        attrs.storeCapacityResource = { energy: 1000 };
+        break;
+      case "storage":
+        attrs.store = struct.store || { energy: 0 };
+        break;
+      case "link":
+        attrs.store = { energy: struct.energy || 0 };
+        attrs.storeCapacityResource = { energy: 800 };
+        break;
+      case "terminal":
+        attrs.store = struct.store || { energy: 0 };
+        break;
+      case "lab":
+        attrs.store = struct.store || { energy: 0 };
+        attrs.mineralType = null;
+        break;
+      default:
+        if (struct.store) {
+          attrs.store = struct.store;
+        } else if (struct.energy !== undefined) {
+          attrs.store = { energy: struct.energy };
+        }
+    }
+
+    return attrs;
   }
 
   /**

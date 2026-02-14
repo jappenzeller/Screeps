@@ -110,6 +110,7 @@ export class ServerController {
   private config: ServerControllerConfig;
   private users: Map<string, User> = new Map();
   private consoleLogs: Map<string, string[]> = new Map();
+  private userIdToUsername: Map<string, string> = new Map();
   private db: Database | null = null;
   private ready = false;
 
@@ -152,6 +153,7 @@ export class ServerController {
     // Clear tracked state
     this.users.clear();
     this.consoleLogs.clear();
+    this.userIdToUsername.clear();
   }
 
   /**
@@ -341,6 +343,12 @@ export class ServerController {
     this.users.set(username, user);
     this.consoleLogs.set(username, []);
 
+    // Get the user's database ID and store the mapping
+    const userId = await this.getUserId(username);
+    if (userId) {
+      this.userIdToUsername.set(userId, username);
+    }
+
     // Subscribe to console output
     user.on("console", (logs, _results, _userid, uname) => {
       const botLogs = this.consoleLogs.get(uname) || [];
@@ -421,6 +429,79 @@ export class ServerController {
     return user.console(command);
   }
 
+  /**
+   * Get a user's database ID by username
+   */
+  async getUserId(username: string): Promise<string | null> {
+    if (!this.db) {
+      throw new Error("Server not initialized");
+    }
+
+    const user = await this.db.users.findOne({ username }) as { _id: string } | null;
+    return user?._id || null;
+  }
+
+  /**
+   * Update a room object's attributes
+   */
+  async updateRoomObject(
+    room: string,
+    type: string,
+    updates: Record<string, unknown>
+  ): Promise<void> {
+    if (!this.db) {
+      throw new Error("Server not initialized");
+    }
+
+    await this.db["rooms.objects"].update(
+      { room, type },
+      { $set: updates }
+    );
+  }
+
+  /**
+   * Set controller level and ownership for a room
+   */
+  async setControllerLevel(room: string, level: number, userId?: string): Promise<void> {
+    if (!this.db) {
+      throw new Error("Server not initialized");
+    }
+
+    const updates: Record<string, unknown> = {
+      level,
+      progress: 0,
+      downgradeTime: level > 0 ? 20000 : null,
+    };
+
+    if (userId) {
+      updates.user = userId;
+    }
+
+    await this.db["rooms.objects"].update(
+      { room, type: "controller" },
+      { $set: updates }
+    );
+  }
+
+  /**
+   * Add a structure owned by a specific user (by userId)
+   */
+  async addOwnedStructure(
+    room: string,
+    type: string,
+    x: number,
+    y: number,
+    userId: string,
+    attributes?: Record<string, unknown>
+  ): Promise<void> {
+    const attrs: Record<string, unknown> = {
+      user: userId,
+      ...attributes,
+    };
+
+    await this.addRoomObject(room, type, x, y, attrs);
+  }
+
   // ============================================
   // State Queries
   // ============================================
@@ -468,6 +549,14 @@ export class ServerController {
   }
 
   /**
+   * Convert a user ID to username (or return the ID if not found)
+   */
+  private resolveUsername(userId: string | null): string | null {
+    if (!userId) return null;
+    return this.userIdToUsername.get(userId) || userId;
+  }
+
+  /**
    * Get state for a specific room
    */
   async getRoomState(roomName: string): Promise<RoomState> {
@@ -480,7 +569,7 @@ export class ServerController {
     let ticksToDowngrade: number | undefined;
 
     if (controller) {
-      owner = (controller.user as string) || null;
+      owner = this.resolveUsername((controller.user as string) || null);
       rcl = (controller.level as number) || null;
       ticksToDowngrade = controller.downgradeTime as number | undefined;
     }
@@ -491,7 +580,7 @@ export class ServerController {
       .map((o) => ({
         id: o._id,
         name: o.name as string,
-        owner: (o.user as string) || "unknown",
+        owner: this.resolveUsername((o.user as string) || null) || "unknown",
         body: (o.body as Array<{ type: BodyPartType }>)?.map((b) => b.type) || [],
         hits: (o.hits as number) || 0,
         hitsMax: (o.hitsMax as number) || 0,
@@ -527,7 +616,7 @@ export class ServerController {
       .map((o) => ({
         id: o._id,
         type: o.type as StructureType,
-        owner: (o.user as string) || null,
+        owner: this.resolveUsername((o.user as string) || null),
         hits: (o.hits as number) || 0,
         hitsMax: (o.hitsMax as number) || 0,
         x: o.x,

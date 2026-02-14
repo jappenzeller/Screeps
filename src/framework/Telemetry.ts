@@ -49,6 +49,7 @@ declare global {
  */
 export class TelemetryManager {
   private static readonly SEGMENT_ID = 92; // Segment for telemetry export
+  private static readonly MAX_SEGMENT_SIZE = 90 * 1024; // 90KB (leave margin under 100KB limit)
   private static pendingDecisions: DecisionLogEntry[] = [];
   private static pendingPatches: WeightPatch[] = [];
 
@@ -61,7 +62,7 @@ export class TelemetryManager {
         enabled: true,
         lastExport: Game.time,
         exportInterval: 100,
-        maxDecisions: 500,
+        maxDecisions: 200, // Reduced from 500 to help stay under 100KB segment limit
         decisions: [],
         weightPatches: [],
         totalDecisions: 0,
@@ -141,14 +142,14 @@ export class TelemetryManager {
   }
 
   /**
-   * Export telemetry to memory segment
+   * Export telemetry to memory segment with size-aware truncation
    */
   private static exportToSegment(state: WorldState): void {
     if (!Memory.telemetry) return;
 
     const mem = Memory.telemetry;
 
-    // Build export payload
+    // Build colony metrics
     const colonyMetrics: TelemetryExport["colonyMetrics"] = {};
     for (const [roomName, colony] of state.colonies) {
       colonyMetrics[roomName] = {
@@ -160,23 +161,40 @@ export class TelemetryManager {
       };
     }
 
-    const exportData: TelemetryExport = {
+    // Build export with all decisions
+    let decisions = [...mem.decisions];
+    let truncated = false;
+
+    // Helper to build export payload
+    const buildExport = (): TelemetryExport & { truncated?: boolean } => ({
       exportedAt: Game.time,
       windowStart: mem.lastExport,
       windowEnd: Game.time,
-      decisions: mem.decisions,
+      decisions,
       weightPatches: mem.weightPatches,
       colonyMetrics,
-    };
+      truncated: truncated || undefined,
+    });
+
+    let json = JSON.stringify(buildExport());
+
+    // Truncate if over limit (remove oldest decisions progressively)
+    while (json.length > this.MAX_SEGMENT_SIZE && decisions.length > 10) {
+      const removeCount = Math.max(1, Math.floor(decisions.length * 0.1));
+      decisions = decisions.slice(removeCount);
+      truncated = true;
+      json = JSON.stringify(buildExport());
+    }
 
     // Write to segment
     try {
-      RawMemory.segments[this.SEGMENT_ID] = JSON.stringify(exportData);
+      RawMemory.segments[this.SEGMENT_ID] = json;
       RawMemory.setPublicSegments([this.SEGMENT_ID]);
 
+      const sizeKB = (json.length / 1024).toFixed(1);
       logger.info(
         "Telemetry",
-        `Exported ${mem.decisions.length} decisions to segment ${this.SEGMENT_ID}`
+        `Exported ${decisions.length} decisions to segment ${this.SEGMENT_ID} (${sizeKB}KB)${truncated ? " [truncated]" : ""}`
       );
     } catch (error) {
       logger.error("Telemetry", `Export failed: ${error}`);
