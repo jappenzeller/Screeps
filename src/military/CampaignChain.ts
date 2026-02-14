@@ -7,6 +7,32 @@
  * Does NOT auto-launch — presents options via console for manual decision.
  */
 
+// ============================================================================
+// ROUTE CACHE - Room topology is static, cache findRoute results permanently
+// ============================================================================
+
+const routeCache: Record<string, ReturnType<typeof Game.map.findRoute>> = {};
+
+/**
+ * Cached findRoute - room topology is static, results never change.
+ * Exported for use in MilitaryEvaluator.
+ */
+export function cachedFindRoute(from: string, to: string): ReturnType<typeof Game.map.findRoute> {
+  const key = from + ":" + to;
+  if (routeCache[key] !== undefined) return routeCache[key];
+  const result = Game.map.findRoute(from, to);
+  routeCache[key] = result;
+  return result;
+}
+
+// ============================================================================
+// RATE-LIMITING - Don't re-evaluate every tick
+// ============================================================================
+
+let lastTargetsResult: CampaignTarget[] | null = null;
+let lastTargetsTick = 0;
+const TARGETS_CACHE_TICKS = 50;
+
 export interface CampaignTarget {
   roomName: string;
   owner: string;
@@ -24,8 +50,14 @@ export interface CampaignTarget {
 /**
  * Evaluate potential next targets after a campaign.
  * Searches rooms within 3 tiles of all owned colonies for hostile controllers.
+ * Rate-limited: returns cached results for 50 ticks.
  */
 export function evaluateTargets(): CampaignTarget[] {
+  // Rate-limit: return cached results if recent
+  if (Game.time - lastTargetsTick < TARGETS_CACHE_TICKS && lastTargetsResult !== null) {
+    return lastTargetsResult;
+  }
+
   var targets: CampaignTarget[] = [];
   var checked: Record<string, boolean> = {};
 
@@ -55,7 +87,8 @@ export function evaluateTargets(): CampaignTarget[] {
       var col = Game.rooms[colName];
       if (!col || !col.controller || !col.controller.my) continue;
 
-      var route = Game.map.findRoute(colName, roomName);
+      // Use cached findRoute - room topology never changes
+      var route = cachedFindRoute(colName, roomName);
       if (route !== ERR_NO_PATH && Array.isArray(route)) {
         if (route.length < minDist) {
           minDist = route.length;
@@ -114,6 +147,10 @@ export function evaluateTargets(): CampaignTarget[] {
     if (distDiff !== 0) return distDiff;
     return a.rcl - b.rcl;
   });
+
+  // Cache results for rate-limiting
+  lastTargetsResult = targets;
+  lastTargetsTick = Game.time;
 
   return targets;
 }

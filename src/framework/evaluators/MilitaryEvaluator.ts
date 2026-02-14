@@ -24,6 +24,7 @@ import {
 } from "../types";
 import { BaseEvaluator } from "../BaseEvaluator";
 import * as CampaignChain from "../../military/CampaignChain";
+import { cachedFindRoute } from "../../military/CampaignChain";
 import * as MilitaryManager from "../../military/MilitaryManager";
 
 // ============================================================================
@@ -200,8 +201,8 @@ export class MilitaryEvaluator extends BaseEvaluator<MilitaryAction> {
   ): ScoredOption<MilitaryAction> | null {
     const factors: FactorBreakdown = {};
 
-    // Check if this colony can reach the target
-    const route = Game.map.findRoute(colony.roomName, target.roomName);
+    // Check if this colony can reach the target (cached - room topology is static)
+    const route = cachedFindRoute(colony.roomName, target.roomName);
     if (route === ERR_NO_PATH || !Array.isArray(route) || route.length > 7) {
       return null; // Too far for CLAIM creeps
     }
