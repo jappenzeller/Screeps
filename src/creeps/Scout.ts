@@ -1,7 +1,64 @@
-import { moveToRoom, smartMoveTo } from "../utils/movement";
+import { smartMoveTo } from "../utils/movement";
 
 const SCOUT_RANGE = 4; // Scout 4 rooms in each direction
 const STALE_THRESHOLD = 10000; // Re-scan after 10000 ticks
+
+/**
+ * Move scout to a room using cheap directional movement.
+ * Scouts don't need safe routes - they're expendable.
+ * This avoids expensive findRoute calls that cause CPU timeouts.
+ */
+function moveScoutToRoom(creep: Creep, targetRoom: string): void {
+  if (creep.room.name === targetRoom) return;
+
+  // Use Game.map.findExit - much cheaper than findRoute
+  let exitDir = Game.map.findExit(creep.room.name, targetRoom);
+
+  // If findExit fails, calculate direction from room coordinates
+  if (exitDir === ERR_NO_PATH || exitDir === ERR_INVALID_ARGS) {
+    exitDir = getExitDirectionFromCoords(creep.room.name, targetRoom);
+  }
+
+  if (exitDir > 0) {
+    const exit = creep.pos.findClosestByRange(exitDir as FindConstant);
+    if (exit) {
+      creep.moveTo(exit, { reusePath: 20, maxRooms: 1 });
+    }
+  }
+}
+
+/**
+ * Calculate exit direction from room coordinates.
+ * Fallback when Game.map.findExit fails.
+ */
+function getExitDirectionFromCoords(from: string, to: string): ExitConstant | ERR_NO_PATH {
+  const fromCoords = parseRoomCoords(from);
+  const toCoords = parseRoomCoords(to);
+  if (!fromCoords || !toCoords) return ERR_NO_PATH;
+
+  const dx = toCoords.x - fromCoords.x;
+  const dy = toCoords.y - fromCoords.y;
+
+  // Move in the axis with greater distance
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx > 0 ? FIND_EXIT_RIGHT : FIND_EXIT_LEFT;
+  } else {
+    return dy > 0 ? FIND_EXIT_BOTTOM : FIND_EXIT_TOP;
+  }
+}
+
+/**
+ * Parse room name to world coordinates.
+ */
+function parseRoomCoords(roomName: string): { x: number; y: number } | null {
+  const match = roomName.match(/^([WE])(\d+)([NS])(\d+)$/);
+  if (!match) return null;
+
+  const x = match[1] === "E" ? parseInt(match[2], 10) : -parseInt(match[2], 10) - 1;
+  const y = match[3] === "S" ? parseInt(match[4], 10) : -parseInt(match[4], 10) - 1;
+
+  return { x, y };
+}
 
 /**
  * Scout - Explores rooms within 4-tile radius and records comprehensive intel
@@ -42,7 +99,7 @@ export function runScout(creep: Creep): void {
   if (!memory.targetRoom) {
     // All rooms scouted - recycle at spawn
     if (creep.room.name !== memory.homeRoom) {
-      moveToRoom(creep, memory.homeRoom, "#00ffff");
+      moveScoutToRoom(creep, memory.homeRoom);
       creep.say("DONE");
       return;
     }
@@ -59,9 +116,9 @@ export function runScout(creep: Creep): void {
     return;
   }
 
-  // Move to target room
+  // Move to target room (use cheap directional movement, not findRoute)
   if (creep.room.name !== memory.targetRoom) {
-    moveToRoom(creep, memory.targetRoom, "#00ffff");
+    moveScoutToRoom(creep, memory.targetRoom);
     creep.say("SCOUT");
   } else {
     // In target room - move toward center for full visibility

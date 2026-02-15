@@ -9,9 +9,71 @@
 
 /**
  * Route cache - room topology never changes, cache findRoute results permanently.
- * Key format: "fromRoom:toRoom" or "fromRoom:toRoom:safe" for safe routes.
+ * Key format: "fromRoom:toRoom" for direct routes.
+ * Safe routes use per-tick cache since they depend on intel data.
  */
 const findRouteCache: Record<string, ReturnType<typeof Game.map.findRoute>> = {};
+
+// Track if we've restored from Memory this global
+let routeCacheRestored = false;
+
+// Track last save tick for periodic persistence
+let lastRouteCacheSave = 0;
+const ROUTE_CACHE_SAVE_INTERVAL = 100;
+
+/**
+ * Restore route cache from Memory on global reset.
+ * Call this once per global from main loop.
+ */
+export function restoreRouteCacheFromMemory(): void {
+  if (routeCacheRestored) return;
+  routeCacheRestored = true;
+
+  const memCache = (Memory as any)._routeCache;
+  if (!memCache) return;
+
+  let restored = 0;
+  for (const key in memCache) {
+    if (findRouteCache[key] === undefined) {
+      findRouteCache[key] = memCache[key];
+      restored++;
+    }
+  }
+
+  if (restored > 0) {
+    console.log(`[Movement] Restored ${restored} cached routes from Memory`);
+  }
+}
+
+/**
+ * Persist route cache to Memory periodically.
+ * Call this from main loop (rate-limited internally).
+ */
+export function saveRouteCacheToMemory(): void {
+  // Rate-limit saves
+  if (Game.time - lastRouteCacheSave < ROUTE_CACHE_SAVE_INTERVAL) return;
+  lastRouteCacheSave = Game.time;
+
+  // Only save if bucket is healthy (don't add overhead when struggling)
+  if (Game.cpu.bucket < 5000) return;
+
+  // Build compact cache (only successful routes, limit size)
+  const toSave: Record<string, any> = {};
+  let count = 0;
+  const MAX_CACHED_ROUTES = 200;
+
+  for (const key in findRouteCache) {
+    if (count >= MAX_CACHED_ROUTES) break;
+    const route = findRouteCache[key];
+    // Only save successful routes (arrays, not ERR_NO_PATH)
+    if (Array.isArray(route)) {
+      toSave[key] = route;
+      count++;
+    }
+  }
+
+  (Memory as any)._routeCache = toSave;
+}
 
 /**
  * Room type cache - highway/SK status never changes.
@@ -137,9 +199,30 @@ export function getSafeRouteCallback(allowedRooms?: string[]): (roomName: string
 let safeRouteCacheTick = 0;
 let safeRouteCache: Record<string, ReturnType<typeof Game.map.findRoute>> = {};
 
+// Rate limiting for new route calculations
+let newRoutesThisTick = 0;
+let newRoutesTick = 0;
+const MAX_NEW_ROUTES_PER_TICK = 5;
+
+/**
+ * Reset route rate limiter at start of each tick.
+ * Call this from main loop.
+ */
+export function resetRouteRateLimit(): void {
+  if (Game.time !== newRoutesTick) {
+    newRoutesThisTick = 0;
+    newRoutesTick = Game.time;
+  }
+}
+
 /**
  * Cached findRoute - uses permanent cache for direct routes,
  * per-tick cache for safe routes (intel can change).
+ *
+ * Includes CPU guards:
+ * - Returns ERR_NO_PATH if CPU usage is too high
+ * - Rate-limits new route calculations per tick
+ * - Falls back to simple routes when bucket is low
  */
 export function cachedFindRoute(
   from: string,
@@ -147,7 +230,16 @@ export function cachedFindRoute(
   safe: boolean,
   allowedRooms?: string[]
 ): ReturnType<typeof Game.map.findRoute> {
-  if (safe) {
+  // Reset rate limiter if new tick
+  if (Game.time !== newRoutesTick) {
+    newRoutesThisTick = 0;
+    newRoutesTick = Game.time;
+  }
+
+  // When bucket is very low, use simple routes without routeCallback
+  const useSafeRoute = safe && Game.cpu.bucket >= 3000;
+
+  if (useSafeRoute) {
     // Per-tick cache for safe routes
     if (Game.time !== safeRouteCacheTick) {
       safeRouteCache = {};
@@ -155,6 +247,17 @@ export function cachedFindRoute(
     }
     const key = from + ":" + to;
     if (safeRouteCache[key] !== undefined) return safeRouteCache[key];
+
+    // CPU guard: don't attempt expensive route calc if running low
+    if (Game.cpu.getUsed() > Game.cpu.limit * 0.85) {
+      return ERR_NO_PATH;
+    }
+
+    // Rate limit new route calculations
+    if (newRoutesThisTick >= MAX_NEW_ROUTES_PER_TICK) {
+      return ERR_NO_PATH;
+    }
+    newRoutesThisTick++;
 
     const result = Game.map.findRoute(from, to, {
       routeCallback: getSafeRouteCallback(allowedRooms || [from, to]),
@@ -165,6 +268,17 @@ export function cachedFindRoute(
     // Permanent cache for direct routes (room topology never changes)
     const key = from + ":" + to;
     if (findRouteCache[key] !== undefined) return findRouteCache[key];
+
+    // CPU guard: don't attempt expensive route calc if running low
+    if (Game.cpu.getUsed() > Game.cpu.limit * 0.85) {
+      return ERR_NO_PATH;
+    }
+
+    // Rate limit new route calculations
+    if (newRoutesThisTick >= MAX_NEW_ROUTES_PER_TICK) {
+      return ERR_NO_PATH;
+    }
+    newRoutesThisTick++;
 
     const result = Game.map.findRoute(from, to);
     findRouteCache[key] = result;

@@ -182,6 +182,106 @@ export function getDroppedEnergy(roomName: string): Resource[] {
 }
 
 // ============================================================================
+// BODY PART CACHE - Per tick (stored on creep object)
+// ============================================================================
+
+// Extend Creep interface for body part caching
+declare global {
+  interface Creep {
+    _workParts?: number;
+    _carryParts?: number;
+    _moveParts?: number;
+    _attackParts?: number;
+    _rangedParts?: number;
+    _healParts?: number;
+  }
+}
+
+/**
+ * Get number of WORK parts on a creep (cached on creep object for this tick).
+ */
+export function getWorkParts(creep: Creep): number {
+  if (creep._workParts !== undefined) return creep._workParts;
+  let count = 0;
+  const body = creep.body;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i].type === WORK) count++;
+  }
+  creep._workParts = count;
+  return count;
+}
+
+/**
+ * Get number of CARRY parts on a creep (cached).
+ */
+export function getCarryParts(creep: Creep): number {
+  if (creep._carryParts !== undefined) return creep._carryParts;
+  let count = 0;
+  const body = creep.body;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i].type === CARRY) count++;
+  }
+  creep._carryParts = count;
+  return count;
+}
+
+/**
+ * Get number of MOVE parts on a creep (cached).
+ */
+export function getMoveParts(creep: Creep): number {
+  if (creep._moveParts !== undefined) return creep._moveParts;
+  let count = 0;
+  const body = creep.body;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i].type === MOVE) count++;
+  }
+  creep._moveParts = count;
+  return count;
+}
+
+/**
+ * Get number of ATTACK parts on a creep (cached).
+ */
+export function getAttackParts(creep: Creep): number {
+  if (creep._attackParts !== undefined) return creep._attackParts;
+  let count = 0;
+  const body = creep.body;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i].type === ATTACK) count++;
+  }
+  creep._attackParts = count;
+  return count;
+}
+
+/**
+ * Get number of RANGED_ATTACK parts on a creep (cached).
+ */
+export function getRangedParts(creep: Creep): number {
+  if (creep._rangedParts !== undefined) return creep._rangedParts;
+  let count = 0;
+  const body = creep.body;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i].type === RANGED_ATTACK) count++;
+  }
+  creep._rangedParts = count;
+  return count;
+}
+
+/**
+ * Get number of HEAL parts on a creep (cached).
+ */
+export function getHealParts(creep: Creep): number {
+  if (creep._healParts !== undefined) return creep._healParts;
+  let count = 0;
+  const body = creep.body;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i].type === HEAL) count++;
+  }
+  creep._healParts = count;
+  return count;
+}
+
+// ============================================================================
 // CPU GUARD
 // ============================================================================
 

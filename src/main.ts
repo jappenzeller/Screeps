@@ -44,6 +44,9 @@ import { initializeFramework, runFramework } from "./framework";
 // CPU caching utilities
 import { shouldSkipNonEssential, shouldSkipExpensiveEvaluations } from "./utils/cpuCache";
 
+// Movement utilities (route cache persistence)
+import { restoreRouteCacheFromMemory, saveRouteCacheToMemory } from "./utils/movement";
+
 // One-time initialization
 declare const global: { [key: string]: unknown };
 
@@ -57,6 +60,9 @@ if (!global._initialized) {
 
   // Recover military campaigns after global reset
   runFullRecovery();
+
+  // Restore route cache from Memory (prevents cold-start findRoute calls)
+  restoreRouteCacheFromMemory();
 
   global._initialized = true;
   console.log("=== Screeps Bot Initialized ===");
@@ -145,6 +151,10 @@ export function loop(): void {
   if (Game.time % 20 === 0) {
     AWSExporter.export();
   }
+
+  // Persist route cache to Memory (prevents cold-start findRoute calls after global reset)
+  // Rate-limited internally to every 100 ticks
+  saveRouteCacheToMemory();
 
   // Export decision logs to segment 93 (skip when bucket low)
   if (!shouldSkipNonEssential()) {
