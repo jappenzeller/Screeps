@@ -94,8 +94,11 @@ export class ColonyManager {
     // Initialize colony memory (first run or after reset)
     this.initializeColonyMemory();
 
-    // Periodic re-sync of remote rooms (every 500 ticks)
-    if (Game.time % 500 === 0) {
+    // Periodic re-sync of remote rooms (every 1000 ticks, rate-limited per colony)
+    // Check timestamp to avoid all colonies syncing on the same tick
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    var lastSync = mem && mem.remoteRoomsLastSync || 0;
+    if (Game.time - lastSync >= 1000) {
       this.syncRemoteRooms();
     }
 
@@ -822,24 +825,88 @@ export class ColonyManager {
 
   /**
    * Re-derive remote rooms and update Memory.colonies.
-   * Only adds new distance-1 remotes automatically; doesn't remove existing ones.
+   * Enforces: distance cap (2), overlap prevention, per-colony limit.
+   * Cleans up invalid remotes and adds new valid candidates.
    */
   private syncRemoteRooms(): void {
     var mem = Memory.colonies && Memory.colonies[this.roomName];
-    if (!mem || !mem.remotes) return;
+    if (!mem) return;
+    if (!mem.remotes) mem.remotes = {};
+
+    // Update sync timestamp
+    mem.remoteRoomsLastSync = Game.time;
 
     // Only auto-discover remotes at RCL 4+ (remote mining unlocks at RCL 4)
     var room = Game.rooms[this.roomName];
     var rcl = room && room.controller ? room.controller.level : 0;
     if (rcl < 4) return;
 
-    var candidates = this.deriveAllRemoteTargets();
-    var added: string[] = [];
+    // Get empire-wide remote assignments (for overlap check)
+    var empireAssignments = this.getEmpireRemoteAssignments();
 
-    for (var i = 0; i < candidates.length; i++) {
-      var candidate = candidates[i];
-      // Don't overwrite existing remotes (preserves manual config/pauses)
+    // Get intel and username for validation
+    var intel = Memory.intel || {};
+    var firstSpawn = Object.values(Game.spawns)[0];
+    var myUsername = firstSpawn && firstSpawn.owner ? firstSpawn.owner.username : "";
+
+    // === PHASE 1: Clean up invalid existing remotes ===
+    var removed: string[] = [];
+    for (var remoteName in mem.remotes) {
+      var config = mem.remotes[remoteName];
+
+      // Skip paused remotes (manual intervention) - check pausedUntil or pauseReason
+      if (config.pausedUntil && config.pausedUntil > Game.time) continue;
+      if (config.pauseReason) continue; // Manual pause without expiry
+
+      var removeReason = this.getRemoteInvalidReason(remoteName, config, empireAssignments, myUsername, intel);
+      if (removeReason) {
+        console.log("[remotes] " + this.roomName + ": removed " + remoteName + " (" + removeReason + ")");
+        delete mem.remotes[remoteName];
+        removed.push(remoteName);
+      }
+    }
+
+    // Refresh empire assignments after removals
+    if (removed.length > 0) {
+      empireAssignments = this.getEmpireRemoteAssignments();
+    }
+
+    // === PHASE 2: Get valid candidates ===
+    var candidates = this.deriveAllRemoteTargets(empireAssignments);
+
+    // === PHASE 3: Calculate per-colony limit ===
+    var homeSources = room.find(FIND_SOURCES).length;
+    var maxRemotes = Math.min(homeSources * 2, 6);
+
+    // Count current remotes (excluding paused, they still count toward limit)
+    var currentCount = Object.keys(mem.remotes).length;
+
+    // === PHASE 4: Score and add candidates within limit ===
+    // Score candidates: (sources * 10) - (distance * 5) - (threatLevel * 3)
+    var scoredCandidates = candidates.map(function(c) {
+      var ri = intel[c.roomName];
+      var threatLevel = ri && ri.hostiles ? ri.hostiles : 0;
+      var score = (c.sources * 10) - (c.distance * 5) - (threatLevel * 3);
+      return { candidate: c, score: score };
+    });
+
+    // Sort by score descending
+    scoredCandidates.sort(function(a, b) { return b.score - a.score; });
+
+    var added: string[] = [];
+    for (var i = 0; i < scoredCandidates.length; i++) {
+      if (currentCount >= maxRemotes) break;
+
+      var sc = scoredCandidates[i];
+      var candidate = sc.candidate;
+
+      // Don't overwrite existing remotes (preserves manual config)
       if (mem.remotes[candidate.roomName]) continue;
+
+      // Double-check overlap (another colony may have added it)
+      if (empireAssignments[candidate.roomName] && empireAssignments[candidate.roomName] !== this.roomName) {
+        continue;
+      }
 
       mem.remotes[candidate.roomName] = {
         room: candidate.roomName,
@@ -852,18 +919,143 @@ export class ColonyManager {
         miners: [],
         haulers: [],
       };
-      added.push(candidate.roomName + "(D" + candidate.distance + ")");
+
+      // Update empire assignments
+      empireAssignments[candidate.roomName] = this.roomName;
+      currentCount++;
+      added.push(candidate.roomName + "(D" + candidate.distance + ",S" + sc.score + ")");
     }
 
     if (added.length > 0) {
-      console.log("[Colony] " + this.roomName + " auto-added remotes: " + added.join(", "));
+      console.log("[remotes] " + this.roomName + " auto-added: " + added.join(", "));
+    }
+    if (removed.length > 0 || added.length > 0) {
+      console.log("[remotes] " + this.roomName + " now has " + currentCount + "/" + maxRemotes + " remotes");
     }
   }
 
   /**
-   * Remote candidate with metadata for distance and path
+   * Build a map of all assigned remotes across the entire empire.
+   * Returns { roomName: colonyName } for overlap checking.
    */
-  private deriveAllRemoteTargets(): Array<{
+  private getEmpireRemoteAssignments(): Record<string, string> {
+    var assignments: Record<string, string> = {};
+    var colonies = Memory.colonies || {};
+    for (var colName in colonies) {
+      var remotes = colonies[colName].remotes || {};
+      for (var remoteName in remotes) {
+        assignments[remoteName] = colName;
+      }
+    }
+    return assignments;
+  }
+
+  /**
+   * Check if an existing remote is invalid and should be removed.
+   * Returns the reason string if invalid, null if still valid.
+   */
+  private getRemoteInvalidReason(
+    remoteName: string,
+    _config: RemoteRoomConfig, // Prefixed with _ to indicate intentionally unused (may use in future for via validation)
+    empireAssignments: Record<string, string>,
+    myUsername: string,
+    intel: Record<string, any>
+  ): string | null {
+    // Check overlap: if assigned to a different colony, we lose it
+    var assignedTo = empireAssignments[remoteName];
+    if (assignedTo && assignedTo !== this.roomName) {
+      // Check which colony is closer (closer wins)
+      var ourDist = this.getRouteDistance(this.roomName, remoteName, intel, myUsername);
+      var theirDist = this.getRouteDistance(assignedTo, remoteName, intel, myUsername);
+
+      if (theirDist < ourDist) {
+        return "overlap - " + assignedTo + " is closer";
+      } else if (theirDist === ourDist) {
+        // Equal distance: higher RCL wins
+        var ourRoom = Game.rooms[this.roomName];
+        var theirRoom = Game.rooms[assignedTo];
+        var ourRcl = ourRoom && ourRoom.controller ? ourRoom.controller.level : 0;
+        var theirRcl = theirRoom && theirRoom.controller ? theirRoom.controller.level : 0;
+        if (theirRcl > ourRcl) {
+          return "overlap - " + assignedTo + " has higher RCL";
+        }
+      }
+      // We're closer or equal RCL, we keep it (they should remove theirs)
+    }
+
+    // Check distance: must be <= 2 via findRoute
+    var routeDist = this.getRouteDistance(this.roomName, remoteName, intel, myUsername);
+    if (routeDist === -1) {
+      return "route blocked";
+    }
+    if (routeDist > 2) {
+      return "distance " + routeDist + " > 2";
+    }
+
+    // Check if room is still valid target
+    var ri = intel[remoteName];
+    if (ri) {
+      // Owned by hostile
+      if (ri.owner && ri.owner !== myUsername) {
+        return "hostile owned";
+      }
+      // Reserved by hostile
+      if (ri.reservation && ri.reservation.username !== myUsername) {
+        return "hostile reserved";
+      }
+      // No sources
+      if (!ri.sources || ri.sources.length === 0) {
+        return "no sources";
+      }
+      // Source keeper room
+      if (ri.roomType === "sourceKeeper") {
+        return "source keeper room";
+      }
+    }
+
+    return null; // Still valid
+  }
+
+  /**
+   * Get route distance between two rooms using findRoute.
+   * Returns -1 if no valid route exists.
+   * Uses CPU guard to avoid expensive calculations when bucket is low.
+   */
+  private getRouteDistance(from: string, to: string, intel: Record<string, any>, myUsername: string): number {
+    if (from === to) return 0;
+
+    // CPU guard: if bucket is low, assume invalid
+    if (Game.cpu.bucket < 3000) {
+      return -1;
+    }
+
+    var route = Game.map.findRoute(from, to, {
+      routeCallback: function(checkRoom: string) {
+        var roomIntel = intel[checkRoom];
+        // Block owned rooms (not ours)
+        if (roomIntel && roomIntel.owner && roomIntel.owner !== myUsername) {
+          return Infinity;
+        }
+        // Block SK rooms
+        if (roomIntel && roomIntel.roomType === "sourceKeeper") {
+          return Infinity;
+        }
+        return 1;
+      }
+    });
+
+    if (route === ERR_NO_PATH) return -1;
+    return (route as any[]).length;
+  }
+
+  /**
+   * Remote candidate with metadata for distance and path.
+   * Filters out rooms already assigned to other colonies (overlap prevention).
+   * Uses findRoute for accurate distance calculation.
+   *
+   * @param empireAssignments - Map of roomName -> colonyName for overlap checking
+   */
+  private deriveAllRemoteTargets(empireAssignments: Record<string, string>): Array<{
     roomName: string;
     distance: number;
     via?: string;
@@ -887,10 +1079,20 @@ export class ColonyManager {
     }> = [];
     var distance1Rooms: string[] = [];
 
+    // CPU guard: skip discovery if bucket is critically low
+    if (Game.cpu.bucket < 3000) {
+      return candidates;
+    }
+
     // === Distance 1: all safe adjacent rooms with sources ===
     for (var dir in exits) {
       var roomName = exits[dir as ExitKey];
       if (!roomName) continue;
+
+      // Skip if already assigned to another colony (overlap prevention)
+      if (empireAssignments[roomName] && empireAssignments[roomName] !== homeRoom) {
+        continue;
+      }
 
       if (!this.isValidRemoteTarget(roomName, myUsername, intel)) continue;
 
@@ -906,7 +1108,7 @@ export class ColonyManager {
       distance1Rooms.push(roomName);
     }
 
-    // === Distance 2: rooms beyond adjacent, require 2 sources ===
+    // === Distance 2: rooms beyond adjacent ===
     for (var i = 0; i < distance1Rooms.length; i++) {
       var viaRoom = distance1Rooms[i];
       var viaExits = Game.map.describeExits(viaRoom);
@@ -922,13 +1124,18 @@ export class ColonyManager {
         // Skip if already in candidates (reachable via different path)
         if (candidates.some(function(c) { return c.roomName === d2Room; })) continue;
 
+        // Skip if already assigned to another colony (overlap prevention)
+        if (empireAssignments[d2Room] && empireAssignments[d2Room] !== homeRoom) {
+          continue;
+        }
+
         if (!this.isValidRemoteTarget(d2Room, myUsername, intel)) continue;
 
         var ri2 = intel[d2Room];
         var sources2 = ri2 && ri2.sources ? ri2.sources.length : 0;
 
-        // Distance 2 must have 2 sources to be worth the hauler cost
-        if (sources2 < 2) continue;
+        // Distance 2 should have sources (prefer 2, but accept 1 if close)
+        if (sources2 === 0) continue;
 
         // Verify actual pathability using Game.map.findRoute
         var route = Game.map.findRoute(homeRoom, d2Room, {
@@ -946,7 +1153,7 @@ export class ColonyManager {
           }
         });
 
-        // Route must exist and be exactly 2 hops
+        // Route must exist and be exactly 2 hops (max distance = 2)
         if (route === ERR_NO_PATH) continue;
         if ((route as any).length !== 2) continue;
 
@@ -998,7 +1205,8 @@ export class ColonyManager {
    * Backward compatibility wrapper for deriveAllRemoteTargets.
    */
   private deriveRemoteTargets(): string[] {
-    return this.deriveAllRemoteTargets().map(function(c) { return c.roomName; });
+    var empireAssignments = this.getEmpireRemoteAssignments();
+    return this.deriveAllRemoteTargets(empireAssignments).map(function(c) { return c.roomName; });
   }
 
   /**

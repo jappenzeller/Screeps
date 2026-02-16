@@ -735,11 +735,13 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
   };
 
   // Add a remote room manually (supports distance-2 with via room)
-  global.addRemote = (homeRoom: string, remoteRoom: string, distance?: number, via?: string) => {
+  // Use force=true to override warnings about distance/overlap/limit violations
+  global.addRemote = (homeRoom: string, remoteRoom: string, distance?: number, via?: string, force?: boolean) => {
     if (!homeRoom || !remoteRoom) {
       console.log("Usage: addRemote('E46N37', 'E47N38', 2, 'E47N37')");
       console.log("  distance: 1 (default) or 2");
       console.log("  via: intermediate room for distance-2");
+      console.log("  force: true to override warnings (5th param)");
       return "Error";
     }
 
@@ -748,6 +750,70 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       console.log("Distance-2+ remotes require a 'via' room");
       console.log("Usage: addRemote('" + homeRoom + "', '" + remoteRoom + "', 2, 'INTERMEDIATE_ROOM')");
       return "Error";
+    }
+
+    // === Check for rule violations ===
+    var warnings: string[] = [];
+
+    // Check distance via findRoute
+    var intel = Memory.intel || {};
+    var firstSpawn = Object.values(Game.spawns)[0];
+    var myUsername = firstSpawn && firstSpawn.owner ? firstSpawn.owner.username : "";
+
+    var route = Game.map.findRoute(homeRoom, remoteRoom, {
+      routeCallback: function(checkRoom: string) {
+        var roomIntel = intel[checkRoom];
+        if (roomIntel && roomIntel.owner && roomIntel.owner !== myUsername) {
+          return Infinity;
+        }
+        if (roomIntel && roomIntel.roomType === "sourceKeeper") {
+          return Infinity;
+        }
+        return 1;
+      }
+    });
+
+    if (route === ERR_NO_PATH) {
+      warnings.push("No valid route (blocked by SK/hostile rooms)");
+    } else if ((route as any[]).length > 2) {
+      warnings.push("Distance " + (route as any[]).length + " exceeds max of 2");
+    }
+
+    // Check for overlap with other colonies
+    var colonies = Memory.colonies || {};
+    for (var colName in colonies) {
+      if (colName === homeRoom) continue;
+      var remotes = colonies[colName].remotes || {};
+      if (remotes[remoteRoom]) {
+        warnings.push("Already assigned to colony " + colName);
+        break;
+      }
+    }
+
+    // Check colony limit
+    var colonyMem = colonies[homeRoom];
+    if (colonyMem && colonyMem.remotes) {
+      var currentCount = Object.keys(colonyMem.remotes).length;
+      var room = Game.rooms[homeRoom];
+      var homeSources = room ? room.find(FIND_SOURCES).length : 2;
+      var maxRemotes = Math.min(homeSources * 2, 6);
+      if (currentCount >= maxRemotes) {
+        warnings.push("Colony at limit (" + currentCount + "/" + maxRemotes + " remotes)");
+      }
+    }
+
+    // Display warnings
+    if (warnings.length > 0) {
+      console.log("[addRemote] WARNINGS for " + remoteRoom + ":");
+      for (var i = 0; i < warnings.length; i++) {
+        console.log("  - " + warnings[i]);
+      }
+      if (!force) {
+        console.log("Add force=true as 5th parameter to override:");
+        console.log("  addRemote('" + homeRoom + "', '" + remoteRoom + "', " + dist + ", " + (via ? "'" + via + "'" : "undefined") + ", true)");
+        return "Blocked by warnings (use force=true to override)";
+      }
+      console.log("Force=true specified, adding anyway...");
     }
 
     var manager = ColonyManager.getInstance(homeRoom);
