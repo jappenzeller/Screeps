@@ -47,6 +47,9 @@ import { shouldSkipNonEssential, shouldSkipExpensiveEvaluations } from "./utils/
 // Movement utilities (route cache persistence)
 import { restoreRouteCacheFromMemory, saveRouteCacheToMemory } from "./utils/movement";
 
+// AWS Directive System
+import { DirectiveReader } from "./core/DirectiveReader";
+
 // One-time initialization
 declare const global: { [key: string]: unknown };
 
@@ -64,6 +67,9 @@ if (!global._initialized) {
   // Restore route cache from Memory (prevents cold-start findRoute calls)
   restoreRouteCacheFromMemory();
 
+  // Initialize AWS Directive System (requests segment 95)
+  DirectiveReader.init();
+
   global._initialized = true;
   console.log("=== Screeps Bot Initialized ===");
 }
@@ -72,11 +78,15 @@ if (!global._initialized) {
  * Main game loop - runs every tick
  */
 export function loop(): void {
-  // Initialize memory segments (commands + AWS export)
+  // Initialize memory segments (commands + AWS export + directives)
   CommandExecutor.init();
+  DirectiveReader.init(); // Request segment 95 each tick
 
   // Process any pending commands FIRST (before other logic)
   CommandExecutor.run();
+
+  // Process AWS directives (if enabled)
+  DirectiveReader.run();
 
   // Start stats tracking for this tick
   StatsCollector.startTick();

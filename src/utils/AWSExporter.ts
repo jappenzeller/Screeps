@@ -9,6 +9,7 @@ import { EconomyTracker, ColonyEconomyMetrics } from "../core/EconomyTracker";
 import { RoomEvaluator, RoomScore } from "../empire/RoomEvaluator";
 import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/ExpansionReadiness";
 import { getCreepsByRoom, getHostileCreeps, shouldSkipExport } from "./cpuCache";
+import { DirectiveReader, DirectiveAck } from "../core/DirectiveReader";
 
 // Segment allocation for AWS export
 const SEGMENT_COLONIES = 90;    // Colony snapshots (≤50KB target)
@@ -179,6 +180,8 @@ interface ColonyPayload {
   empire: EmpireExport | null;
   military: MilitaryExport | null;
   exportMeta: ExportMeta;
+  // AWS Directive System acknowledgments
+  directiveAcks?: DirectiveAck[];
 }
 
 // Segment 91: Intel delta (room scanning data)
@@ -943,6 +946,9 @@ export class AWSExporter {
     var gameTick = Game.time;
     var shard = Game.shard ? Game.shard.name : "unknown";
 
+    // Get directive acknowledgments (clears them after retrieval)
+    var directiveAcks = DirectiveReader.getAndClearAcks();
+
     // === SEGMENT 90: Colony Data ===
     var colonyPayload: ColonyPayload = {
       timestamp: timestamp,
@@ -960,6 +966,7 @@ export class AWSExporter {
         totalIntelCount: totalIntelCount,
         complete: true,
       },
+      directiveAcks: directiveAcks.length > 0 ? directiveAcks : undefined,
     };
 
     // Apply tiered shedding to colony payload only

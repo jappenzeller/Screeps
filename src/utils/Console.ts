@@ -19,6 +19,7 @@ import * as CampaignEventLog from "../military/CampaignEventLog";
 import * as WaveCoordinator from "../military/WaveCoordinator";
 import * as TacticalSimulator from "../military/TacticalSimulator";
 import * as Framework from "../framework";
+import { DirectiveReader } from "../core/DirectiveReader";
 
 // Helper function for road coverage calculation
 function calculatePathRoadCoverage(room: Room, from: RoomPosition, to: RoomPosition): number {
@@ -2401,5 +2402,83 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
 
   global.decisions = (count?: number) => {
     console.log(Framework.recentDecisions(count));
+  };
+
+  // ==================== AWS DIRECTIVE SYSTEM COMMANDS ====================
+
+  global.directives = () => {
+    const payload = DirectiveReader.getPayload();
+    if (!payload) {
+      console.log("No directive payload loaded");
+      console.log("  useDirectives: " + (Memory.settings?.useDirectives || false));
+      console.log("  Toggle: directives.toggle()");
+      return "No data";
+    }
+
+    console.log("=== Directive System ===");
+    console.log("Version: " + payload.version);
+    console.log("Generated at tick: " + payload.gameTick);
+    console.log("Staleness: " + (Game.time - payload.gameTick) + " ticks");
+    console.log("Analysis time: " + payload.meta.analysisMs + "ms");
+    console.log("Directives: " + payload.directives.length);
+
+    if (payload.directives.length > 0) {
+      console.log("\nPending directives:");
+      for (const d of payload.directives) {
+        const status = Memory.directives?.[d.id]?.status || "PENDING";
+        const expires = d.expiresAt - Game.time;
+        console.log("  [" + d.type + "] " + d.id + " - " + d.colony + " (pri:" + d.priority + ", status:" + status + ", expires:" + expires + ")");
+      }
+    }
+
+    return "OK";
+  };
+
+  (global.directives as any).toggle = () => {
+    const enabled = DirectiveReader.toggle();
+    console.log("Directives " + (enabled ? "enabled" : "disabled"));
+    return enabled ? "enabled" : "disabled";
+  };
+
+  (global.directives as any).status = () => {
+    const statuses = DirectiveReader.getStatuses();
+    const entries = Object.entries(statuses);
+    if (entries.length === 0) {
+      console.log("No directive history");
+      return "No data";
+    }
+
+    console.log("=== Directive History ===");
+    for (const [id, status] of entries) {
+      console.log("  " + id + ": " + status.status + " @ tick " + status.executedAt + (status.result ? " (" + status.result + ")" : ""));
+    }
+    return "OK";
+  };
+
+  (global.directives as any).clear = () => {
+    DirectiveReader.clear();
+    return "OK";
+  };
+
+  (global.directives as any).fallback = () => {
+    DirectiveReader.forceFallback();
+    return "OK";
+  };
+
+  global.spawnQueue = () => {
+    const queue = Memory.spawnDirectives || [];
+    if (queue.length === 0) {
+      console.log("No spawn directives queued");
+      return "Empty";
+    }
+
+    console.log("=== Spawn Directive Queue ===");
+    for (const d of queue) {
+      console.log("  [" + d.priority + "] " + d.role + " for " + d.colony);
+      console.log("      Directive: " + d.directiveId);
+      console.log("      Reason: " + d.reason);
+      console.log("      Added: tick " + d.addedAt + " (" + (Game.time - d.addedAt) + " ticks ago)");
+    }
+    return "OK";
   };
 }

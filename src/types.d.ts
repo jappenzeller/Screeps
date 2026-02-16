@@ -197,6 +197,7 @@ interface SettingsFlags {
   showVisuals?: boolean;
   logPositions?: boolean;
   lastExportTick?: number; // Last successful AWS export tick for delta tracking
+  useDirectives?: boolean; // Enable AWS directive system (segment 95)
 }
 
 // Export metadata for AWS Lambda visibility
@@ -605,7 +606,34 @@ interface MilitaryMemory {
   posture: "PEACEFUL" | "ALERT" | "OFFENSIVE";
 }
 
-// Extend Memory to include decision logging and military
+// ==================== AWS Directive System Types ====================
+
+/**
+ * Directive execution status tracked in Memory.directives
+ */
+interface DirectiveExecutionStatus {
+  status: "COMPLETED" | "FAILED" | "EXPIRED";
+  executedAt: number;
+  result?: string;
+}
+
+/**
+ * Spawn request queued by AWS directive system
+ * Different from IntegrationManager's SpawnDirective
+ */
+interface AWSSpawnDirective {
+  directiveId: string;        // Original directive ID for ack tracking
+  colony: string;             // Target colony
+  role: string;               // Role to spawn
+  targetRoom?: string;        // Optional target room for the creep
+  body?: BodyPartConstant[];  // Optional body override
+  memory?: Partial<CreepMemory>;
+  priority: number;           // Spawn priority
+  reason: string;             // Human-readable reason
+  addedAt: number;            // Game.time when queued
+}
+
+// Extend Memory to include decision logging, military, and directives
 interface Memory {
   advisor?: AdvisorData;
   traffic?: { [roomName: string]: TrafficMemory };
@@ -617,6 +645,9 @@ interface Memory {
   decisions?: DecisionMemory;
   military?: MilitaryMemory;
   waveCoordinator?: WaveCoordinatorMemory;
+  // AWS Directive System
+  directives?: { [directiveId: string]: DirectiveExecutionStatus };
+  spawnDirectives?: AWSSpawnDirective[];
 }
 
 // Global console declaration for Screeps
