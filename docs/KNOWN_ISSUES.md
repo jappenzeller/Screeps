@@ -192,6 +192,27 @@ if (!Memory.debug?.showEvaluations) return;
 
 ---
 
+### RESERVER Utility Returns NaN
+
+**Status:** Fixed
+
+**Issue:** RESERVER spawning utility returned NaN for some remote rooms, causing spawn evaluator to malfunction.
+
+**Observed:** `[spawning] E43N39: Spawn RESERVER -> E42N39 (0/1): NaN`
+
+**Root Cause:** Remote configs in `Memory.colonies[colony].remotes[room]` could have undefined `distance` or `sources` fields (e.g., configs created by older code or manual console commands). When `WorldState.captureRemotes()` built the remote snapshot, it passed `config.distance` directly without a default. In `SpawnEvaluator.evaluateRemoteRole()`, the calculation `1 - remote.distance * 0.15` produced NaN when distance was undefined.
+
+**Fix Applied:**
+
+Defense in depth - defaults at source AND guards at consumer:
+
+1. WorldState.ts line 388-389: `distance: config.distance ?? 1` and `sources: config.sources ?? 2`
+2. SpawnEvaluator.ts line 303: `const distance = remote.distance ?? 1`
+
+**Files:** `src/framework/WorldState.ts`, `src/framework/evaluators/SpawnEvaluator.ts`
+
+---
+
 ## Limitations
 
 ### No Link/Terminal/Lab/Factory Support

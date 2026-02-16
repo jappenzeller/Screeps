@@ -300,8 +300,9 @@ export class SpawnEvaluator extends BaseEvaluator<SpawnAction> {
     score *= economyHealth;
 
     // === FACTOR: Distance Penalty ===
-    const distancePenalty = Math.max(0.5, 1 - remote.distance * 0.15);
-    this.addFactor(factors, "distance", remote.distance, 1.0, distancePenalty - 1);
+    const distance = remote.distance ?? 1;
+    const distancePenalty = Math.max(0.5, 1 - distance * 0.15);
+    this.addFactor(factors, "distance", distance, 1.0, distancePenalty - 1);
     score *= distancePenalty;
 
     // === FACTOR: Threat ===

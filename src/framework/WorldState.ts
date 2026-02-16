@@ -380,14 +380,15 @@ function captureRemotes(colonyName: string): RemoteSnapshot[] {
       const containers = remoteRoom.find(FIND_STRUCTURES, {
         filter: (s) => s.structureType === STRUCTURE_CONTAINER,
       });
-      hasContainers = containers.length >= config.sources;
+      hasContainers = containers.length >= (config.sources ?? 2);
     }
 
+    const sources = config.sources ?? 2;
     remotes.push({
       roomName,
-      distance: config.distance,
+      distance: config.distance ?? 1,
       via: config.via,
-      sources: config.sources,
+      sources,
       active: config.active,
       paused: !!config.pausedUntil && Game.time < config.pausedUntil,
       pauseReason: config.pauseReason,
@@ -396,7 +397,7 @@ function captureRemotes(colonyName: string): RemoteSnapshot[] {
       hasContainers,
       hasReserver: reserverCount > 0,
       hostilePresent,
-      estimatedIncome: config.active ? config.sources * 10 * 0.8 : 0, // 80% efficiency estimate
+      estimatedIncome: config.active ? sources * 10 * 0.8 : 0, // 80% efficiency estimate
     });
   }
 
