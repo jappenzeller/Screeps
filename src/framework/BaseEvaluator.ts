@@ -101,17 +101,16 @@ export abstract class BaseEvaluator<T extends FrameworkAction> implements Evalua
 
   /**
    * Log evaluation results for debugging
+   * Enable with: Memory.debug = { showEvaluations: true }
    */
   protected logEvaluation(colony: string, options: ScoredOption<T>[]): void {
-    // Import logger lazily to avoid circular deps
+    // Only log when explicitly enabled via Memory.debug.showEvaluations
+    if (!Memory.debug?.showEvaluations) return;
     if (options.length === 0) return;
 
     const top3 = options.slice(0, 3);
     const summary = top3.map((o) => `${o.label}: ${o.score}`).join(", ");
-    // Use console.log since we can't import logger here
-    if (Memory.debug) {
-      console.log(`[${this.domain}] ${colony}: ${summary}`);
-    }
+    console.log(`[${this.domain}] ${colony}: ${summary}`);
   }
 }
 

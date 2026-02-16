@@ -190,6 +190,7 @@ interface ScoutMemory extends CreepMemory {
 // Debug flags
 interface DebugFlags {
   showTraffic?: boolean;
+  showEvaluations?: boolean; // Show framework evaluator logs per tick
 }
 
 // Visual settings
