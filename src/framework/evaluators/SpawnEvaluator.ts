@@ -148,8 +148,8 @@ export class SpawnEvaluator extends BaseEvaluator<SpawnAction> {
     }
 
     // === FACTOR: Saturation ===
-    if (target === 0 && current > 0) {
-      // Target is 0 but we have creeps - don't spawn more
+    if (target === 0) {
+      // Target is 0 - don't spawn this role at all
       this.addFactor(factors, "noTarget", 0, 1.0, -1);
       score = 0;
     } else if (current > 0 && target > 0) {

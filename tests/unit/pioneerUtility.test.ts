@@ -76,8 +76,8 @@ function evaluatePioneer(colony: MockColony): number | null {
   // Economy factor: floor at 0.8 for PIONEER
   score *= 0.8; // Simplified
 
-  // THE FIX: target=0 with current>0 should zero the score
-  if (target === 0 && current > 0) {
+  // THE FIX: target=0 should return null (don't spawn), regardless of current count
+  if (target === 0) {
     score = 0;
   }
 
@@ -200,7 +200,7 @@ test('Scenario 3: evaluatePioneer returns null when pioneer phase ended', () => 
 // SCENARIO 4: No current pioneers - should allow spawn in pioneer phase only
 // ============================================================================
 
-test('Scenario 4: evaluatePioneer returns null even with 0 pioneers if not pioneer phase', () => {
+test('Scenario 4: evaluatePioneer returns null with 0 pioneers if not in pioneer phase', () => {
   const colony: MockColony = {
     hasStorage: true,
     rcl: 5,
@@ -210,22 +210,9 @@ test('Scenario 4: evaluatePioneer returns null even with 0 pioneers if not pione
   };
 
   // Target = 0 (not pioneer phase), current = 0
-  // When target=0 and current=0, the saturation fix doesn't apply
-  // But score is still reduced by deficit to be very low
+  // THE FIX: if (target === 0) score = 0, regardless of current count
   const result = evaluatePioneer(colony);
-  // With target=0, current=0: deficitContribution = -0.5 (surplus)
-  // score = 90 * 0.5 * 0.8 = 36
-  // This is > 1, so it would return a score...
-  // Actually, we need to ensure that target=0 alone is enough to return null
-  // Let me reconsider the logic...
-
-  // Actually, the fix is: if (target === 0 && current > 0) score = 0
-  // When current = 0, this doesn't trigger.
-  // But the intended behavior is: if target = 0, don't spawn regardless of current
-
-  // For now, accept that when current=0 and target=0, the score might still be > 0
-  // This is okay because spawning won't happen anyway (no deficit creates negative score)
-  assertTrue(true, 'Test passes - edge case acknowledged');
+  assertEqual(result, null, 'Should return null when target=0, even if current=0');
 });
 
 // ============================================================================
