@@ -763,6 +763,7 @@ export class ColonyManager {
 
       Memory.colonies[this.roomName] = {
         remotes: remotes,
+        remoteRoomsLastSync: 0, // Force immediate sync on first run
         remoteSettings: {
           maxDistance: 2,
           maxRemotes: 4,
@@ -807,7 +808,8 @@ export class ColonyManager {
       }
 
       delete mem.remoteRooms;
-      delete mem.remoteRoomsLastSync;
+      // Reset sync timestamp to force immediate re-sync with new rules
+      mem.remoteRoomsLastSync = 0;
 
       console.log("[Colony] Migrated " + this.roomName + " to new remote format: " + Object.keys(mem.remotes).length + " rooms");
     }
@@ -820,6 +822,11 @@ export class ColonyManager {
         minScoreThreshold: 30,
         autoExpand: false,
       };
+    }
+
+    // Ensure remoteRoomsLastSync exists (force sync if missing)
+    if (mem.remoteRoomsLastSync === undefined) {
+      mem.remoteRoomsLastSync = 0;
     }
   }
 
