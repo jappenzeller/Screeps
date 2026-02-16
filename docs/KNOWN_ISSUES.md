@@ -37,8 +37,8 @@
 **Fix Applied:** Added explicit handling for target=0 case in saturation logic:
 
 ```typescript
-if (target === 0 && current > 0) {
-  score = 0;  // Don't spawn when target is 0
+if (target === 0) {
+  score = 0;  // Don't spawn when target is 0, regardless of current count
 }
 ```
 
