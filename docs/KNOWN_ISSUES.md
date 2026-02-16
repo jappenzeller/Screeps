@@ -213,6 +213,35 @@ Defense in depth - defaults at source AND guards at consumer:
 
 ---
 
+### WorldState CPU Usage Too High
+
+**Status:** Fixed
+
+**Issue:** `WorldState.capture()` consumed 8-17.5 CPU/tick - 12-25% of the entire CPU budget spent on state capture before any creep logic runs.
+
+**Root Cause:** Multiple expensive operations every tick:
+
+1. Triple `Object.values(Game.creeps).filter()` per remote room (45 iterations for 15 remotes)
+2. Unused `room.find(FIND_MY_STRUCTURES)` result (line 117 never read)
+3. `EconomyTracker.getMetrics()` creating new instance every tick
+4. Full structure/creep snapshot arrays stored but only counts used
+5. Duplicate `room.find()` calls in convertMilestones and captureTrafficHotspots
+
+**Fix Applied:**
+
+1. **Creep index cache** - Single `Object.values(Game.creeps)` at start, indexed by room+role+targetRoom
+2. **Removed unused code** - Deleted `room.find(FIND_MY_STRUCTURES)` that was never used
+3. **Tiered capture frequency** - Structures every 10 ticks, traffic every 50 ticks, threats every tick
+4. **Minimal arrays** - Don't store full structure/site arrays, just counts
+5. **Shared structure cache** - Pass cached structures to helper functions
+6. **AWSExporter integration** - Uses WorldState cache instead of redundant room.find()
+
+**Expected Improvement:** 17.5 CPU → < 5 CPU/tick
+
+**Files:** `src/framework/WorldState.ts`, `src/utils/AWSExporter.ts`
+
+---
+
 ## Limitations
 
 ### No Link/Terminal/Lab/Factory Support

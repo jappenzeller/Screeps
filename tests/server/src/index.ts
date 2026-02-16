@@ -20,6 +20,7 @@ import { ScenarioConfig, CLIArgs } from "./types";
 import { economicRecoveryScenario } from "../scenarios/economic-recovery";
 import { invaderDefenseScenario } from "../scenarios/invader-defense";
 import { reserverUtilityScenario } from "../scenarios/reserver-utility";
+import { worldStateCpuScenario } from "../scenarios/worldstate-cpu";
 // import { bazsiAttackScenario } from "../scenarios/bazsi-attack";
 
 // ============================================
@@ -30,6 +31,7 @@ const ALL_SCENARIOS: ScenarioConfig[] = [
   economicRecoveryScenario,
   invaderDefenseScenario,
   reserverUtilityScenario,
+  worldStateCpuScenario,
   // bazsiAttackScenario, // TODO: Enable when ready
 ];
 

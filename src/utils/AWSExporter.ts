@@ -10,6 +10,7 @@ import { RoomEvaluator, RoomScore } from "../empire/RoomEvaluator";
 import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/ExpansionReadiness";
 import { getCreepsByRoom, getHostileCreeps, shouldSkipExport } from "./cpuCache";
 import { DirectiveReader, DirectiveAck } from "../core/DirectiveReader";
+import { getStructureCache, getCreepsForRoom } from "../framework/WorldState";
 
 // Segment allocation for AWS export
 const SEGMENT_COLONIES = 90;    // Colony snapshots (≤50KB target)
@@ -1074,8 +1075,15 @@ export class AWSExporter {
         return sum + attack + ranged;
       }, 0);
 
-      // Get damaged structures
-      const structures = room.find(FIND_STRUCTURES);
+      // Use cached structure data from WorldState (avoids redundant room.find calls)
+      const structureCache = getStructureCache(room);
+      const structures = structureCache.allStructures;
+      const containers = structureCache.containers;
+      const links = structureCache.links.filter((l) => l.my);
+      const spawns = structureCache.spawns.filter((s) => s.my);
+      const sources = structureCache.sources;
+
+      // Get damaged structures (using cached structures)
       const damagedCount = structures.filter((s) => {
         if (s.structureType === STRUCTURE_WALL || s.structureType === STRUCTURE_RAMPART) {
           return s.hits < 10000;
@@ -1085,17 +1093,7 @@ export class AWSExporter {
 
       // Get storage energy
       const storageEnergy = room.storage?.store[RESOURCE_ENERGY] || 0;
-      const containers = room.find(FIND_STRUCTURES, {
-        filter: { structureType: STRUCTURE_CONTAINER },
-      }) as StructureContainer[];
       const containerEnergy = containers.reduce((sum, c) => sum + c.store[RESOURCE_ENERGY], 0);
-
-      // Build structure details
-      const links = room.find(FIND_MY_STRUCTURES, {
-        filter: (s) => s.structureType === STRUCTURE_LINK,
-      }) as StructureLink[];
-      const spawns = room.find(FIND_MY_SPAWNS);
-      const sources = room.find(FIND_SOURCES);
       const controller = room.controller;
       const storage = room.storage;
 
@@ -1150,11 +1148,11 @@ export class AWSExporter {
           hostileDPS,
         },
         structures: {
-          constructionSites: room.find(FIND_CONSTRUCTION_SITES).length,
+          constructionSites: structureCache.siteCount,
           damagedCount,
         },
         structureDetails,
-        defense: this.getDefenseStatus(room),
+        defense: this.getDefenseStatus(room, structures),
         adjacentRooms: this.getAdjacentRoomIntel(roomName),
         remoteMining: this.getRemoteMiningStatus(roomName),
         scouting: this.getScoutingStatus(roomName),
@@ -1187,12 +1185,17 @@ export class AWSExporter {
   }
 
   /**
-   * Get defense status for a room
+   * Get defense status for a room (uses cached structures)
    */
-  private static getDefenseStatus(room: Room): DefenseExport {
-    const towers = room.find(FIND_MY_STRUCTURES, {
-      filter: { structureType: STRUCTURE_TOWER },
-    }) as StructureTower[];
+  private static getDefenseStatus(room: Room, structures?: Structure[]): DefenseExport {
+    // Filter towers from cached structures if provided, otherwise find them
+    const towers = structures
+      ? (structures.filter(
+          (s) => s.structureType === STRUCTURE_TOWER && (s as OwnedStructure).my
+        ) as StructureTower[])
+      : (room.find(FIND_MY_STRUCTURES, {
+          filter: { structureType: STRUCTURE_TOWER },
+        }) as StructureTower[]);
 
     const towerEnergyTotal = towers.reduce((sum, t) => sum + t.store[RESOURCE_ENERGY], 0);
     const towerEnergyCapacity = towers.length * TOWER_CAPACITY;
