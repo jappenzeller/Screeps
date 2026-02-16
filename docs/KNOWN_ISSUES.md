@@ -26,6 +26,26 @@
 
 ---
 
+### PIONEER Spawning When No Expansion Active
+
+**Status:** Fixed
+
+**Issue:** PIONEER creeps spawning with `Memory.empire.expansion.active = {}` and `Memory.empire.expansion.queue = []`. Spawn log showed `PIONEER (2/0): 22.5` — 2 current, 0 target, but still getting utility 22.5.
+
+**Root Cause:** In SpawnEvaluator, the saturation factor check was `if (current > 0 && target > 0)`. When target=0, the saturation penalty was skipped entirely. The deficit factor only reduced score by 50% instead of zeroing it.
+
+**Fix Applied:** Added explicit handling for target=0 case in saturation logic:
+
+```typescript
+if (target === 0 && current > 0) {
+  score = 0;  // Don't spawn when target is 0
+}
+```
+
+**File:** `src/framework/evaluators/SpawnEvaluator.ts`
+
+---
+
 ### Duplicate Reserver Spawning
 
 **Status:** Fixed

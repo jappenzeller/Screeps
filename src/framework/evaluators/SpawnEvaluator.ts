@@ -148,7 +148,11 @@ export class SpawnEvaluator extends BaseEvaluator<SpawnAction> {
     }
 
     // === FACTOR: Saturation ===
-    if (current > 0 && target > 0) {
+    if (target === 0 && current > 0) {
+      // Target is 0 but we have creeps - don't spawn more
+      this.addFactor(factors, "noTarget", 0, 1.0, -1);
+      score = 0;
+    } else if (current > 0 && target > 0) {
       const satRatio = current / target;
       const satFactor = satRatio >= 1.0 ? 0.1 : 1 - satRatio * w.factors.saturation;
       this.addFactor(factors, "saturation", satRatio, w.factors.saturation, satFactor - 1);
