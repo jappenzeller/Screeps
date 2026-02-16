@@ -79,19 +79,13 @@ export class LinkManager {
 
       // Priority 1: Send to storage link (hub for colony distribution)
       if (this.storageLink && this.storageLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100) {
-        var result = sourceLink.transferEnergy(this.storageLink);
-        if (result === OK) {
-          logger.debug("LinkManager", "Transferred energy to storage link");
-        }
+        sourceLink.transferEnergy(this.storageLink);
         continue;
       }
 
       // Priority 2: Send to controller link only if storage link is full
       if (this.controllerLink && this.controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100) {
-        var result = sourceLink.transferEnergy(this.controllerLink);
-        if (result === OK) {
-          logger.debug("LinkManager", "Transferred energy to controller link");
-        }
+        sourceLink.transferEnergy(this.controllerLink);
         continue;
       }
     }
@@ -110,7 +104,6 @@ export class LinkManager {
         var storageEnergy = storage ? storage.store[RESOURCE_ENERGY] : 0;
         if (storageEnergy > 10000) {
           this.storageLink.transferEnergy(this.controllerLink);
-          logger.debug("LinkManager", "Storage link forwarding to controller (storage: " + storageEnergy + ")");
         }
       }
     }

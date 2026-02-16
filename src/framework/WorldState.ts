@@ -79,7 +79,7 @@ export function captureWorldState(): WorldState {
   global.worldStateLastTick = Game.time;
 
   const cpuUsed = Game.cpu.getUsed() - startCpu;
-  if (cpuUsed > 5) {
+  if (cpuUsed > 15) {
     logger.warn("WorldState", `Capture took ${cpuUsed.toFixed(2)} CPU`);
   }
 

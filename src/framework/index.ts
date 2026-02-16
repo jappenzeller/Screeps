@@ -112,7 +112,7 @@ export function runFramework(): void {
   TelemetryManager.maybeExport(state);
 
   const cpuUsed = Game.cpu.getUsed() - startCpu;
-  if (cpuUsed > 10) {
+  if (cpuUsed > 20) {
     logger.warn("Framework", `Framework tick took ${cpuUsed.toFixed(2)} CPU`);
   }
 }

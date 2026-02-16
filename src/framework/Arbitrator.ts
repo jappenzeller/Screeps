@@ -90,7 +90,6 @@ export class ColonyArbitrator implements Arbitrator {
 
     // Only spawn if score is above threshold
     if (winner.score < 10) {
-      logger.debug("Arbitrator", `${colony.roomName}: No spawn needed (top score: ${winner.score})`);
       return null;
     }
 
