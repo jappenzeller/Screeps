@@ -741,19 +741,20 @@ export class ColonyManager {
 
     if (!Memory.colonies[this.roomName]) {
       // First-time initialization: derive remote rooms from intel
-      const derived = this.deriveRemoteTargets();
+      // Use deriveAllRemoteTargets to get proper distance values
+      var empireAssignments = this.getEmpireRemoteAssignments();
+      var derivedWithMeta = this.deriveAllRemoteTargets(empireAssignments);
       var remotes: Record<string, RemoteRoomConfig> = {};
 
-      for (var i = 0; i < derived.length; i++) {
-        var roomName = derived[i];
-        var intel = Memory.intel && Memory.intel[roomName];
-        var sources = intel && intel.sources ? intel.sources.length : 2;
+      for (var i = 0; i < derivedWithMeta.length; i++) {
+        var candidate = derivedWithMeta[i];
 
-        remotes[roomName] = {
-          room: roomName,
+        remotes[candidate.roomName] = {
+          room: candidate.roomName,
           homeColony: this.roomName,
-          distance: 1,
-          sources: sources,
+          distance: candidate.distance,
+          via: candidate.via,
+          sources: candidate.sources,
           active: true,
           activatedAt: Game.time,
           miners: [],
@@ -771,7 +772,7 @@ export class ColonyManager {
           autoExpand: false,
         },
       };
-      console.log("[Colony] Initialized " + this.roomName + " with " + derived.length + " remote rooms");
+      console.log("[Colony] Initialized " + this.roomName + " with " + derivedWithMeta.length + " remote rooms");
     } else {
       // Migration: convert old remoteRooms[] to new remotes{}
       this.migrateRemoteRooms();
@@ -837,16 +838,23 @@ export class ColonyManager {
    */
   private syncRemoteRooms(): void {
     var mem = Memory.colonies && Memory.colonies[this.roomName];
-    if (!mem) return;
+    if (!mem) {
+      console.log("[remotes] " + this.roomName + ": sync skipped - no colony memory");
+      return;
+    }
     if (!mem.remotes) mem.remotes = {};
 
-    // Update sync timestamp
+    // Update sync timestamp FIRST (proves the function ran)
     mem.remoteRoomsLastSync = Game.time;
+    console.log("[remotes] " + this.roomName + ": sync started at tick " + Game.time + " (bucket: " + Game.cpu.bucket + ")");
 
     // Only auto-discover remotes at RCL 4+ (remote mining unlocks at RCL 4)
     var room = Game.rooms[this.roomName];
     var rcl = room && room.controller ? room.controller.level : 0;
-    if (rcl < 4) return;
+    if (rcl < 4) {
+      console.log("[remotes] " + this.roomName + ": sync skipped - RCL " + rcl + " < 4");
+      return;
+    }
 
     // Get empire-wide remote assignments (for overlap check)
     var empireAssignments = this.getEmpireRemoteAssignments();
@@ -991,6 +999,11 @@ export class ColonyManager {
     }
 
     // Check distance: must be <= 2 via findRoute
+    // BUT: if CPU is low, don't remove existing remotes (conservative)
+    if (Game.cpu.bucket < 3000) {
+      // Can't validate distance - keep existing remote
+      return null;
+    }
     var routeDist = this.getRouteDistance(this.roomName, remoteName, intel, myUsername);
     if (routeDist === -1) {
       return "route blocked";

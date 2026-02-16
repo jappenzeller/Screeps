@@ -130,6 +130,48 @@
 
 ---
 
+### Framework Evaluator Console Spam
+
+**Status:** Fixed
+
+**Issue:** Framework evaluators (spawning, construction, military) were logging to console every tick, flooding output with messages like:
+
+```text
+[spawning] E43N39: Spawn HARVESTER (2/2): 0.2...
+[military] E44N42: Defend E44N42 (threat: LOW): 92.8
+[construction] E47N41: Build link (0/2): 100
+```
+
+**Root Cause:** `BaseEvaluator.logEvaluation()` checked `if (Memory.debug)` which was always true if Memory.debug existed with any value.
+
+**Fix Applied:** Changed to explicit opt-in via `Memory.debug.showEvaluations`:
+
+```typescript
+if (!Memory.debug?.showEvaluations) return;
+```
+
+**Files:** `src/framework/BaseEvaluator.ts`, `src/types.d.ts`
+
+---
+
+### Segment 92 Size Limit
+
+**Status:** Fixed
+
+**Issue:** Telemetry export to segment 92 exceeded 100KB limit.
+
+**Root Cause:** `TelemetryManager` buffered up to 500 decisions, each ~350 bytes, totaling ~175KB.
+
+**Fix Applied:**
+
+- Reduced default maxDecisions from 500 to 200
+- Added size-aware truncation (removes oldest decisions if over 90KB)
+- Added `truncated` flag for transparency
+
+**File:** `src/framework/Telemetry.ts`
+
+---
+
 ## Limitations
 
 ### No Link/Terminal/Lab/Factory Support

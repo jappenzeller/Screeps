@@ -340,6 +340,66 @@ fetchAdvisor("W1N1")
 // Shows: Recommendations from AWS
 ```
 
+## AWS Directive Commands
+
+### directives()
+Show current directive payload from AWS (segment 95).
+```javascript
+directives()
+// Shows: Version, Game tick, Staleness, Pending directives
+```
+
+### directives.toggle()
+Enable/disable the AWS directive system.
+```javascript
+directives.toggle()
+// Toggles Memory.settings.useDirectives
+```
+
+### directives.status()
+Show directive execution history.
+```javascript
+directives.status()
+// Shows: Directive ID, Status, Execution time, Result
+```
+
+### directives.clear()
+Clear all directive state (for debugging).
+```javascript
+directives.clear()
+```
+
+### directives.fallback()
+Force fallback to local logic (disable directives).
+```javascript
+directives.fallback()
+```
+
+### spawnQueue()
+Show spawn directives queued by AWS.
+```javascript
+spawnQueue()
+// Shows: Priority, Role, Colony, Reason, Age
+```
+
+## Debug Flag Commands
+
+### Memory.debug Configuration
+Debug flags control verbose logging. All are opt-in.
+
+```javascript
+// Show framework evaluator scoring per tick (spawning/construction/military)
+Memory.debug = { showEvaluations: true }
+
+// Show traffic heatmap visualization
+Memory.debug = { showTraffic: true }
+
+// Disable all debug output
+Memory.debug = {}
+// or
+delete Memory.debug
+```
+
 ## Pathfinding Debug Commands
 
 ### analyzeRoute(fromRoom, toRoom)
@@ -387,5 +447,9 @@ checkSK("E45N36")
 | Debug | `moveStats()` | Movement |
 | Debug | `analyzeRoute(from, to)` | Route analysis |
 | Debug | `checkSK("room")` | SK room check |
+| Debug | `Memory.debug.showEvaluations` | Evaluator logs |
 | AWS | `segmentSize()` | Size breakdown |
 | AWS | `advisor()` | API info |
+| AWS | `directives()` | Directive payload |
+| AWS | `directives.toggle()` | Enable/disable |
+| AWS | `spawnQueue()` | Spawn directives |

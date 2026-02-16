@@ -14,10 +14,17 @@ External monitoring system that:
 ```
 SCREEPS GAME
     │
-    │ Export to Memory Segment 90
-    ▼
-AWS LAMBDA (data-collector)
-    │ Every 5 minutes
+    ├─► Export state to Segment 90 ────────────────────┐
+    │                                                  │
+    ◄── Read directives from Segment 95 ◄────┐        │
+    │                                        │        │
+    │ Directive acks included in export ─────┼────────┤
+    │                                        │        │
+    ▼                                        │        ▼
+AWS LAMBDA (data-collector) ◄────────────────┼──── Every 5 min
+    │                                        │
+    │                           LAMBDA (directive-writer)
+    │                             (writes to Segment 95)
     ▼
 DYNAMODB (snapshots) ──────► DynamoDB Stream
     │                              │
@@ -69,6 +76,60 @@ DYNAMODB (snapshots) ──────► DynamoDB Stream
 - [ ] Embedding-based pattern discovery
 - [ ] Cross-colony knowledge transfer
 - [ ] Strategic decision engine
+
+## AWS Directive System
+
+Enables AWS to send commands to the bot via memory segment 95.
+
+### How It Works
+
+1. AWS analysis generates directives (spawn decisions, remote mining, etc.)
+2. Directive-writer Lambda writes to Segment 95
+3. Bot reads segment 95 via `DirectiveReader.run()` each tick
+4. Bot executes directives and sends acknowledgments in segment 90
+5. AWS reads acks and updates directive state
+
+### Directive Types
+
+| Type            | Payload                         | Action                                      |
+|-----------------|---------------------------------|---------------------------------------------|
+| `SPAWN`         | role, targetRoom, body, memory  | Queue creep for spawning                    |
+| `REMOTE_ADD`    | remoteRoom, distance, sources   | Add remote mining room                      |
+| `REMOTE_REMOVE` | remoteRoom, killCreeps          | Remove remote and optionally suicide creeps |
+| `CONSTRUCT`     | structureType, pos              | Place construction site                     |
+| `CONFIG`        | key, value                      | Update colony config                        |
+| `MILITARY`      | action, targetRoom, composition | Launch attack/defend                        |
+| `EXPAND`        | targetRoom, parentRoom          | Start expansion                             |
+
+### Staleness Protection
+
+Directives older than 500 ticks trigger automatic fallback to local logic. This prevents stale AWS decisions from overriding bot autonomy.
+
+### Console Commands
+
+```javascript
+directives()           // Show current directive payload
+directives.toggle()    // Enable/disable directive system
+directives.status()    // Show execution history
+directives.clear()     // Clear all directive state
+spawnQueue()           // Show queued spawn directives
+```
+
+### Memory Schema
+
+```typescript
+Memory.settings.useDirectives: boolean;  // Master toggle
+Memory.directives: {                     // Execution tracking
+  [directiveId]: {
+    status: "COMPLETED" | "FAILED" | "EXPIRED";
+    executedAt: number;
+    result?: string;
+  }
+};
+Memory.spawnDirectives: [{               // Queued spawns
+  directiveId, colony, role, priority, reason, addedAt
+}];
+```
 
 ## Data Export (AWSExporter.ts)
 
@@ -130,7 +191,15 @@ Exports colony data to memory segment 90 every 20 ticks.
     cpuUsed: number,
     bucket: number,
     memorySize: number
-  }
+  },
+
+  // Directive acknowledgments (for AWS directive system)
+  directiveAcks: [{
+    id: string,
+    status: "COMPLETED" | "FAILED" | "EXPIRED",
+    executedAt: number,
+    result?: string
+  }]
 }
 ```
 

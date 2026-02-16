@@ -12,11 +12,12 @@ The bot follows a tick-based execution model where all game logic runs once per 
 
 ```
 Each Tick:
-1. Initialize memory segments (CommandExecutor)
+1. Initialize memory segments (CommandExecutor + DirectiveReader)
 2. Process console commands
-3. Clean dead creep memory
-4. Gather room intel (scout data)
-5. For each owned room:
+3. Process AWS directives (if enabled)
+4. Clean dead creep memory
+5. Gather room intel (scout data)
+6. For each owned room:
    ├─ Track energy flow
    ├─ Track economy metrics
    ├─ Check auto safe mode
@@ -32,13 +33,16 @@ Each Tick:
    ├─ Plan remote containers
    ├─ Manage remote squads
    └─ Draw visuals
-6. Run bootstrap manager
-7. Run expansion manager
+7. Run expansion manager (skipped if bucket low)
 8. Check auto-expansion
 9. Process empire events
-10. Run all creeps with error handling
-11. Export AWS segment
-12. Log status (every 100 ticks)
+10. Run combat duo manager
+11. Run military manager
+12. Run all creeps with error handling
+13. Export AWS segment (every 20 ticks)
+14. Persist route cache (every 100 ticks)
+15. Export decision logs
+16. Log status (every 100 ticks)
 ```
 
 ## Core Systems
@@ -117,6 +121,33 @@ Coordinates offensive campaigns (controller attacks, room assaults). Uses Tactic
 - Adaptation triggers (safe mode, defenders, tower drain)
 
 See [MILITARY_MANAGER_DESIGN.md](MILITARY_MANAGER_DESIGN.md) for full details.
+
+### DirectiveReader (src/core/DirectiveReader.ts)
+
+Reads and executes AWS-generated directives from memory segment 95. Enables offloading heavy analysis (spawn scoring, remote selection) to AWS while the bot focuses on real-time execution.
+
+**Directive Types:**
+
+- `SPAWN` - Queue a creep for spawning
+- `REMOTE_ADD` - Add a remote mining room
+- `REMOTE_REMOVE` - Remove a remote mining room
+- `CONSTRUCT` - Place a construction site
+- `CONFIG` - Change colony configuration
+- `MILITARY` - Launch attack/defend actions
+- `EXPAND` - Start expansion to a room
+
+**Lifecycle:**
+
+```
+AWS Lambda → Writes to Segment 95 → DirectiveReader.run()
+                                         ↓
+                                   Execute Directives
+                                         ↓
+                                   Ack to Segment 90 → AWS Lambda reads
+```
+
+**Staleness Protection:**
+Directives older than 500 ticks automatically trigger fallback to local logic. Toggle via `Memory.settings.useDirectives`.
 
 ## Colony Phases
 
@@ -233,6 +264,7 @@ src/
 ├── core/
 │   ├── ColonyManager.ts    # Task generation
 │   ├── ColonyState.ts      # Cached state
+│   ├── DirectiveReader.ts  # AWS directive execution
 │   ├── EconomyTracker.ts   # Energy metrics
 │   ├── ConstructionCoordinator.ts
 │   ├── TrafficMonitor.ts   # Movement tracking
@@ -262,7 +294,8 @@ src/
 └── utils/
     ├── Console.ts          # Debug commands
     ├── AWSExporter.ts      # AWS integration
-    ├── movement.ts         # Pathfinding
+    ├── cpuCache.ts         # CPU bucket guards
+    ├── movement.ts         # Pathfinding + route cache
     ├── Logger.ts           # Logging
     └── StatsCollector.ts   # Metrics
 ```
@@ -276,8 +309,36 @@ Budget allocation per tick (~20 CPU limit):
 - Memory serialization: proportional to size
 
 Key optimizations:
+
 1. **ColonyStateManager** caches room queries
 2. **Utility spawning** runs once per spawn, not per role
 3. **Task refresh** every 10 ticks, not every tick
 4. **Path reuse** via moveTo's reusePath option
 5. **Traffic recording** samples rather than logs every move
+
+### CPU Caching Utilities (src/utils/cpuCache.ts)
+
+Guards for skipping expensive operations when CPU bucket is low:
+
+```typescript
+shouldSkipNonEssential(): boolean    // Skip at bucket < 2000
+shouldSkipExpensiveEvaluations(): boolean  // Skip at bucket < 1000
+```
+
+Used in main loop to protect:
+
+- Framework evaluators (spawning, construction, military)
+- Expansion manager
+- Decision logging
+- Military visuals
+
+### Route Cache Persistence (src/utils/movement.ts)
+
+Persists `Game.map.findRoute()` results across global resets:
+
+```typescript
+restoreRouteCacheFromMemory()  // Called on init
+saveRouteCacheToMemory()       // Called every 100 ticks
+```
+
+Prevents CPU spikes after code pushes when routes need recalculation.
