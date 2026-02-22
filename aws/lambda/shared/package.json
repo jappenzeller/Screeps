@@ -1,0 +1,7 @@
+{
+  "name": "screeps-advisor-shared",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Shared utilities for Screeps Advisor Lambdas",
+  "dependencies": {}
+}

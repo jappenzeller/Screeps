@@ -49,12 +49,12 @@ Returns time-series data for colony metrics over specified time range.
 - Configurable via `?hours=N` parameter
 
 ### Dashboard (HTML)
-**URL:** `https://screeps-dashboard-488218643044.s3.amazonaws.com/index.html`
+**URL:** `https://screeps-dashboard-788417514918.s3.amazonaws.com/index.html`
 
 Static HTML dashboard (requires JavaScript - Claude can fetch but not render)
 
 ### Analytics Dashboard (HTML)
-**URL:** `https://screeps-dashboard-488218643044.s3.amazonaws.com/analytics.html`
+**URL:** `https://screeps-dashboard-788417514918.s3.amazonaws.com/analytics.html`
 
 QuickSight embedded dashboard with Cognito auth (requires JavaScript)
 

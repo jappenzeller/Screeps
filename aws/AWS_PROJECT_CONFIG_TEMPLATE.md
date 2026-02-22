@@ -74,7 +74,7 @@ sso_registration_scopes = sso:account:access
 
 [profile policy]
 sso_session = policy
-sso_account_id = 488218643044
+sso_account_id = 788417514918
 sso_role_name = AdministratorAccess
 region = us-east-1
 ```

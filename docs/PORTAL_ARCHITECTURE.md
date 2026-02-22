@@ -19,16 +19,16 @@ Single-page React application replacing the three disconnected HTML pages (colon
 ## Deployment
 
 ```
-S3 Bucket: screeps-dashboard-488218643044
+S3 Bucket: screeps-dashboard-788417514918
 Path: portal/           (keep existing index.html and analytics.html untouched)
-URL:  https://screeps-dashboard-488218643044.s3.amazonaws.com/portal/index.html
+URL:  https://screeps-dashboard-788417514918.s3.amazonaws.com/portal/index.html
 ```
 
 Deploy script:
 ```bash
 cd portal
 npm run build
-aws s3 sync dist/ s3://screeps-dashboard-488218643044/portal/ --delete
+aws s3 sync dist/ s3://screeps-dashboard-788417514918/portal/ --delete
 ```
 
 Future: CloudFront distribution with S3 origin for `/` and API Gateway origin for `/api/*` to unify under one domain.

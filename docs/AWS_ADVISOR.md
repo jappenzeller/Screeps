@@ -416,12 +416,12 @@ Every response includes:
 
 ### SNS Critical Alerts
 
-**Topic ARN:** `arn:aws:sns:us-east-1:488218643044:screeps-advisor-critical-alerts`
+**Topic ARN:** `arn:aws:sns:us-east-1:788417514918:screeps-advisor-critical-alerts`
 
 Subscribe to receive email/SMS alerts:
 ```bash
 aws sns subscribe \
-  --topic-arn arn:aws:sns:us-east-1:488218643044:screeps-advisor-critical-alerts \
+  --topic-arn arn:aws:sns:us-east-1:788417514918:screeps-advisor-critical-alerts \
   --protocol email \
   --notification-endpoint your@email.com
 ```

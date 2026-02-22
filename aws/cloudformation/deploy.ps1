@@ -3,7 +3,7 @@
 
 param(
     [string]$Region = "us-east-1",
-    [string]$Profile = "screeps-monitor",
+    [string]$Profile = "screeps-new",
     [string]$Environment = "prod",
     [string]$ScreepsToken = "",
     [string]$AnthropicKey = ""
