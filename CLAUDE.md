@@ -399,7 +399,7 @@ External AI-powered analysis system that monitors colony performance and provide
 ### API Endpoint
 
 ```text
-https://dossn1w7n5.execute-api.us-east-1.amazonaws.com
+https://g9gplzbul4.execute-api.us-east-1.amazonaws.com
 ```
 
 ### Endpoints

@@ -16,6 +16,7 @@ const RECOMMENDATIONS_TABLE = process.env.RECOMMENDATIONS_TABLE;
 const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
 const OBSERVATIONS_TABLE = process.env.OBSERVATIONS_TABLE;
 const INTEL_TABLE = process.env.INTEL_TABLE;
+const KNOWLEDGE_TABLE = process.env.KNOWLEDGE_TABLE;
 const RECORDINGS_TABLE = process.env.RECORDINGS_TABLE;
 const ANALYTICS_BUCKET = process.env.ANALYTICS_BUCKET;
 const SCREEPS_TOKEN_SECRET = process.env.SCREEPS_TOKEN_SECRET;
@@ -1138,6 +1139,102 @@ async function getPatterns(roomName) {
   };
 }
 
+/**
+ * GET /analysis/{roomName}/learning - Learning loop status and pattern confidence
+ * Phase 4: Shows outcome evaluator results and pattern confidence scores
+ */
+async function getLearningData(roomName) {
+  if (!KNOWLEDGE_TABLE) {
+    return { error: "Knowledge table not configured" };
+  }
+
+  try {
+    // Query all _global entries from knowledge table
+    const response = await docClient.send(new ScanCommand({
+      TableName: KNOWLEDGE_TABLE,
+      FilterExpression: "begins_with(patternHash, :prefix)",
+      ExpressionAttributeValues: { ":prefix": "_global|" },
+      Limit: 200,
+    }));
+
+    const items = response.Items || [];
+
+    // Separate confidence scores and outcomes
+    const patternConfidence = {};
+    const recentOutcomes = [];
+    let totalEvaluated = 0;
+    let helpful = 0;
+    let natural = 0;
+    let expired = 0;
+    let unknown = 0;
+
+    for (const item of items) {
+      const key = item.patternHash || "";
+
+      if (key.startsWith("_global|confidence:")) {
+        const patternType = key.replace("_global|confidence:", "");
+        patternConfidence[patternType] = item.confidence ?? 0.5;
+      } else if (key.startsWith("_global|outcome:")) {
+        totalEvaluated++;
+
+        // Categorize outcomes
+        const status = item.status;
+        if (status === "resolved_helpful") helpful++;
+        else if (status === "resolved_natural") natural++;
+        else if (status === "expired") expired++;
+        else if (status === "resolved_unknown") unknown++;
+
+        // Keep recent outcomes (last 20)
+        recentOutcomes.push({
+          recommendationId: item.recommendationId,
+          patternType: item.patternType,
+          roomName: item.roomName,
+          status: item.status,
+          reason: item.reason,
+          confidenceChange: item.confidenceChange,
+          timestamp: item.timestamp,
+          createdAt: item.createdAt,
+        });
+      }
+    }
+
+    // Sort outcomes by timestamp (most recent first)
+    recentOutcomes.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    // Filter to requested room if specified
+    const roomOutcomes = roomName && roomName !== "_all"
+      ? recentOutcomes.filter(o => o.roomName === roomName)
+      : recentOutcomes;
+
+    // Calculate helpful rate
+    const resolvedCount = helpful + natural;
+    const helpfulRate = resolvedCount > 0 ? helpful / resolvedCount : 0;
+
+    return {
+      roomName: roomName || "_all",
+      patternConfidence,
+      recentOutcomes: roomOutcomes.slice(0, 20),
+      stats: {
+        totalEvaluated,
+        helpful,
+        natural,
+        expired,
+        unknown,
+        helpfulRate: Math.round(helpfulRate * 100) / 100,
+      },
+      confidenceRange: {
+        min: 0.0,
+        max: 1.0,
+        default: 0.5,
+        suppressionThreshold: 0.3,
+      },
+    };
+  } catch (error) {
+    console.error("Failed to get learning data:", error.message);
+    return { error: "Failed to fetch learning data", details: error.message };
+  }
+}
+
 // ==================== Console Command Endpoint ====================
 
 const COMMAND_SEGMENT = 91;
@@ -1749,6 +1846,9 @@ export async function handler(event) {
         };
       }
       result = await submitFeedback(recommendationId, body);
+    }
+    else if (path === 'GET /analysis/{roomName}/learning') {
+      result = await getLearningData(params.roomName);
     }
 
     // Debug endpoints (v2 regrouping)

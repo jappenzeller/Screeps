@@ -1,4 +1,4 @@
-const API_BASE = 'https://dossn1w7n5.execute-api.us-east-1.amazonaws.com';
+const API_BASE = 'https://g9gplzbul4.execute-api.us-east-1.amazonaws.com';
 
 export interface ApiMeta {
   source: 'segment90' | 'dynamodb' | 'screeps-api' | 'unknown';

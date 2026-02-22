@@ -188,7 +188,7 @@ Resources:
           Value: !Ref ProjectName
 
   # ==================== Metrics Table (DynamoDB) ====================
-  # Using DynamoDB instead of TimeStream for metrics storage
+  # DynamoDB for metrics storage (backup/fallback)
   MetricsHistoryTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -520,6 +520,7 @@ Resources:
                   - !GetAtt RecommendationsTable.Arn
                   - !Sub ${RecommendationsTable.Arn}/index/*
                   - !GetAtt PatternStateTable.Arn
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-observations
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
@@ -567,6 +568,7 @@ Resources:
                   - !GetAtt RecommendationsTable.Arn
                   - !Sub ${RecommendationsTable.Arn}/index/*
                   - !GetAtt IntelTable.Arn
+                  - !GetAtt KnowledgeTable.Arn
                   - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-observations
                   - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-observations/index/*
                   - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-signals
@@ -699,27 +701,31 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Query recommendations by room-status-index
               - Effect: Allow
                 Action:
                   - dynamodb:Query
                   - dynamodb:GetItem
                 Resource:
-                  - !GetAtt SnapshotsTable.Arn
                   - !GetAtt RecommendationsTable.Arn
                   - !Sub ${RecommendationsTable.Arn}/index/*
+              # Update recommendation status, write outcomes to knowledge
               - Effect: Allow
                 Action:
                   - dynamodb:PutItem
                   - dynamodb:UpdateItem
+                  - dynamodb:GetItem
                 Resource:
                   - !GetAtt KnowledgeTable.Arn
                   - !GetAtt RecommendationsTable.Arn
+              # Query metrics history for before/after comparison
               - Effect: Allow
                 Action:
                   - dynamodb:Query
                 Resource:
                   - !GetAtt MetricsHistoryTable.Arn
                   - !Sub ${MetricsHistoryTable.Arn}/index/*
+              # Read DynamoDB Stream (snapshots table)
               - Effect: Allow
                 Action:
                   - dynamodb:GetRecords
@@ -728,16 +734,6 @@ Resources:
                   - dynamodb:ListStreams
                 Resource:
                   - !GetAtt SnapshotsTable.StreamArn
-              - Effect: Allow
-                Action:
-                  - scheduler:CreateSchedule
-                  - scheduler:DeleteSchedule
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - iam:PassRole
-                Resource:
-                  - !GetAtt SchedulerExecutionRole.Arn
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -767,6 +763,8 @@ Resources:
                   - lambda:InvokeFunction
                 Resource:
                   - !GetAtt ContextBuilderFunction.Arn
+                  - !GetAtt DetectPatternsFunction.Arn
+                  - !GetAtt FilterPatternsFunction.Arn
                   - !GetAtt ClaudeAnalyzerFunction.Arn
                   - !GetAtt RecommendationWriterFunction.Arn
               - Effect: Allow
@@ -821,6 +819,67 @@ Resources:
                   - lambda:InvokeFunction
                 Resource:
                   - !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:screeps-outcome-evaluator-${Environment}
+
+  # Detect Patterns Role
+  DetectPatternsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-detect-patterns-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DetectPatternsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt MetricsHistoryTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  # Filter Patterns Role
+  FilterPatternsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-filter-patterns-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FilterPatternsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt RecommendationsTable.Arn
+                  - !Sub ${RecommendationsTable.Arn}/index/*
+                  - !GetAtt KnowledgeTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
 
   # Context Builder Role
   ContextBuilderRole:
@@ -965,6 +1024,7 @@ Resources:
           SNAPSHOTS_TABLE: !Ref SnapshotsTable
           EVENTS_TABLE: !Ref EventsTable
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+          OBSERVATIONS_TABLE: !Sub ${ProjectName}-observations
           ANTHROPIC_KEY_SECRET: !Ref AnthropicKeySecret
           API_ENDPOINT: !GetAtt HttpApi.ApiEndpoint
 
@@ -986,6 +1046,7 @@ Resources:
           EVENTS_TABLE: !Ref EventsTable
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
           INTEL_TABLE: !Ref IntelTable
+          KNOWLEDGE_TABLE: !Ref KnowledgeTable
           RECORDINGS_TABLE: !Ref RecordingsTable
           OBSERVATIONS_TABLE: !Sub ${ProjectName}-observations
           SIGNALS_TABLE: !Sub ${ProjectName}-signals
@@ -1023,7 +1084,7 @@ Resources:
       BatchSize: 10
       MaximumBatchingWindowInSeconds: 5
 
-  # Metrics Writer - EventBridge -> TimeStream
+  # Metrics Writer - EventBridge -> DynamoDB
   MetricsWriterFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -1068,7 +1129,7 @@ Resources:
           KNOWLEDGE_TABLE: !Ref KnowledgeTable
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
           METRICS_TABLE: !Ref MetricsHistoryTable
-          
+
   # Claude Analyzer - calls Claude API for analysis
   ClaudeAnalyzerFunction:
     Type: AWS::Lambda::Function
@@ -1085,6 +1146,41 @@ Resources:
       Environment:
         Variables:
           ANTHROPIC_KEY_SECRET: !Ref AnthropicKeySecret
+
+  # Detect Patterns - runs pattern detection rules
+  DetectPatternsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-detect-patterns-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt DetectPatternsRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: detect-patterns.zip
+      Environment:
+        Variables:
+          METRICS_TABLE: !Ref MetricsHistoryTable
+
+  # Filter Patterns - removes patterns with pending recs or low confidence
+  FilterPatternsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub screeps-filter-patterns-${Environment}
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt FilterPatternsRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: filter-patterns.zip
+      Environment:
+        Variables:
+          RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
+          KNOWLEDGE_TABLE: !Ref KnowledgeTable
 
   # Recommendation Writer - writes recommendations to DynamoDB
   RecommendationWriterFunction:
@@ -1104,7 +1200,8 @@ Resources:
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
           EVENT_BUS_NAME: !Ref ScreepsEventBus
 
-  # Outcome Evaluator - checks if recommendations worked
+  # Outcome Evaluator - evaluates recommendation outcomes on snapshot stream
+  # Phase 4: Learning Loop - adjusts pattern confidence based on outcomes
   OutcomeEvaluatorFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -1119,11 +1216,9 @@ Resources:
         S3Key: outcome-evaluator.zip
       Environment:
         Variables:
-          SNAPSHOTS_TABLE: !Ref SnapshotsTable
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
           KNOWLEDGE_TABLE: !Ref KnowledgeTable
           METRICS_TABLE: !Ref MetricsHistoryTable
-          SCHEDULER_ROLE_ARN: !GetAtt SchedulerExecutionRole.Arn
 
   OutcomeEvaluatorPermission:
     Type: AWS::Lambda::Permission
@@ -1327,24 +1422,69 @@ Resources:
       StateMachineName: !Sub ${ProjectName}-analysis-workflow
       RoleArn: !GetAtt AnalysisWorkflowRole.Arn
       Definition:
-        Comment: Screeps AI Analysis Workflow
+        Comment: Screeps AI Analysis Workflow with Pattern Detection
         StartAt: BuildContext
         States:
           BuildContext:
             Type: Task
             Resource: !GetAtt ContextBuilderFunction.Arn
             ResultPath: $.context
-            Next: AnalyzeWithClaude
+            Next: ShouldAnalyze
             Catch:
               - ErrorEquals: ["States.ALL"]
                 ResultPath: $.error
                 Next: FailState
+          ShouldAnalyze:
+            Type: Choice
+            Comment: Skip if analyzed within last 10 minutes
+            Choices:
+              - Variable: $.context.recentAnalysisAge
+                NumericLessThan: 600000
+                Next: SkipAnalysis
+            Default: DetectPatterns
+          SkipAnalysis:
+            Type: Succeed
+            Comment: Analysis skipped - ran recently
+          DetectPatterns:
+            Type: Task
+            Resource: !GetAtt DetectPatternsFunction.Arn
+            ResultPath: $.patternResult
+            Next: FilterPatterns
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                ResultPath: $.error
+                Next: FailState
+          FilterPatterns:
+            Type: Task
+            Resource: !GetAtt FilterPatternsFunction.Arn
+            ResultPath: $.filteredResult
+            Next: HasNewPatterns
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                ResultPath: $.error
+                Next: FailState
+          HasNewPatterns:
+            Type: Choice
+            Comment: Skip Claude if no new patterns detected
+            Choices:
+              - Variable: $.filteredResult.count
+                NumericEquals: 0
+                Next: NoNewPatterns
+            Default: AnalyzeWithClaude
+          NoNewPatterns:
+            Type: Succeed
+            Comment: No new patterns to analyze
           AnalyzeWithClaude:
             Type: Task
             Resource: !GetAtt ClaudeAnalyzerFunction.Arn
             InputPath: $.context
             ResultPath: $.analysis
             Next: WriteRecommendations
+            Retry:
+              - ErrorEquals: ["RateLimitError"]
+                IntervalSeconds: 60
+                MaxAttempts: 3
+                BackoffRate: 2
             Catch:
               - ErrorEquals: ["States.ALL"]
                 ResultPath: $.error

@@ -65,14 +65,28 @@ DYNAMODB (snapshots) ──────► DynamoDB Stream
 - [x] Stream Processor classifies events and routes to EventBridge
 - [x] EventBridge rules for metrics, analysis triggers, and critical alerts
 - [x] SNS topic for critical alerts (ThreatDetected, CriticalEnergyLevel, NoCreepsAlive)
-- [x] Step Functions workflow (BuildContext → AnalyzeWithClaude → WriteRecommendations)
+- [x] Metrics Writer (DynamoDB) stores historical metrics for trend analysis
+- [x] Context Builder queries metrics history for 6-hour trend windows
 
-### Phase 3: Learning Loop (NOT STARTED)
-- [ ] Outcome Evaluator to track recommendation effectiveness
-- [ ] Pattern confidence scoring
-- [ ] Validated fix library
+### Phase 3: Smart Pattern Detection (COMPLETED)
 
-### Phase 4: Adaptive Intelligence (NOT STARTED)
+- [x] Enhanced Step Functions workflow with throttling gates
+- [x] ShouldAnalyze gate: skips if analyzed within 10 minutes
+- [x] DetectPatterns Lambda: rule-based pattern detection from snapshot + trends
+- [x] FilterPatterns Lambda: removes patterns with pending recommendations or low confidence
+- [x] HasNewPatterns gate: skips Claude API if no new patterns
+- [x] Pattern types: NO_MINERS, NO_UPGRADERS, HAULER_SHORTAGE, LOW_STORAGE, CPU_BUCKET_LOW, ACTIVE_THREAT, ENERGY_DRAIN, RCL_STALL
+
+### Phase 4: Learning Loop (COMPLETED)
+
+- [x] Outcome Evaluator Lambda: evaluates recommendations on snapshot stream
+- [x] Pattern resolution detection: checks if patterns are resolved in new snapshots
+- [x] Outcome classification: resolved_helpful, resolved_natural, expired, resolved_unknown
+- [x] Pattern confidence scoring: adjusts confidence in [0.0, 1.0] range
+- [x] Knowledge table records: stores outcomes and confidence scores
+- [x] API endpoint: GET /analysis/{roomName}/learning for learning data
+
+### Phase 5: Adaptive Intelligence (NOT STARTED)
 - [ ] Embedding-based pattern discovery
 - [ ] Cross-colony knowledge transfer
 - [ ] Strategic decision engine
@@ -213,7 +227,7 @@ Segment 90 has 100KB limit. Graceful degradation:
 
 ## API Endpoints
 
-**Base URL:** `https://dossn1w7n5.execute-api.us-east-1.amazonaws.com`
+**Base URL:** `https://g9gplzbul4.execute-api.us-east-1.amazonaws.com`
 
 ### Colonies (real-time from segment 90)
 ```
@@ -247,7 +261,34 @@ GET /analysis/{roomName}/signals          — Signals
 GET /analysis/{roomName}/signals/events   — Signal events
 GET /analysis/{roomName}/observations     — Observations
 GET /analysis/{roomName}/patterns         — Patterns
+GET /analysis/{roomName}/learning         — Learning loop status & confidence
 POST /analysis/{roomName}/feedback        — Recommendation feedback
+```
+
+#### Learning Endpoint Response
+
+```json
+{
+  "patternConfidence": {
+    "NO_UPGRADERS": 0.6,
+    "HAULER_SHORTAGE": 0.45,
+    "LOW_STORAGE": 0.7
+  },
+  "recentOutcomes": [...],
+  "stats": {
+    "totalEvaluated": 15,
+    "helpful": 6,
+    "natural": 4,
+    "expired": 5,
+    "helpfulRate": 0.6
+  },
+  "confidenceRange": {
+    "min": 0.0,
+    "max": 1.0,
+    "default": 0.5,
+    "suppressionThreshold": 0.3
+  }
+}
 ```
 
 ### Debug
@@ -301,9 +342,33 @@ Every response includes:
 - **Pattern Detection:** Detects both problem patterns and healthy state patterns
 - **Runtime:** Node.js 20.x
 
+### metrics-writer
+
+- **Trigger:** EventBridge (SnapshotCreated event)
+- **Action:** Write colony metrics to DynamoDB for trend analysis
+- **Metrics:** energy_available, energy_stored, rcl_progress, creep_count, cpu_used, etc.
+- **Retention:** 7 days TTL
+- **Runtime:** Node.js 20.x
+
 ### context-builder
+
 - **Trigger:** Step Functions (AnalysisWorkflow)
-- **Action:** Build rich context from snapshots, events, knowledge
+- **Action:** Build rich context from snapshots, events, knowledge, metrics history
+- **Features:** 6-hour trend analysis, recentAnalysisAge for throttling
+- **Runtime:** Node.js 20.x
+
+### detect-patterns
+
+- **Trigger:** Step Functions (AnalysisWorkflow)
+- **Action:** Run rule-based pattern detection on snapshot and metrics trends
+- **Patterns:** NO_MINERS, NO_UPGRADERS, HAULER_SHORTAGE, LOW_STORAGE, CPU_BUCKET_LOW, etc.
+- **Runtime:** Node.js 20.x
+
+### filter-patterns
+
+- **Trigger:** Step Functions (AnalysisWorkflow)
+- **Action:** Remove patterns with pending recommendations or low confidence scores
+- **Features:** Checks knowledge table for pattern confidence, filters duplicates
 - **Runtime:** Node.js 20.x
 
 ### claude-analyzer
@@ -314,6 +379,17 @@ Every response includes:
 ### recommendation-writer
 - **Trigger:** Step Functions (AnalysisWorkflow)
 - **Action:** Store recommendations in DynamoDB
+- **Runtime:** Node.js 20.x
+
+### outcome-evaluator
+
+- **Trigger:** DynamoDB Stream (snapshots table INSERT events)
+- **Action:** Evaluate pending recommendations against new snapshots
+- **Features:**
+  - Pattern resolution detection (checks if detected patterns are now resolved)
+  - Outcome classification: resolved_helpful, resolved_natural, expired, resolved_unknown
+  - Confidence scoring: adjusts pattern confidence based on outcomes (+0.1 helpful, -0.05 natural)
+  - Knowledge table updates: records outcomes and confidence scores
 - **Runtime:** Node.js 20.x
 
 ### api
@@ -357,18 +433,39 @@ aws sns subscribe \
 ```
 BuildContext
     │
-    │ Gather snapshots, events, knowledge, recommendations
+    │ Gather snapshots, events, knowledge, metrics history
+    ▼
+ShouldAnalyze ──────(analyzed <10min ago)──────► SkipAnalysis (Succeed)
+    │
+    │ Check recentAnalysisAge
+    ▼
+DetectPatterns
+    │
+    │ Rule-based pattern detection from snapshot + trends
+    ▼
+FilterPatterns
+    │
+    │ Remove patterns with pending recs or low confidence
+    ▼
+HasNewPatterns ─────(count = 0)─────► NoNewPatterns (Succeed)
+    │
+    │ New patterns detected
     ▼
 AnalyzeWithClaude
     │
-    │ Generate observations via Claude API
+    │ Generate recommendations via Claude API
     ▼
 WriteRecommendations
     │
-    │ Store to DynamoDB
+    │ Store to DynamoDB + emit events
     ▼
 Success
 ```
+
+**Throttling Gates:**
+
+- **ShouldAnalyze**: Skips workflow if room was analyzed within last 10 minutes
+- **HasNewPatterns**: Skips Claude API call if no new patterns detected (saves API costs)
 
 ## Pattern Detection
 
@@ -407,9 +504,25 @@ Success
 | `screeps-advisor-signals` | roomName (S) | timestamp (N) | 30d | Metrics & threshold events |
 | `screeps-advisor-intel` | roomName (S) | - | - | Room intelligence |
 | `screeps-advisor-knowledge` | patternHash (S) | - | - | Learning/feedback loop |
-| `screeps-advisor-metrics-history` | roomName (S) | timestamp (N) | 30d | Historical metrics |
+| `screeps-advisor-metrics-history` | roomName (S) | timestamp (N) | 7d | Historical metrics |
 | `screeps-advisor-recordings` | recordingId (S) | - | 30d | Room recordings metadata |
 | `screeps-advisor-pattern-state` | patternId (S) | - | - | Pattern detection state |
+
+### Knowledge Table Key Patterns
+
+The knowledge table uses a single `patternHash` key with prefixed patterns:
+
+| Key Pattern | Description | Example |
+|-------------|-------------|---------|
+| `_global\|confidence:{patternType}` | Pattern confidence score (0.0-1.0) | `_global\|confidence:NO_UPGRADERS` |
+| `_global\|outcome:{recommendationId}` | Outcome record for a recommendation | `_global\|outcome:abc-123` |
+
+**Confidence Scoring:**
+
+- Default: 0.5 (new patterns)
+- Range: [0.0, 1.0]
+- Suppression threshold: 0.3 (patterns below this are filtered)
+- Adjustment: +0.1 for resolved_helpful, -0.05 for resolved_natural
 
 ## Deployment
 

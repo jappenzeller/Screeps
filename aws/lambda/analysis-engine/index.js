@@ -17,7 +17,7 @@ const EVENTS_TABLE = process.env.EVENTS_TABLE;
 const RECOMMENDATIONS_TABLE = process.env.RECOMMENDATIONS_TABLE;
 const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
 const OBSERVATIONS_TABLE = process.env.OBSERVATIONS_TABLE;
-const API_ENDPOINT = process.env.API_ENDPOINT || "https://dossn1w7n5.execute-api.us-east-1.amazonaws.com";
+const API_ENDPOINT = process.env.API_ENDPOINT || "https://g9gplzbul4.execute-api.us-east-1.amazonaws.com";
 const RETENTION_DAYS = 30;
 
 let anthropicClient = null;

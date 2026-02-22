@@ -2,7 +2,7 @@
 
 ## Overview
 
-Single-page React application replacing the three disconnected HTML pages (colony dashboard, QuickSight analytics, recording viewer) with a unified portal. Hosted on S3, consuming the existing API Gateway at `https://dossn1w7n5.execute-api.us-east-1.amazonaws.com`.
+Single-page React application replacing the three disconnected HTML pages (colony dashboard, QuickSight analytics, recording viewer) with a unified portal. Hosted on S3, consuming the existing API Gateway at `https://g9gplzbul4.execute-api.us-east-1.amazonaws.com`.
 
 ## Tech Stack
 
@@ -37,7 +37,7 @@ Future: CloudFront distribution with S3 origin for `/` and API Gateway origin fo
 
 ## API Surface (Complete Reference)
 
-Base URL: `https://dossn1w7n5.execute-api.us-east-1.amazonaws.com`
+Base URL: `https://g9gplzbul4.execute-api.us-east-1.amazonaws.com`
 
 ### Colonies (real-time, segment 90)
 ```
@@ -321,7 +321,7 @@ Simple but useful.
 ### API Client (`api/client.ts`)
 
 ```typescript
-const API_BASE = 'https://dossn1w7n5.execute-api.us-east-1.amazonaws.com';
+const API_BASE = 'https://g9gplzbul4.execute-api.us-east-1.amazonaws.com';
 
 interface ApiResponse<T> {
   data: T;

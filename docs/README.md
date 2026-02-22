@@ -109,7 +109,7 @@ See [CONSOLE_COMMANDS.md](./CONSOLE_COMMANDS.md) for full list.
 
 ## AWS Integration
 
-External monitoring at `https://dossn1w7n5.execute-api.us-east-1.amazonaws.com`
+External monitoring at `https://g9gplzbul4.execute-api.us-east-1.amazonaws.com`
 
 Data exported to memory segment 90 every 20 ticks:
 - Colony metrics (energy, creeps, construction)
