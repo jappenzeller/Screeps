@@ -97,9 +97,14 @@ export function fleeToSafety(creep: Creep): void {
 
 /**
  * Get hostile count for a room, preferring live vision over memory.
+ * When we have a stale scan but hostiles were seen recently, returns
+ * the last known count to prevent miners from returning prematurely.
  */
 export function getHostileCount(roomName: string): number {
-  // If we have vision, use live data
+  const SCAN_AGE_THRESHOLD = 200; // Fresh scan threshold
+  const INVADER_LIFESPAN = 1500; // Assume threat persists for invader lifespan
+
+  // If we have vision, use live data (this is the only way to confirm room is safe)
   const room = Game.rooms[roomName];
   if (room) {
     return room.find(FIND_HOSTILE_CREEPS).length;
@@ -107,9 +112,25 @@ export function getHostileCount(roomName: string): number {
 
   // Fall back to Memory.intel
   const intel = Memory.intel && Memory.intel[roomName];
-  if (intel) {
+  if (!intel) return 0;
+
+  const scanAge = Game.time - (intel.lastScanned || 0);
+  const lastHostileSeen = intel.lastHostileSeen || 0;
+  const timeSinceHostile = Game.time - lastHostileSeen;
+
+  if (scanAge <= SCAN_AGE_THRESHOLD) {
+    // Fresh scan - trust the hostiles count
     return intel.hostiles || 0;
   }
+
+  // Stale scan - check if hostiles were seen recently
+  if (lastHostileSeen > 0 && timeSinceHostile < INVADER_LIFESPAN) {
+    // Hostiles were seen within invader lifespan but we lost visibility
+    // Return at least 1 to keep miners fleeing until we get fresh visibility
+    return Math.max(intel.hostiles || 0, 1);
+  }
+
+  // Stale scan + no recent hostiles = assume safe (invader wave expired)
   return 0;
 }
 

@@ -264,12 +264,35 @@ military.abort("campaign_1")
 
 ## Defense Commands
 
-### threats(roomName?)
-Show hostile creeps.
+### threats()
+
+Show threat status for owned and remote rooms.
 ```javascript
-threats()            // All rooms
-threats("W1N1")      // Specific room
-// Shows: Hostile name, DPS, Heal power
+threats()
+// === Owned Rooms ===
+// E43N39: Safe
+// E44N42: 2 hostiles
+//   Invader: A5 R0 H0
+//
+// === Remote Rooms ===
+// E46N38: CLEAR (scan 45 ticks ago, no hostiles)
+// E47N37: ASSUMED THREAT (scan 350 ticks ago, hostiles last seen 350 ticks ago, no visibility)
+// E47N38: ACTIVE THREAT (scan 12 ticks ago, 2 hostiles)
+```
+
+### ramparts(roomName?)
+
+Show rampart coverage of critical structures (spawns, towers, storage, terminal).
+```javascript
+ramparts()           // All owned rooms
+ramparts("W1N1")     // Specific room
+// === Rampart Coverage ===
+// E46N37 (RCL 7): 6/2500 ramparts, 3 sites
+//   spawn: 2/2 protected
+//   tower: 3/3 protected
+//   storage: 1/1 protected
+//   terminal: 0/1 protected
+//   weakest rampart: 4200 hits
 ```
 
 ### safemode(roomName?)
@@ -440,6 +463,7 @@ checkSK("E45N36")
 | Expansion | `expansion.status()` | Empire |
 | Expansion | `integration()` | Integration diagnostics |
 | Defense | `threats()` | Hostiles |
+| Defense | `ramparts()` | Rampart coverage |
 | Defense | `safemode()` | Safe mode |
 | Military | `military.status()` | Campaign status |
 | Military | `military.attack("room")` | Launch attack |

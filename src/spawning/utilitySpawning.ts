@@ -36,6 +36,9 @@ import { isUnderControllerAttack } from "../military/AntiDowngrade";
 const DYING_SOON_LOCAL = CONFIG.SPAWNING.REPLACEMENT_TTL;
 const DYING_SOON_REMOTE = CONFIG.SPAWNING.REMOTE_REPLACEMENT_TTL;
 
+/** Extra upgraders a room may add to burn down an over-full storage. */
+const MAX_SURPLUS_UPGRADERS = 4;
+
 /**
  * Detect if a colony is in "pioneer phase"
  * Pioneer phase = RCL 1, no source containers, no storage
@@ -765,6 +768,21 @@ function getCreepTargets(room: Room, totalSites: number): Record<string, number>
     upgraderTarget = rcl < 8 ? Math.min(rcl, 3) : 1;
   }
 
+  // Surplus burn: a storage sitting above the high-water mark is dead capital, and
+  // once it caps out the room starts dropping energy on the ground. The base target
+  // is capped at 3, so without this a full room can never spend its way out.
+  // Upgrading is the sink that always exists — convert the surplus into RCL.
+  if (room.storage && rcl < 8) {
+    const stored = room.storage.store[RESOURCE_ENERGY];
+    const high = CONFIG.ENERGY.STORAGE_THRESHOLDS.high;
+
+    if (stored > high) {
+      const step = high / 2;
+      const surplusUpgraders = Math.min(Math.floor((stored - high) / step), MAX_SURPLUS_UPGRADERS);
+      upgraderTarget += surplusUpgraders;
+    }
+  }
+
   // FLOOR: RCL 1-3 without storage MUST have upgrader target >= 1
   // This is non-negotiable — without upgrading, colony can never progress.
   // Safety net in case any conditional logic above failed.
@@ -1435,7 +1453,8 @@ function remoteBuilderUtility(deficit: number, state: ColonyState): number {
 function remoteDefenderUtility(state: ColonyState): number {
   if (state.rcl < 4) return 0;
 
-  const SCAN_AGE_THRESHOLD = 200; // Consider scans stale after 200 ticks
+  const SCAN_AGE_THRESHOLD = 200; // Fresh scan threshold
+  const INVADER_LIFESPAN = 1500; // Assume threat persists for invader lifespan
 
   // Check for threats in remote rooms
   let threatenedRooms = 0;
@@ -1443,25 +1462,37 @@ function remoteDefenderUtility(state: ColonyState): number {
     const intel = Memory.intel && Memory.intel[remoteName];
     if (!intel) continue;
 
-    // Check scan age - don't spawn defenders for stale intel
     const scanAge = Game.time - (intel.lastScanned || 0);
-    if (scanAge > SCAN_AGE_THRESHOLD) continue;
-
-    // Check for hostiles
     const hostileCount = intel.hostiles || 0;
-    if (hostileCount === 0) continue;
+    const lastHostileSeen = intel.lastHostileSeen || 0;
+    const timeSinceHostile = Game.time - lastHostileSeen;
 
-    // Check for dangerous hostiles (with attack parts)
-    const hostileDetails = (intel as any).hostileDetails;
-    let hasDangerous = false;
-    if (hostileDetails && Array.isArray(hostileDetails)) {
-      hasDangerous = hostileDetails.some((h: any) => h.hasCombat);
+    let isThreatened = false;
+
+    if (scanAge <= SCAN_AGE_THRESHOLD) {
+      // Fresh scan - use live hostiles count
+      if (hostileCount > 0) {
+        // Check for dangerous hostiles (with attack parts)
+        const hostileDetails = (intel as any).hostileDetails;
+        if (hostileDetails && Array.isArray(hostileDetails)) {
+          isThreatened = hostileDetails.some((h: any) => h.hasCombat);
+        } else {
+          // No details, assume any hostiles are dangerous
+          isThreatened = true;
+        }
+      }
+      // Fresh scan with 0 hostiles = safe (even if lastHostileSeen is recent)
     } else {
-      // No details, assume any hostiles are dangerous
-      hasDangerous = hostileCount > 0;
+      // Stale scan - check lastHostileSeen
+      // If hostiles were seen within invader lifespan and we DON'T have fresh visibility
+      // confirming the room is clear, assume threat persists
+      if (lastHostileSeen > 0 && timeSinceHostile < INVADER_LIFESPAN) {
+        isThreatened = true;
+      }
+      // Stale scan + lastHostileSeen > INVADER_LIFESPAN = assume safe (invader wave expired)
     }
 
-    if (hasDangerous) {
+    if (isThreatened) {
       threatenedRooms++;
     }
   }
@@ -2595,6 +2626,7 @@ function findRemoteRoomNeedingHauler(state: ColonyState): string | null {
 
 function findThreatenedRemoteRoom(state: ColonyState): string | null {
   const SCAN_AGE_THRESHOLD = 200;
+  const INVADER_LIFESPAN = 1500;
 
   // Use squad manager to find rooms that need defenders
   const squadManager = new RemoteSquadManager(state.room);
@@ -2608,18 +2640,33 @@ function findThreatenedRemoteRoom(state: ColonyState): string | null {
 
   for (const need of needs) {
     const intel = Memory.intel && Memory.intel[need.roomName];
-
-    // Validate room still has active threats (not stale intel)
     if (!intel) continue;
+
     const scanAge = Game.time - (intel.lastScanned || 0);
-    if (scanAge > SCAN_AGE_THRESHOLD) continue;
-    if ((intel.hostiles || 0) === 0) {
-      // No threats - disband the stale squad
-      squadManager.disbandSquad(need.roomName);
-      continue;
+    const hostileCount = intel.hostiles || 0;
+    const lastHostileSeen = intel.lastHostileSeen || 0;
+    const timeSinceHostile = Game.time - lastHostileSeen;
+
+    let isThreatened = false;
+
+    if (scanAge <= SCAN_AGE_THRESHOLD) {
+      // Fresh scan - use live hostiles count
+      if (hostileCount > 0) {
+        isThreatened = true;
+      } else {
+        // Fresh scan with 0 hostiles = safe, disband squad
+        squadManager.disbandSquad(need.roomName);
+      }
+    } else {
+      // Stale scan - check lastHostileSeen
+      if (lastHostileSeen > 0 && timeSinceHostile < INVADER_LIFESPAN) {
+        // Hostiles were seen recently but we lost visibility - assume still threatened
+        isThreatened = true;
+      }
+      // Stale scan + no recent hostiles = assume safe
     }
 
-    if (need.count > maxNeeded) {
+    if (isThreatened && need.count > maxNeeded) {
       maxNeeded = need.count;
       bestRoom = need.roomName;
     }

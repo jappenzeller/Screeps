@@ -2,6 +2,70 @@
 
 ## Active Issues
 
+### Remote Mining Deadlocked by Expired Pauses
+
+**Status:** Fixed
+
+**Issue:** All three owned colonies (E46N37, E47N41, E43N39) had **zero** active remotes — 0/20, 0/27 and 0/28 respectively — despite ~60 unclaimed source rooms in intel. The two RCL 7 rooms were left on 2 local sources each and could not fill their storage.
+
+**Root Cause:** A chain of three defects that together made the state permanent:
+
+1. `RemoteMiningEvaluator` pauses a remote on hostile contact, setting `pausedUntil = Game.time + 5000` and `pauseReason = "Hostile detected"`. **No code path ever cleared an expired pause.** Live pauses had `pausedUntil: 73355699` against a current tick of 77,264,600 — expired 3.9M ticks earlier and still in force.
+2. `syncRemoteRooms()` Phase 1 skipped cleanup for any entry with a `pauseReason` regardless of expiry, so dead entries were never removed either — including rooms HailHydra had since taken.
+3. Phase 3 counted **all** remotes toward `maxRemotes` (4), not just active ones. 20–28 stale entries saturated the cap, so Phase 4 never added a replacement.
+4. `findPotentialRemotes()` excludes rooms already in `colony.remotes`, so the framework's `activate_remote` path could not recover them either.
+
+**Fix Applied:** In `syncRemoteRooms()`:
+
+- Expired pauses are cleared and reactivated, then re-validated normally (hostile-owned rooms get removed as usual). Indefinite pauses (`pauseReason` with no `pausedUntil`) are still respected as deliberate.
+- `currentCount` counts only active remotes toward the cap.
+- New Phase 3b trims over-cap actives by score (weakest first) after a batch reactivation.
+- Phase 4 reactivates a known-but-inactive remote instead of skipping it, so trimmed remotes are not stranded off permanently.
+
+**File:** `src/core/ColonyManager.ts`
+
+---
+
+### Full Storage Cannot Be Spent Down
+
+**Status:** Fixed
+
+**Issue:** E43N39 sat at 1,000,000 / 1,000,000 stored energy and dropped 5,418 energy on the ground while remaining at RCL 5.
+
+**Root Cause:** `upgraderTarget = rcl < 8 ? Math.min(rcl, 3) : 1` caps upgraders at 3 regardless of stored energy. `storageUtility()` also saturates at the `high` threshold (400k), so nothing in the system responds to storage beyond that point. A room past the cap has no sink for its surplus.
+
+**Fix Applied:** Rooms with storage above the high-water mark add up to `MAX_SURPLUS_UPGRADERS` (4) extra upgraders, one per half-threshold of surplus, converting dead capital into RCL progress. Rooms with empty storage are unaffected.
+
+**File:** `src/spawning/utilitySpawning.ts`
+
+---
+
+### No Ramparts on Critical Structures
+
+**Status:** Fixed
+
+**Issue:** All three owned rooms had **0 ramparts**. Spawns, towers, storage and terminals were bare, and E46N37 additionally had no safe mode available.
+
+**Root Cause:** No rampart planner existed. `ConstructionCoordinator` listed `STRUCTURE_RAMPART` at priority 7, but nothing generated rampart sites — and that gate requires every higher-priority structure type to be complete first, which would have stalled ramparts behind unfinished extensions anyway.
+
+**Fix Applied:** Added `RampartPlanner`, which ramparts spawns → towers → storage → terminal, up to 3 concurrent sites, running every 25 ticks. It deliberately bypasses `ConstructionCoordinator` so defense does not queue behind economy. Existing `TowerManager` repair logic (ramparts below 10k hits) maintains them. Not a perimeter/min-cut planner — a full wall line is unaffordable for an energy-starved room.
+
+**Files:** `src/structures/RampartPlanner.ts`, `src/main.ts`, `src/utils/Console.ts` (`ramparts()`)
+
+---
+
+### Tick Metrics Collector Records Only Zeros
+
+**Status:** Open
+
+**Issue:** All 100 entries in `Memory.stats.tickStats` have `energyHarvested: 0`, and zero across every field of `energySpent` and `creepActions`, while creeps are demonstrably harvesting, building and upgrading. The segment-90 export to AWS still carries correct snapshot data, so the advisor sees room state but no activity data.
+
+**Impact:** AWS AI Advisor recommendations are generated without any activity signal.
+
+**File:** `src/utils/StatsCollector.ts` (suspected)
+
+---
+
 ### smartMoveTo Blocking Investigation
 
 **Status:** Investigated, fix implemented
@@ -239,6 +303,34 @@ Defense in depth - defaults at source AND guards at consumer:
 **Expected Improvement:** 17.5 CPU → < 5 CPU/tick
 
 **Files:** `src/framework/WorldState.ts`, `src/utils/AWSExporter.ts`
+
+---
+
+### Remote Defender Not Spawning After Miners Flee
+
+**Status:** Fixed
+
+**Issue:** When hostiles appear in a remote mining room, miners flee home. Once all friendly creeps leave, we lose room visibility. Intel stops updating. After 200 ticks, `remoteDefenderUtility()` considered the scan "stale" and returned utility 0. No defender ever spawned. Miners sat at home indefinitely waiting for a defender that never came.
+
+**Root Cause:** `remoteDefenderUtility()` only checked `lastScanned` age and `hostiles` count — both of which go stale when visibility is lost. It didn't use `intel.lastHostileSeen` which persists even without visibility.
+
+Similarly, `getHostileCount()` returned 0 for stale scans even if hostiles were recently seen, causing miners to attempt returning prematurely and re-fleeing in an oscillation loop.
+
+**Fix Applied:**
+
+Two-path threat detection using `lastHostileSeen`:
+
+1. **Fresh scan (lastScanned ≤ 200 ticks)**: Use live `intel.hostiles` count. If hostiles > 0, room is threatened. If 0, room is safe.
+2. **Stale scan (lastScanned > 200 ticks)**: Check `intel.lastHostileSeen`. If hostiles were seen within 1500 ticks (invader lifespan) and we DON'T have fresh visibility confirming the room is clear, assume threat persists.
+
+Changes:
+- `remoteDefenderUtility()` - spawn defenders for stale threats
+- `getHostileCount()` - return ≥1 for stale threats (keeps miners home)
+- `findRoomNeedingDefender()` - send defenders to stale-threat rooms
+- `findThreatenedRemoteRoom()` - same logic for squad management
+- `threats()` console command - shows ASSUMED THREAT for stale-threat rooms
+
+**Files:** `src/spawning/utilitySpawning.ts`, `src/utils/remoteIntel.ts`, `src/creeps/RemoteDefender.ts`, `src/utils/Console.ts`
 
 ---
 

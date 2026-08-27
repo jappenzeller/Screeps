@@ -6,6 +6,7 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { getSafeModeStatus } from "../defense/AutoSafeMode";
 import { TrafficMonitor } from "../core/TrafficMonitor";
+import { RampartPlanner } from "../structures/RampartPlanner";
 import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
@@ -80,6 +81,8 @@ syncRemotes()    - Force re-derive remote rooms from intel
 remoteBuilders() - Show remote builder status
 remoteSites("W1N1") - Show construction sites in remote rooms
 threats()        - Show hostile creeps and threat levels
+ramparts()       - Show rampart coverage of critical structures
+ramparts("W1N1") - Rampart coverage for specific room
 safemode()       - Show safe mode status and threat assessment
 safemode("W1N1") - Safe mode status for specific room
 stats()          - Show collected stats for AWS monitoring
@@ -964,6 +967,11 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
 
   // Threat status
   global.threats = () => {
+    const SCAN_AGE_THRESHOLD = 200;
+    const INVADER_LIFESPAN = 1500;
+
+    // Show owned room threats
+    console.log("=== Owned Rooms ===");
     for (const roomName in Game.rooms) {
       const room = Game.rooms[roomName];
       if (!room.controller?.my) continue;
@@ -981,6 +989,66 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
         const heal = hostile.getActiveBodyparts(HEAL);
         console.log(`  ${hostile.owner.username}: A${attack} R${ranged} H${heal}`);
       }
+    }
+
+    // Show remote room threats
+    console.log("\n=== Remote Rooms ===");
+    const colonies = Memory.colonies || {};
+    for (const colonyName in colonies) {
+      const colony = colonies[colonyName];
+      if (!colony.remotes) continue;
+
+      for (const remoteName in colony.remotes) {
+        const config = colony.remotes[remoteName];
+        if (!config.active) continue;
+
+        const intel = Memory.intel && Memory.intel[remoteName];
+        if (!intel) {
+          console.log(`${remoteName}: NO INTEL`);
+          continue;
+        }
+
+        const scanAge = Game.time - (intel.lastScanned || 0);
+        const hostileCount = intel.hostiles || 0;
+        const lastHostileSeen = intel.lastHostileSeen || 0;
+        const timeSinceHostile = Game.time - lastHostileSeen;
+
+        let status: string;
+        if (scanAge <= SCAN_AGE_THRESHOLD) {
+          // Fresh scan
+          if (hostileCount > 0) {
+            status = `ACTIVE THREAT (scan ${scanAge} ticks ago, ${hostileCount} hostiles)`;
+          } else {
+            status = `CLEAR (scan ${scanAge} ticks ago, no hostiles)`;
+          }
+        } else {
+          // Stale scan
+          if (lastHostileSeen > 0 && timeSinceHostile < INVADER_LIFESPAN) {
+            status = `ASSUMED THREAT (scan ${scanAge} ticks ago, hostiles last seen ${timeSinceHostile} ticks ago, no visibility)`;
+          } else {
+            status = `ASSUMED SAFE (scan ${scanAge} ticks ago, no recent hostiles)`;
+          }
+        }
+        console.log(`${remoteName}: ${status}`);
+      }
+    }
+
+    return "OK";
+  };
+
+  // Rampart coverage of critical structures
+  global.ramparts = (roomName?: string) => {
+    const rooms = roomName
+      ? [Game.rooms[roomName]].filter(Boolean)
+      : Object.values(Game.rooms).filter((r) => r.controller?.my);
+
+    if (rooms.length === 0) {
+      return roomName ? `No visibility into ${roomName}` : "No owned rooms";
+    }
+
+    console.log("=== Rampart Coverage ===");
+    for (const room of rooms) {
+      console.log(new RampartPlanner(room).getStatus());
     }
 
     return "OK";

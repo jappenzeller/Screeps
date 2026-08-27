@@ -9,6 +9,7 @@ import { registerConsoleCommands } from "./utils/Console";
 import { placeStructures } from "./structures/placeStructures";
 import { ContainerPlanner } from "./structures/ContainerPlanner";
 import { ExtensionPlanner } from "./structures/ExtensionPlanner";
+import { RampartPlanner } from "./structures/RampartPlanner";
 import { ConstructionCoordinator } from "./core/ConstructionCoordinator";
 import { spawnCreeps } from "./spawning/spawnCreeps";
 import { TowerManager } from "./structures/TowerManager";
@@ -218,6 +219,13 @@ function runRoom(room: Room): void {
       const extensionPlanner = new ExtensionPlanner(room);
       extensionPlanner.run();
     }
+  }
+
+  // 2b. Ramparts over critical structures - intentionally not gated by
+  // ConstructionCoordinator, which would stall defense behind unfinished extensions.
+  if (Game.time % 25 === 0) {
+    const rampartPlanner = new RampartPlanner(room);
+    rampartPlanner.run();
   }
 
   // 3. Place remaining structures (towers, storage, links, roads, etc.)

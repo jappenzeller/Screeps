@@ -561,13 +561,45 @@ function getTargetPriority(hostile: Creep): number {
 }
 
 /**
+ * Check if a room is threatened based on intel.
+ * Handles both fresh scans (use live hostiles count) and stale scans (use lastHostileSeen).
+ */
+function isRoomThreatened(intel: RoomIntel): boolean {
+  const SCAN_AGE_THRESHOLD = 200;
+  const INVADER_LIFESPAN = 1500;
+
+  const scanAge = Game.time - (intel.lastScanned || 0);
+  const hostileCount = intel.hostiles || 0;
+  const lastHostileSeen = intel.lastHostileSeen || 0;
+  const timeSinceHostile = Game.time - lastHostileSeen;
+
+  if (scanAge <= SCAN_AGE_THRESHOLD) {
+    // Fresh scan - use live hostiles count
+    if (hostileCount > 0 || intel.invaderCore) {
+      return true;
+    }
+    // Fresh scan with 0 hostiles = safe
+    return false;
+  }
+
+  // Stale scan - check lastHostileSeen
+  if (lastHostileSeen > 0 && timeSinceHostile < INVADER_LIFESPAN) {
+    // Hostiles were seen recently but we lost visibility - assume still threatened
+    return true;
+  }
+
+  // Stale scan + no recent hostiles = assume safe
+  return false;
+}
+
+/**
  * Find a remote room that needs defenders
  * Checks all remote rooms (including distance-2) from Memory.colonies
  * Falls back to adjacent rooms via exits
+ * Uses stale-threat detection: if we lost visibility but hostiles were seen recently,
+ * still consider the room threatened until we get fresh visibility confirming it's clear.
  */
 function findRoomNeedingDefender(homeRoom: string): string | null {
-  const SCAN_AGE_THRESHOLD = 200;
-
   // Priority 1: Check all registered remote rooms (includes distance-2)
   var colonyMem = Memory.colonies && Memory.colonies[homeRoom];
   if (colonyMem && colonyMem.remotes) {
@@ -582,16 +614,12 @@ function findRoomNeedingDefender(homeRoom: string): string | null {
       // Skip source keeper rooms
       if (intel.roomType === "sourceKeeper") continue;
 
-      // Check scan age
-      var scanAge = Game.time - (intel.lastScanned || 0);
-      if (scanAge > SCAN_AGE_THRESHOLD) continue;
-
-      var hostileCount = intel.hostiles || 0;
-      if (hostileCount > 0 || intel.invaderCore) {
+      // Check if room is threatened (handles both fresh and stale scans)
+      if (isRoomThreatened(intel)) {
         return remoteName;
       }
 
-      // Also check direct visibility
+      // Also check direct visibility (in case intel is stale)
       var room = Game.rooms[remoteName];
       if (room) {
         var hostiles = room.find(FIND_HOSTILE_CREEPS);
@@ -617,22 +645,23 @@ function findRoomNeedingDefender(homeRoom: string): string | null {
     // Skip Source Keeper rooms
     if (intel.roomType === "sourceKeeper") continue;
 
-    // Check scan age - don't respond to stale intel
-    const scanAge = Game.time - (intel.lastScanned || 0);
-    if (scanAge > SCAN_AGE_THRESHOLD) continue;
-
-    const hostileCount = intel.hostiles || 0;
-    if (hostileCount > 0) {
-      // Check for dangerous hostiles
-      const hostileDetails = intel.hostileDetails;
-      let hasDangerous = false;
-      if (hostileDetails && hostileDetails.length > 0) {
-        hasDangerous = hostileDetails.some((h) => h.hasCombat);
+    // Check if room is threatened (handles both fresh and stale scans)
+    if (isRoomThreatened(intel)) {
+      // For fresh scans, also check if hostiles are dangerous
+      const scanAge = Game.time - (intel.lastScanned || 0);
+      if (scanAge <= 200) {
+        const hostileDetails = intel.hostileDetails;
+        let hasDangerous = false;
+        if (hostileDetails && hostileDetails.length > 0) {
+          hasDangerous = hostileDetails.some((h) => h.hasCombat);
+        } else {
+          hasDangerous = (intel.hostiles || 0) > 0;
+        }
+        if (hasDangerous) {
+          return roomName;
+        }
       } else {
-        hasDangerous = hostileCount > 0;
-      }
-
-      if (hasDangerous) {
+        // Stale scan with recent lastHostileSeen - assume dangerous
         return roomName;
       }
     }

@@ -135,6 +135,27 @@ NPCs that spawn in unowned rooms:
 3. Defender handles combat
 4. Resume mining when clear
 
+### Pause Lifecycle
+
+`RemoteMiningEvaluator` pauses a remote on hostile contact, setting `active: false`,
+`pauseReason` and `pausedUntil = Game.time + 5000`.
+
+`syncRemoteRooms()` (every 1000 ticks) resolves pauses:
+
+| State | Behaviour |
+|---|---|
+| `pausedUntil` in the future | Left alone, skipped by cleanup |
+| `pausedUntil` in the past | Pause cleared, reactivated, then re-validated |
+| `pauseReason` with no `pausedUntil` | Indefinite manual pause, respected forever |
+
+Reactivated remotes go through the normal validity checks, so a room that was taken
+or reserved by a hostile while paused is removed rather than resumed.
+
+**Cap interaction:** only `active` remotes count toward `maxRemotes`
+(`min(homeSources * 2, 6)`). If clearing a batch of expired pauses pushes a colony over
+its cap, Phase 3b deactivates the weakest by score until it fits. Those trimmed remotes
+stay in memory with no `pauseReason` and are reactivated by Phase 4 once room frees up.
+
 ### Source Keepers
 
 Rooms with "Source Keeper" hostiles:

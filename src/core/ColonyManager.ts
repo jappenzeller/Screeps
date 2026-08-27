@@ -866,12 +866,28 @@ export class ColonyManager {
 
     // === PHASE 1: Clean up invalid existing remotes ===
     var removed: string[] = [];
+    var reactivated: string[] = [];
     for (var remoteName in mem.remotes) {
       var config = mem.remotes[remoteName];
 
-      // Skip paused remotes (manual intervention) - check pausedUntil or pauseReason
+      // Still inside its pause window - leave it alone.
       if (config.pausedUntil && config.pausedUntil > Game.time) continue;
-      if (config.pauseReason) continue; // Manual pause without expiry
+
+      // Indefinite pause (reason, no expiry) - deliberate, respect it.
+      if (config.pauseReason && !config.pausedUntil) continue;
+
+      // Pause window has expired: clear it and let the validity checks below decide
+      // the remote's fate. Without this an auto-pause (e.g. "Hostile detected") is
+      // permanent — nothing else ever clears pauseReason, so the entry is skipped
+      // forever AND still counts against maxRemotes, which silently kills the
+      // colony's entire remote economy.
+      if (config.pausedUntil) {
+        delete config.pausedUntil;
+        delete config.pauseReason;
+        config.active = true;
+        config.activatedAt = Game.time;
+        reactivated.push(remoteName);
+      }
 
       var removeReason = this.getRemoteInvalidReason(remoteName, config, empireAssignments, myUsername, intel);
       if (removeReason) {
@@ -879,6 +895,10 @@ export class ColonyManager {
         delete mem.remotes[remoteName];
         removed.push(remoteName);
       }
+    }
+
+    if (reactivated.length > 0) {
+      console.log("[remotes] " + this.roomName + ": pause expired, reactivated " + reactivated.join(", "));
     }
 
     // Refresh empire assignments after removals
@@ -893,8 +913,44 @@ export class ColonyManager {
     var homeSources = room.find(FIND_SOURCES).length;
     var maxRemotes = Math.min(homeSources * 2, 6);
 
-    // Count current remotes (excluding paused, they still count toward limit)
-    var currentCount = Object.keys(mem.remotes).length;
+    // Count only ACTIVE remotes toward the cap. Counting paused/inactive entries lets
+    // a pile of dead config permanently saturate the limit, so no new remote is ever
+    // added even when the colony is mining nothing at all.
+    var currentCount = 0;
+    for (var activeName in mem.remotes) {
+      if (mem.remotes[activeName].active) currentCount++;
+    }
+
+    // === PHASE 3b: Trim over-cap actives ===
+    // Clearing a batch of expired pauses can leave more active remotes than the colony
+    // can staff. Deactivate the weakest until we are back at the cap, so the surviving
+    // remotes get enough miners and haulers to actually be profitable.
+    if (currentCount > maxRemotes) {
+      var activeRemotes: Array<{ name: string; score: number }> = [];
+      for (var scoreName in mem.remotes) {
+        var rc = mem.remotes[scoreName];
+        if (!rc.active) continue;
+        var scoreIntel = intel[scoreName];
+        var rcThreat = scoreIntel && scoreIntel.hostiles ? scoreIntel.hostiles : 0;
+        activeRemotes.push({
+          name: scoreName,
+          score: (rc.sources || 1) * 10 - (rc.distance || 1) * 5 - rcThreat * 3,
+        });
+      }
+
+      activeRemotes.sort(function (a, b) { return a.score - b.score; }); // weakest first
+
+      var trimmed: string[] = [];
+      for (var t = 0; t < activeRemotes.length && currentCount > maxRemotes; t++) {
+        mem.remotes[activeRemotes[t].name].active = false;
+        currentCount--;
+        trimmed.push(activeRemotes[t].name);
+      }
+
+      if (trimmed.length > 0) {
+        console.log("[remotes] " + this.roomName + ": over cap, deactivated " + trimmed.join(", "));
+      }
+    }
 
     // === PHASE 4: Score and add candidates within limit ===
     // Score candidates: (sources * 10) - (distance * 5) - (threatLevel * 3)
@@ -915,8 +971,20 @@ export class ColonyManager {
       var sc = scoredCandidates[i];
       var candidate = sc.candidate;
 
-      // Don't overwrite existing remotes (preserves manual config)
-      if (mem.remotes[candidate.roomName]) continue;
+      // Already known: never overwrite its config. But if it is merely inactive
+      // (trimmed by the cap earlier, not paused), bring it back rather than skipping —
+      // otherwise a trimmed remote is stranded off forever even once there is room.
+      var existingRemote = mem.remotes[candidate.roomName];
+      if (existingRemote) {
+        if (!existingRemote.active && !existingRemote.pauseReason && !existingRemote.pausedUntil) {
+          existingRemote.active = true;
+          existingRemote.activatedAt = Game.time;
+          empireAssignments[candidate.roomName] = this.roomName;
+          currentCount++;
+          added.push(candidate.roomName + "(reactivated)");
+        }
+        continue;
+      }
 
       // Double-check overlap (another colony may have added it)
       if (empireAssignments[candidate.roomName] && empireAssignments[candidate.roomName] !== this.roomName) {

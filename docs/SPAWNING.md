@@ -52,6 +52,19 @@ Uses modular utility combining:
 Result: 0-60 range typically
 ```
 
+**Surplus burn:** the base target is `min(rcl, 3)` below RCL 8, and `storageUtility()`
+saturates at the `high` threshold (400k). Past that point nothing responds to more
+stored energy, so a full storage has no sink and starts dropping energy on the ground.
+Rooms with storage above `high` therefore add one extra upgrader per half-threshold of
+surplus, up to `MAX_SURPLUS_UPGRADERS` (4):
+
+```
+stored 400k -> +0    stored 800k -> +2
+stored 600k -> +1    stored 1.0M -> +3 (target 6 at RCL 5)
+```
+
+Rooms with empty storage are unaffected.
+
 #### BUILDER
 ```
 Base: 40
