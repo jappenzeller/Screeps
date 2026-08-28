@@ -83,8 +83,16 @@ function runRenewal(creep: Creep): boolean {
 // ============================================
 
 export function runFiller(creep: Creep): void {
-  // Check for renewal
-  if (shouldGoRenew(creep) || creep.memory.renewing) {
+  // Never renew while the room cannot fill its own spawn. Renewal consumes the exact
+  // energy the filler exists to deliver, and runRenewal() short-circuits the fill loop
+  // entirely - so a filler that begins renewing in a starved room keeps it starved for
+  // the whole renewal. E47N41 sat at 4/4600 spawn energy with ~3000 in its containers
+  // while its last filler quietly renewed itself, deadlocking the room's only way out.
+  var starved = creep.room.energyAvailable < creep.room.energyCapacityAvailable * 0.5;
+
+  if (starved) {
+    if (creep.memory.renewing) delete creep.memory.renewing;
+  } else if (shouldGoRenew(creep) || creep.memory.renewing) {
     creep.memory.renewing = true;
     if (runRenewal(creep)) return;
     creep.memory.renewing = false;
