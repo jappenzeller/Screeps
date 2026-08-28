@@ -1062,7 +1062,17 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   // source containers or pick up dropped energy — they don't need energy
   // pre-staged at the controller. Only gate on controller energy for
   // mature colonies where upgraders are expected to use link/container.
-  if (controller) {
+  // A controller running down toward downgrade overrides the energy gate below.
+  // Losing an RCL destroys structures and is enormously expensive to climb back,
+  // whereas holding the timer is nearly free: every upgradeController call restores
+  // CONTROLLER_DOWNGRADE_RESTORE (100) ticks, so even occasional upgrading is enough.
+  // An upgrader can scrounge from source containers when nothing is staged at the
+  // controller - without this, a room with empty storage and no controller container
+  // can never spawn the upgrader that would save its own RCL. E46N37 was on exactly
+  // that path, decaying through 43,813 of 150,000 with zero upgraders.
+  var downgradeRisk = isDowngradeRisk(state.room);
+
+  if (controller && !downgradeRisk) {
     var hasStorageOrLinks = !!state.room.storage || state.rcl >= 5;
 
     if (hasStorageOrLinks) {
@@ -1151,6 +1161,13 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   // If under controller attack, upgrading is critical — counteract downgrade
   if (isUnderControllerAttack(state.room.name)) {
     upgraderUtilityValue = Math.max(upgraderUtilityValue, 85); // Higher than most roles
+  }
+
+  // Likewise when the downgrade timer is running low. The factors above key off stored
+  // energy, so a starved room scores its upgrader near zero precisely when it most
+  // needs one; floor it so the room defends its RCL.
+  if (downgradeRisk) {
+    upgraderUtilityValue = Math.max(upgraderUtilityValue, 70);
   }
 
   return upgraderUtilityValue;
@@ -2058,6 +2075,18 @@ function reclaimBlockerUtility(state: ColonyState): number {
  * containers but no hauler exists, energy won't reach spawn naturally.
  * Build first hauler with available energy to break the deadlock.
  */
+/**
+ * True when the room's controller is running down toward a downgrade.
+ * Losing an RCL destroys structures and is very expensive to climb back, while holding
+ * the timer is nearly free - each upgradeController call restores 100 ticks.
+ */
+function isDowngradeRisk(room: Room): boolean {
+  const c = room.controller;
+  if (!c || !c.my) return false;
+  const max = CONTROLLER_DOWNGRADE[c.level] || 0;
+  return max > 0 && c.ticksToDowngrade < max * 0.5;
+}
+
 function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   const noHarvesters = (state.counts.HARVESTER || 0) === 0;
   const noHaulers = (state.counts.HAULER || 0) === 0;
@@ -2072,9 +2101,18 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   // Energy won't reach spawn naturally - build first hauler with available energy
   const isHaulerBootstrap = role === "HAULER" && noHaulers;
 
-  // In emergency OR hauler bootstrap, build what we can afford NOW
+  // A controller nearing downgrade needs an upgrader NOW, not the biggest possible one
+  // eventually. A starved room otherwise sits in WAIT_ENERGY indefinitely chasing a
+  // full-capacity body while its RCL ticks away - E46N37 wanted a 4300-energy upgrader
+  // with 1877 available and ~20 energy/tick of income.
+  const isDowngradeRescue = role === "UPGRADER" && isDowngradeRisk(state.room);
+
+  // In emergency OR hauler bootstrap OR downgrade rescue, build what we can afford NOW
   // Otherwise, build for full capacity (wait for energy)
-  const energy = (isEmergency || isHaulerBootstrap) ? state.energyAvailable : state.energyCapacity;
+  const energy =
+    isEmergency || isHaulerBootstrap || isDowngradeRescue
+      ? state.energyAvailable
+      : state.energyCapacity;
 
   // Pioneer uses its own body builder
   // Expansion pioneers: use available energy to spawn quickly
