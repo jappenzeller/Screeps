@@ -112,17 +112,62 @@ export function runFiller(creep: Creep): void {
   // === END EMERGENCY ===
 
   var storage = creep.room.storage;
-  if (!storage) {
-    creep.say("no stor");
+
+  // Refill when empty. Storage is the normal source but must never be the ONLY one:
+  // an empty storage with energy still sitting in containers strands the filler, the
+  // spawn cannot be refilled, and the room cannot spawn its way out. That is a true
+  // death spiral - it took E47N41 (RCL 7) down to two creeps and 4/4600 spawn energy
+  // while its own containers held nearly 3000.
+  if (creep.store[RESOURCE_ENERGY] === 0) {
+    if (storage && storage.store[RESOURCE_ENERGY] > 0) {
+      if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, storage, { reusePath: 5 });
+      }
+      return;
+    }
+
+    // Fall back to the fullest container in the room.
+    var containers = creep.room.find(FIND_STRUCTURES, {
+      filter: function(s) {
+        return s.structureType === STRUCTURE_CONTAINER &&
+          (s as StructureContainer).store[RESOURCE_ENERGY] > 0;
+      },
+    }) as StructureContainer[];
+
+    if (containers.length > 0) {
+      var fullest = containers[0];
+      for (var ci = 1; ci < containers.length; ci++) {
+        if (containers[ci].store[RESOURCE_ENERGY] > fullest.store[RESOURCE_ENERGY]) {
+          fullest = containers[ci];
+        }
+      }
+      creep.say("cont");
+      if (creep.withdraw(fullest, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, fullest, { reusePath: 5 });
+      }
+      return;
+    }
+
+    // Last resort: dropped energy, then ruins/tombstones are not worth the CPU here.
+    var dropped = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+      filter: function(r) { return r.resourceType === RESOURCE_ENERGY && r.amount >= 25; },
+    });
+
+    if (dropped) {
+      creep.say("drop");
+      if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, dropped, { reusePath: 5 });
+      }
+      return;
+    }
+
+    creep.say("no NRG");
     return;
   }
 
-  // Withdraw from storage when empty
-  if (creep.store[RESOURCE_ENERGY] === 0) {
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { reusePath: 5 });
-    }
-    return;
+  if (!storage) {
+    // No storage yet, but we are carrying energy - still worth delivering below.
+    creep.say("no stor");
   }
 
   // Find unfilled spawn/extension
@@ -155,8 +200,9 @@ export function runFiller(creep: Creep): void {
     return;
   }
 
-  // Nothing to fill — park near storage and wait
-  if (!creep.pos.inRangeTo(storage, 2)) {
-    smartMoveTo(creep, storage, { reusePath: 10 });
+  // Nothing to fill — park near storage (or the spawn if there is no storage yet)
+  var parkTarget: RoomObject | null = storage || creep.pos.findClosestByPath(FIND_MY_SPAWNS);
+  if (parkTarget && !creep.pos.inRangeTo(parkTarget, 2)) {
+    smartMoveTo(creep, parkTarget, { reusePath: 10 });
   }
 }
