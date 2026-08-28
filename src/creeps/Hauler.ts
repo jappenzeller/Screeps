@@ -638,7 +638,30 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  // Priority 3: Storage
+  // Priority 3: Controller container (feeds upgraders).
+  // Must come BEFORE storage. Storage almost always has some free capacity, so a
+  // controller-container branch placed after it never runs: haulers bank everything
+  // and upgraders are left walking to storage for every 150-energy load, or idling.
+  // The container caps at 2000, so this diverts a bounded amount before storage gets
+  // the remainder - and it is energy going to the one sink that produces RCL.
+  const controllerContainer = creep.room.controller
+    ? (creep.room.controller.pos.findInRange(FIND_STRUCTURES, 3, {
+        filter: (s) =>
+          s.structureType === STRUCTURE_CONTAINER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+      })[0] as StructureContainer | undefined)
+    : undefined;
+
+  if (controllerContainer) {
+    if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, controllerContainer, {
+        visualizePathStyle: { stroke: "#00ffff" },
+        reusePath: 5,
+      });
+    }
+    return;
+  }
+
+  // Priority 4: Storage
   // NOTE: Haulers never deliver to links - LINK_FILLER handles link logistics
   const storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
@@ -660,25 +683,6 @@ function deliver(creep: Creep): void {
       smartMoveTo(creep, towerTopOff, { visualizePathStyle: { stroke: "#ff6600" }, reusePath: 5 });
     }
     return;
-  }
-
-  // Priority 6: Controller container (for upgraders)
-  const controller = creep.room.controller;
-  if (controller) {
-    const controllerContainer = controller.pos.findInRange(FIND_STRUCTURES, 3, {
-      filter: (s) =>
-        s.structureType === STRUCTURE_CONTAINER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    })[0] as StructureContainer | undefined;
-
-    if (controllerContainer) {
-      if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, controllerContainer, {
-          visualizePathStyle: { stroke: "#00ffff" },
-          reusePath: 5,
-        });
-      }
-      return;
-    }
   }
 
   // Nothing to deliver to - wait near spawn but off road

@@ -93,26 +93,11 @@ function upgrade(creep: Creep): void {
     return;
   }
 
-  // If controller link exists (RCL 5+), position to be in range of both
-  if (controller.level >= 5) {
-    const controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
-      filter: (s) => s.structureType === STRUCTURE_LINK,
-    })[0] as StructureLink | undefined;
-
-    if (controllerLink) {
-      // Ideal position: range 3 to controller, range 1 to link
-      const inUpgradeRange = creep.pos.getRangeTo(controller) <= 3;
-      const inLinkRange = creep.pos.getRangeTo(controllerLink) <= 1;
-
-      if (!inUpgradeRange || !inLinkRange) {
-        // Move toward link (will be close enough to controller)
-        smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 10 });
-        return;
-      }
-    }
-  }
-
-  // Standard upgrade logic
+  // Upgrading and moving are independent actions within a tick, so always spend the
+  // upgrade first and treat link positioning as a background drift. Gating the upgrade
+  // on link adjacency stalls the controller outright: a creep already in upgrade range
+  // but not adjacent to the link repositions forever and never spends a single tick
+  // upgrading, even while carrying a full load.
   const result = creep.upgradeController(controller);
 
   if (result === ERR_NOT_IN_RANGE) {
@@ -120,6 +105,19 @@ function upgrade(creep: Creep): void {
       visualizePathStyle: { stroke: "#00ffff" },
       reusePath: 10,
     });
+    return;
+  }
+
+  // In range and upgrading. Drift toward the controller link so refills become free
+  // once the link network is actually supplied - but never at the cost of an upgrade.
+  if (controller.level >= 5) {
+    const controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
+      filter: (s) => s.structureType === STRUCTURE_LINK,
+    })[0] as StructureLink | undefined;
+
+    if (controllerLink && creep.pos.getRangeTo(controllerLink) > 1) {
+      smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 10 });
+    }
   }
 }
 
