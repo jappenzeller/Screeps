@@ -2,6 +2,56 @@
 
 ## Active Issues
 
+### Room Death Spiral: Filler Stranded by Empty Storage
+
+**Status:** Fixed
+
+**Issue:** E47N41 (RCL 7) fell to two creeps — one filler, one harvester — with both spawns idle at **4/5600 energy**, while its own containers held ~2,796. It could not spawn its way out and was losing creeps to attrition.
+
+**Root Cause:** Two compounding defects.
+
+1. `runFiller()` withdrew only from `room.storage`. With storage at zero the withdraw returned `ERR_NOT_ENOUGH_RESOURCES` every tick and the filler simply stood still — spawn never refilled, nothing could spawn, population decayed. The `EMERGENCY` block above it detects the no-harvesters-and-no-haulers case but only calls `creep.say("SOS")`; it changes no behaviour.
+2. Even with a fallback, the room still would not recover: the last filler had `memory.renewing` set, and `runFiller()` short-circuits into `runRenewal()` and returns before any filling. The filler was spending the spawn's last 9 energy to extend its own life (ttl climbing 272 → 287) and would have kept doing so until its renewal target of 522.
+
+**Fix Applied:** The filler falls back to the fullest container, then dropped energy, when storage is empty or absent. Separately, a room below 50% of energy capacity is treated as starved: any in-progress renewal is abandoned and the renewal check skipped entirely, so filling always beats self-preservation.
+
+**Files:** `src/creeps/Filler.ts`
+
+---
+
+### Renewal Blocks Recovery Empire-Wide
+
+**Status:** Fixed
+
+**Issue:** Generalisation of the above. `RenewalManager.run()` returning true makes `main.ts` skip `spawnCreeps()` for that tick entirely, so renewing during a shortage both consumes the energy needed to refill extensions **and** blocks the replacements that would end the shortage.
+
+**Root Cause:** Both `RenewalManager.run()` and `Hauler.shouldRenew()` guarded only on `energyAvailable < 50`. A room at 700/4600 would happily renew and suppress spawning.
+
+**Fix Applied:** Both now bail below 50% of energy capacity, matching the filler rule. Healthy rooms sit near capacity, so normal renewal is unaffected.
+
+**Files:** `src/managers/RenewalManager.ts`, `src/creeps/Hauler.ts`
+
+---
+
+### Room Cannot Spawn the Upgrader That Would Save Its Own RCL
+
+**Status:** Fixed
+
+**Issue:** E46N37 (RCL 7) was decaying through 43,813 of 150,000 ticks toward downgrade with **zero upgraders**, and was structurally incapable of spawning one. Left alone it would have dropped to RCL 6 and lost structures.
+
+**Root Cause:** Two independent blocks.
+
+1. `upgraderUtility()` gates on energy being reachable at the controller — a controller container or link holding energy, or storage above 1000. E46N37 has no controller container, empty links and zero storage, so the gate returned 0 utility.
+2. Once bypassed, the room sat in `WAIT_ENERGY`: bodies size to `energyCapacityAvailable`, so it wanted a 4300-energy upgrader while holding 1877 with ~20 energy/tick of income — it would have waited past the downgrade.
+
+**Fix Applied:** A shared `isDowngradeRisk()` helper (ticksToDowngrade below half of `CONTROLLER_DOWNGRADE` for the level). On risk the energy gate is bypassed, utility is floored at 70 so a starved room does not score its upgrader near zero exactly when it needs one, and the body is built from `energyAvailable` so it spawns immediately. Holding the timer is nearly free — each `upgradeController` call restores 100 ticks — so a minimal upgrader now beats a full-size one after the RCL is gone.
+
+**File:** `src/spawning/utilitySpawning.ts`
+
+**Verified:** E46N37 went from 0 upgraders and a falling timer to 3 upgraders and a timer rising 43,680 → 45,222.
+
+---
+
 ### Upgraders Deadlock Beside an Empty Controller Link
 
 **Status:** Fixed
