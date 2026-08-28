@@ -131,6 +131,10 @@ function shouldRenew(creep: Creep): "critical" | "opportunistic" | false {
   // Check if room has enough energy to renew (need at least 50 for one tick)
   if (spawn.room.energyAvailable < 50) return false;
 
+  // And never renew while the room is starved - that energy belongs in the extensions
+  // so the room can spawn its way back out. Same rule the filler and RenewalManager use.
+  if (spawn.room.energyAvailable < spawn.room.energyCapacityAvailable * 0.5) return false;
+
   // Check for queue at spawn - don't join if 2+ creeps already waiting
   const creepsAtSpawn = spawn.pos.findInRange(FIND_MY_CREEPS, 1).filter(
     (c) => c.name !== creep.name

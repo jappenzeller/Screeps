@@ -36,6 +36,12 @@ export class RenewalManager {
     // Need energy to renew
     if (this.room.energyAvailable < 50) return false;
 
+    // Never renew while the room is starved. A true return here makes main.ts skip
+    // spawnCreeps() for the tick, so renewing during a shortage both consumes the
+    // energy needed to refill extensions AND blocks the replacements that would end
+    // the shortage - the amplifier that turns a dip into a death spiral.
+    if (this.room.energyAvailable < this.room.energyCapacityAvailable * 0.5) return false;
+
     // Find best candidate near spawn
     const candidate = this.findBestCandidateNearSpawn();
     if (!candidate) return false;
