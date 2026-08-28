@@ -623,27 +623,14 @@ function deliver(creep: Creep): void {
     }
   }
 
-  // Priority 2: Towers below 500 (defensive readiness)
-  const lowTower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function(s) {
-      return s.structureType === STRUCTURE_TOWER &&
-        s.store[RESOURCE_ENERGY] < 500;
-    },
-  }) as StructureTower | null;
-
-  if (lowTower) {
-    if (creep.transfer(lowTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, lowTower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Priority 3: Controller container (feeds upgraders).
-  // Must come BEFORE storage. Storage almost always has some free capacity, so a
-  // controller-container branch placed after it never runs: haulers bank everything
-  // and upgraders are left walking to storage for every 150-energy load, or idling.
-  // The container caps at 2000, so this diverts a bounded amount before storage gets
-  // the remainder - and it is energy going to the one sink that produces RCL.
+  // Priority 2: Controller container (feeds upgraders).
+  // Deliberately ahead of both non-emergency tower top-up and storage. Every branch
+  // below this one can match indefinitely and starve it: storage almost always has
+  // some free capacity, and a tower parked just under its threshold (e.g. 490 while
+  // slowly repairing fresh ramparts) captures every delivery forever. Either way the
+  // container stays empty and upgraders walk to storage for each 150-energy load.
+  // Genuine defense emergencies are already handled at Priority 0 (<300), and this
+  // container caps at 2000, so the diversion is bounded and brief.
   const controllerContainer = creep.room.controller
     ? (creep.room.controller.pos.findInRange(FIND_STRUCTURES, 3, {
         filter: (s) =>
@@ -657,6 +644,21 @@ function deliver(creep: Creep): void {
         visualizePathStyle: { stroke: "#00ffff" },
         reusePath: 5,
       });
+    }
+    return;
+  }
+
+  // Priority 3: Towers below 500 (defensive readiness, not an emergency)
+  const lowTower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
+    filter: function(s) {
+      return s.structureType === STRUCTURE_TOWER &&
+        s.store[RESOURCE_ENERGY] < 500;
+    },
+  }) as StructureTower | null;
+
+  if (lowTower) {
+    if (creep.transfer(lowTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, lowTower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
     }
     return;
   }
