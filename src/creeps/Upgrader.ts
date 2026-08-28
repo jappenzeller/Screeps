@@ -127,32 +127,26 @@ function getEnergy(creep: Creep): void {
   const controller = creep.room.controller;
   if (!controller) return;
 
-  // RCL 5+: Use controller link exclusively
+  // RCL 5+: prefer the controller link - it is by far the cheapest source when supplied.
+  let controllerLink: StructureLink | undefined;
   if (controller.level >= 5) {
-    const controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
+    controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
       filter: (s) => s.structureType === STRUCTURE_LINK,
     })[0] as StructureLink | undefined;
 
-    if (controllerLink) {
-      // Try to withdraw if link has energy
-      if (controllerLink.store[RESOURCE_ENERGY] >= 100) {
-        if (creep.withdraw(controllerLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-          smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
-        }
-        return;
+    if (controllerLink && controllerLink.store[RESOURCE_ENERGY] >= 100) {
+      if (creep.withdraw(controllerLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
       }
-
-      // Link exists but empty - stay near it, link filler will refill shortly
-      if (creep.pos.getRangeTo(controllerLink) > 1) {
-        smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#888888" }, reusePath: 5 });
-      }
-      // Already adjacent - hold position (don't wander off looking for energy)
-      creep.say("wait");
       return;
     }
   }
 
-  // No controller link - fall back to other energy sources
+  // Link empty or absent: fall through to the other sources rather than idling next
+  // to it. Treating the link as exclusive deadlocks the room the moment the link
+  // stops being filled - upgraders park beside an empty link indefinitely while a
+  // full container sits two tiles away, the controller earns nothing, and the
+  // downgrade timer runs down. Waiting is only correct when nothing else has energy.
 
   // Priority 1: Container near controller
   const container = controller.pos.findInRange(FIND_STRUCTURES, 4, {
@@ -226,9 +220,13 @@ function getEnergy(creep: Creep): void {
     return;
   }
 
-  // No energy available - wait near controller
-  if (creep.pos.getRangeTo(controller) > 3) {
-    smartMoveTo(creep, controller, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
+  // Nothing in the room has energy. Now waiting is genuinely correct - hold beside the
+  // controller link if there is one, so the next link transfer is picked up instantly.
+  const holdTarget = controllerLink || controller;
+  const holdRange = controllerLink ? 1 : 3;
+
+  if (creep.pos.getRangeTo(holdTarget) > holdRange) {
+    smartMoveTo(creep, holdTarget, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
   } else {
     moveOffRoad(creep);
     creep.say("ZZZ");

@@ -2,6 +2,34 @@
 
 ## Active Issues
 
+### Upgraders Deadlock Beside an Empty Controller Link
+
+**Status:** Fixed
+
+**Issue:** E43N39 held controller progress at exactly 109 for 16+ consecutive observation windows while its downgrade timer decayed 34,022 → 20,632. Upgraders were alive, well-bodied (12 WORK), and standing 1–2 tiles from the controller — with zero energy, in `COLLECTING` state, doing nothing. Adding upgraders changed nothing: 1, 2 or 3 upgraders all produced exactly zero controller points.
+
+**Root Cause:** `getEnergy()` in `Upgrader.ts` treated the controller link as the *exclusive* source at RCL 5+. If a link existed but held less than 100 energy, the upgrader moved adjacent, called `creep.say("wait")` and returned — never falling through to the container, storage, or dropped-energy branches below. The comment assumed "link filler will refill shortly", which is only true while the link network actually works. When it doesn't, upgraders idle forever beside an empty link with a full container two tiles away and 1M energy in storage.
+
+**Fix Applied:** The link is now a *preference*, not an exclusive source. An empty or absent link falls through to the normal priority chain (controller container → storage → dropped → any container → source). Waiting is reserved for the genuine case where nothing in the room has energy, and holds beside the link so the next transfer is picked up instantly.
+
+**File:** `src/creeps/Upgrader.ts`
+
+---
+
+### E43N39 Has Both Links at the Controller
+
+**Status:** Open
+
+**Issue:** E43N39's two RCL-5 links sit at (33,13) and (32,12) — both range 2 from the controller, 1–2 tiles from each other. Storage is at (9,37), range 26 away, with no link near it.
+
+**Impact:** A link network needs a sender. With both links on the receiving end there is nothing to transfer *from*, so both sit permanently at 0 energy. This is what starved the upgraders above; the `Upgrader.ts` fix routes around it, but the link pair remains dead weight and the room gets no link benefit at all.
+
+**Fix direction:** Link placement should require a storage-side or source-side link before placing a second controller-side one. RCL 6 grants a third link, which would allow a proper sender without moving the existing pair.
+
+**File:** `src/structures/placeStructures.ts` (`findLinkPosition` / `findControllerLinkPosition` / `findStorageLinkPosition`)
+
+---
+
 ### AWS AI Advisor Produced Nothing for Months
 
 **Status:** Fixed
