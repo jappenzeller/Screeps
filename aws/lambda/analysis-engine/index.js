@@ -19,6 +19,7 @@ const SIGNALS_TABLE = process.env.SIGNALS_TABLE;
 const OBSERVATIONS_TABLE = process.env.OBSERVATIONS_TABLE;
 const API_ENDPOINT = process.env.API_ENDPOINT || "https://g9gplzbul4.execute-api.us-east-1.amazonaws.com";
 const RETENTION_DAYS = 30;
+const MODEL_ID = process.env.MODEL_ID || "claude-opus-5";
 
 let anthropicClient = null;
 
@@ -39,9 +40,11 @@ async function getAnthropicClient() {
 
 async function fetchLiveData(roomName) {
   try {
+    // The API exposes these as /colonies - the old /live paths 404 and silently
+    // demoted every analysis to 5-minute-old snapshots instead of live segment data.
     const url = roomName === "all"
-      ? `${API_ENDPOINT}/live`
-      : `${API_ENDPOINT}/live/${roomName}`;
+      ? `${API_ENDPOINT}/colonies`
+      : `${API_ENDPOINT}/colonies/${roomName}`;
 
     const response = await fetch(url);
     if (!response.ok) {
@@ -104,22 +107,32 @@ async function getActiveRooms() {
     return liveData.colonies.map(c => c.roomName);
   }
 
-  // Fall back to recent snapshots
+  // Fall back to recent snapshots.
+  // Scan must paginate: DynamoDB caps a page at 1MB of pre-filter data, so a single
+  // send() only sees whichever slice of the table fits and silently discovers a
+  // subset of the rooms. That is how a 3-colony empire got analyzed one room at a time.
   const since = Date.now() - 60 * 60 * 1000;
-  const response = await docClient.send(
-    new ScanCommand({
-      TableName: SNAPSHOTS_TABLE,
-      FilterExpression: "#ts > :since",
-      ExpressionAttributeNames: { "#ts": "timestamp" },
-      ExpressionAttributeValues: { ":since": since },
-      ProjectionExpression: "roomName",
-    })
-  );
-
   const rooms = new Set();
-  for (const item of response.Items || []) {
-    rooms.add(item.roomName);
-  }
+  let lastEvaluatedKey;
+
+  do {
+    const response = await docClient.send(
+      new ScanCommand({
+        TableName: SNAPSHOTS_TABLE,
+        FilterExpression: "#ts > :since",
+        ExpressionAttributeNames: { "#ts": "timestamp" },
+        ExpressionAttributeValues: { ":since": since },
+        ProjectionExpression: "roomName",
+        ExclusiveStartKey: lastEvaluatedKey,
+      })
+    );
+
+    for (const item of response.Items || []) {
+      rooms.add(item.roomName);
+    }
+
+    lastEvaluatedKey = response.LastEvaluatedKey;
+  } while (lastEvaluatedKey);
 
   // Default room if no data
   if (rooms.size === 0) {
@@ -571,14 +584,22 @@ Respond ONLY with valid JSON in this exact format:
 }`;
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 3000,
+    model: MODEL_ID,
+    max_tokens: 16000,
+    thinking: { type: "adaptive" },
+    output_config: { effort: "medium" },
     messages: [
       { role: "user", content: systemPrompt + "\n\n" + userPrompt },
     ],
   });
 
-  const content = response.content[0].text;
+  // content is a discriminated union - with thinking enabled the first block is a
+  // thinking block, so pick the text block explicitly rather than indexing [0].
+  const textBlock = response.content.find((b) => b.type === "text");
+  if (!textBlock) {
+    throw new Error(`No text block in Claude response (stop_reason: ${response.stop_reason})`);
+  }
+  const content = textBlock.text;
 
   // Parse JSON from response
   let jsonStr = content;

@@ -2,6 +2,36 @@
 
 ## Active Issues
 
+### AWS AI Advisor Produced Nothing for Months
+
+**Status:** Fixed
+
+**Issue:** The advisor looked healthy from CloudWatch — 288 data-collector runs/day, 864 metrics writes, 24 analysis runs, **zero Lambda errors** — but the recommendations table was completely empty and no AI analysis had ever been stored.
+
+**Root Cause:** Four independent defects, none of which surfaced as a Lambda error:
+
+1. **Retired model.** `analysis-engine` called `claude-sonnet-4-20250514`, which now 404s (`not_found_error`). Every hourly run died at the Claude call. The Lambda caught the exception, so `Errors` stayed at 0 and the failure was invisible to metrics-based monitoring.
+2. **Unpaginated Scan.** `getActiveRooms()` issued a single `ScanCommand`. DynamoDB caps a scan page at 1MB of *pre-filter* data and the snapshots table is 2.7MB, so it only ever saw a slice of the table and discovered a subset of rooms — a 3-colony empire was being analyzed one room at a time.
+3. **Dead API path.** `fetchLiveData()` called `/live` and `/live/{room}`, which no longer exist (the API exposes `/colonies` and `/colonies/{room}`). Every analysis silently fell back to 5-minute-old snapshots instead of ~40-second-fresh live segment data.
+4. **Stale SDK.** `@anthropic-ai/sdk` was pinned at `^0.20.0` (early 2024), which predates adaptive thinking and `output_config.effort`.
+
+**Fix Applied:**
+
+- Model moved to `claude-opus-5` via a `MODEL_ID` env override, with adaptive thinking and `effort: medium`.
+- Response parsing selects the `text` block explicitly instead of indexing `content[0]` — with thinking enabled the first block is a thinking block.
+- `getActiveRooms()` paginates on `LastEvaluatedKey`.
+- `fetchLiveData()` points at `/colonies`.
+- SDK upgraded to `^0.122.0`.
+- Lambda timeout raised 120s → 300s (a 3-room run takes ~101s and would have been cut off as the empire grows).
+
+**Verified:** all 3 rooms analyzed, live data available, recommendations table populated. The advisor independently detected `RCL_STALL` + `STORAGE_FULL` on E43N39, `NO_UPGRADERS` on E46N37, and `REMOTE_HAULER_SHORTAGE` — matching hand analysis.
+
+**Files:** `aws/lambda/analysis-engine/index.js`, `aws/lambda/analysis-engine/package.json`
+
+**Note:** monitoring this pipeline on Lambda `Errors` is misleading — the handler swallows per-room analysis failures. Alarm on "recommendations table received no writes in N hours" instead.
+
+---
+
 ### Remote Mining Deadlocked by Expired Pauses
 
 **Status:** Fixed
