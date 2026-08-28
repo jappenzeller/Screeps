@@ -421,25 +421,29 @@ function findLinkPosition(
     filter: (s) => s.structureType === STRUCTURE_LINK,
   });
 
-  // Check if controller already has a link nearby
-  const controllerHasLink =
-    controller &&
-    existingLinks.some((l) => l.pos.getRangeTo(controller) <= 4);
+  // Pending link sites count as claimed. Checking only built links lets the planner
+  // place a second site for the same role while the first is still under construction -
+  // that is how a room ends up with both of its RCL-5 links stacked at the controller
+  // and no sender anywhere, leaving a link network that can never transfer anything.
+  const linkSites = room.find(FIND_CONSTRUCTION_SITES, {
+    filter: (s) => s.structureType === STRUCTURE_LINK,
+  });
 
-  // First priority: Controller link (if not present)
-  if (controller && !controllerHasLink) {
+  const hasLinkNear = (target: RoomPosition, range: number): boolean =>
+    existingLinks.some((l) => l.pos.getRangeTo(target) <= range) ||
+    linkSites.some((s) => s.pos.getRangeTo(target) <= range);
+
+  // First priority: Controller link (if not present or pending)
+  if (controller && !hasLinkNear(controller.pos, 4)) {
     return findControllerLinkPosition(room, controller, terrain);
   }
 
-  // Second priority: Storage link (on hauler path)
-  if (storage && spawn) {
-    // Check if storage already has a link nearby
-    const storageHasLink = existingLinks.some(
-      (l) => l.pos.getRangeTo(storage) <= 3
-    );
-    if (!storageHasLink) {
-      return findStorageLinkPosition(room, storage, spawn, terrain);
-    }
+  // Second priority: Storage link (on hauler path).
+  // A null here means no viable spot near storage - fall through to source links
+  // rather than returning null, which would stall link building entirely.
+  if (storage && spawn && !hasLinkNear(storage.pos, 3)) {
+    const storageLinkPos = findStorageLinkPosition(room, storage, spawn, terrain);
+    if (storageLinkPos) return storageLinkPos;
   }
 
   // Third+ priority: Source links (near sources for direct harvester deposit)

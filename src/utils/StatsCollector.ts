@@ -160,6 +160,50 @@ export class StatsCollector {
   }
 
   /**
+   * Fold one room's engine event log into this tick's stats.
+   *
+   * Reads the event log rather than instrumenting each creep role: a single call per
+   * room captures harvests, builds, repairs, upgrades, transfers and attacks with the
+   * engine's own exact amounts, and cannot silently drift when a role is added or
+   * rewritten. The per-action record* helpers below went uncalled for months and every
+   * recorded tick was zeros; a central reader has no call sites to forget.
+   *
+   * getEventLog() describes the PREVIOUS tick, which is correct for rate metrics.
+   */
+  static recordRoomEvents(room: Room): void {
+    if (!this.currentTickStats) return;
+
+    const stats = this.currentTickStats;
+
+    for (const entry of room.getEventLog()) {
+      switch (entry.event) {
+        case EVENT_HARVEST:
+          stats.energyHarvested += entry.data.amount;
+          stats.creepActions.harvests++;
+          break;
+        case EVENT_BUILD:
+          stats.energySpent.building += entry.data.energySpent;
+          stats.creepActions.builds++;
+          break;
+        case EVENT_REPAIR:
+          stats.energySpent.repairing += entry.data.energySpent;
+          stats.creepActions.repairs++;
+          break;
+        case EVENT_UPGRADE_CONTROLLER:
+          stats.energySpent.upgrading += entry.data.energySpent;
+          stats.creepActions.upgrades++;
+          break;
+        case EVENT_TRANSFER:
+          stats.creepActions.transfers++;
+          break;
+        case EVENT_ATTACK:
+          stats.creepActions.attacks++;
+          break;
+      }
+    }
+  }
+
+  /**
    * Record energy spent on spawning
    */
   static recordSpawn(cost: number): void {

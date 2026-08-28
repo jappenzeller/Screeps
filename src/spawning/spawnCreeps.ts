@@ -10,6 +10,7 @@
  */
 
 import { getSpawnCandidate } from "./utilitySpawning";
+import { StatsCollector } from "../utils/StatsCollector";
 import * as DuoManager from "../combat/DuoManager";
 import * as MilitaryManager from "../military/MilitaryManager";
 import * as WaveCoordinator from "../military/WaveCoordinator";
@@ -38,6 +39,13 @@ export function spawnCreeps(room: Room): void {
     console.log(
       `[${room.name}] Spawning ${candidate.role}${targetInfo} (utility: ${candidate.utility.toFixed(1)})`
     );
+
+    // Spawn cost is the one energy sink the room event log does not report.
+    let spawnCost = 0;
+    for (let bi = 0; bi < candidate.body.length; bi++) {
+      spawnCost += BODYPART_COST[candidate.body[bi]];
+    }
+    StatsCollector.recordSpawn(spawnCost);
 
     // Handle duo assignment for combat roles
     if (candidate.role === "RANGED_ATTACKER" || candidate.role === "COMBAT_HEALER") {

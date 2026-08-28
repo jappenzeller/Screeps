@@ -180,6 +180,9 @@ function runRoom(room: Room): void {
   // 0. Track energy flow metrics (for utility spawning)
   trackEnergyFlow(room);
 
+  // 0a. Fold this room's engine event log into tick stats (harvest/build/upgrade/repair)
+  StatsCollector.recordRoomEvents(room);
+
   // 0b. Track economy metrics (for /live export)
   const economyTracker = new EconomyTracker(room);
   economyTracker.track();

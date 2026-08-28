@@ -16,15 +16,19 @@
 
 ---
 
-### E43N39 Has Both Links at the Controller
+### Link Planner Places Duplicate Links for the Same Role
 
-**Status:** Open
+**Status:** Fixed
 
 **Issue:** E43N39's two RCL-5 links sit at (33,13) and (32,12) — both range 2 from the controller, 1–2 tiles from each other. Storage is at (9,37), range 26 away, with no link near it.
 
-**Impact:** A link network needs a sender. With both links on the receiving end there is nothing to transfer *from*, so both sit permanently at 0 energy. This is what starved the upgraders above; the `Upgrader.ts` fix routes around it, but the link pair remains dead weight and the room gets no link benefit at all.
+**Impact:** A link network needs a sender. With both links on the receiving end there is nothing to transfer *from*, so both sat permanently at 0 energy. This is what starved the upgraders in the issue above.
 
-**Fix direction:** Link placement should require a storage-side or source-side link before placing a second controller-side one. RCL 6 grants a third link, which would allow a proper sender without moving the existing pair.
+**Root Cause:** `findLinkPosition()` decided whether the controller or storage already had a link by scanning `FIND_MY_STRUCTURES` only. Construction sites were not counted, so once a controller link site was placed the planner still saw no *built* controller link on the next pass and placed a second site for the same role. The source-link branch further down did check sites (`sourceHasLinkSite`); the controller and storage branches did not.
+
+**Fix Applied:** Both checks now count pending link construction sites as claiming that role, via a shared `hasLinkNear()` helper. Separately, a `null` from `findStorageLinkPosition()` now falls through to source links instead of returning `null` from `findLinkPosition()`, which previously stalled all further link building whenever storage had no viable adjacent spot.
+
+**Note:** this prevents recurrence but does not move E43N39's existing pair. RCL 6 grants a third link, which the corrected planner will now place on the storage side.
 
 **File:** `src/structures/placeStructures.ts` (`findLinkPosition` / `findControllerLinkPosition` / `findStorageLinkPosition`)
 
@@ -114,13 +118,15 @@
 
 ### Tick Metrics Collector Records Only Zeros
 
-**Status:** Open
+**Status:** Fixed
 
-**Issue:** All 100 entries in `Memory.stats.tickStats` have `energyHarvested: 0`, and zero across every field of `energySpent` and `creepActions`, while creeps are demonstrably harvesting, building and upgrading. The segment-90 export to AWS still carries correct snapshot data, so the advisor sees room state but no activity data.
+**Issue:** All 100 entries in `Memory.stats.tickStats` had `energyHarvested: 0` and zero across every field of `energySpent` and `creepActions`, while creeps were demonstrably harvesting, building and upgrading. The AWS advisor therefore saw room state but no activity signal at all.
 
-**Impact:** AWS AI Advisor recommendations are generated without any activity signal.
+**Root Cause:** `StatsCollector` exposes `recordHarvest()`, `recordBuild()`, `recordUpgrade()`, `recordRepair()` and `recordSpawn()`, and `startTick()`/`endTick()` are wired into the main loop — but **nothing anywhere called any of the record* methods**. The instrumentation API was written and never connected, so every tick recorded a freshly-zeroed struct.
 
-**File:** `src/utils/StatsCollector.ts` (suspected)
+**Fix Applied:** Rather than instrument every creep role (many call sites, easy to miss again), `StatsCollector.recordRoomEvents(room)` folds the engine's own `room.getEventLog()` into the tick stats — one call per room in `runRoom()`, capturing harvests, builds, repairs, upgrades, transfers and attacks with exact engine-reported amounts. A central reader has no call sites to forget and cannot drift when a role is added. Spawn cost, the one energy sink the event log does not report, is recorded at the `spawnCreep()` success site.
+
+**Files:** `src/utils/StatsCollector.ts`, `src/main.ts`, `src/spawning/spawnCreeps.ts`
 
 ---
 
