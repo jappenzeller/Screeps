@@ -28,6 +28,16 @@
 const STUCK_TICKS = 100;
 
 /**
+ * A creep that is still changing position gets this multiple of STUCK_TICKS before it
+ * counts as stuck. Slow, fatigue-heavy bodies making a short walk look identical to a
+ * stall by displacement alone - a freshly spawned harvester walking two tiles to its
+ * source never exceeds TRAVEL_RADIUS, so its timer never re-anchors, and it was being
+ * flagged while working perfectly well. Something genuinely oscillating is still moving
+ * at twice the window; something merely slow has arrived by then.
+ */
+const MOVING_STUCK_MULTIPLIER = 2;
+
+/**
  * Movement beyond this many tiles from where energy last changed counts as travelling,
  * not stalling. Set just above the radius of a genuine oscillation (the first stall this
  * caught spanned three tiles) and well below a real haul route.
@@ -143,7 +153,16 @@ export class AnomalyDetector {
     const energyIdle = Game.time - mem._anEnergyAt;
     const stateIdle = Game.time - mem._anStateAt;
 
-    if (energyIdle >= STUCK_TICKS && stateIdle >= STUCK_TICKS) {
+    // Track whether the creep is moving at all, and demand a longer window if it is.
+    const posKey = creep.pos.x + ":" + creep.pos.y;
+    if (posKey !== mem._anLastPos) {
+      mem._anLastPos = posKey;
+      mem._anMovedAt = Game.time;
+    }
+    const movingRecently = Game.time - (mem._anMovedAt || 0) < STUCK_TICKS;
+    const threshold = movingRecently ? STUCK_TICKS * MOVING_STUCK_MULTIPLIER : STUCK_TICKS;
+
+    if (energyIdle >= threshold && stateIdle >= threshold) {
       // Pay for the expensive explanation only now, and only once per tick.
       let diagnosis: string | undefined;
       if (Game.time !== this.lastDiagnosisTick) {

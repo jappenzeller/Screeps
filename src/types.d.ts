@@ -34,6 +34,8 @@ interface CreepMemory {
   _anStateAt?: number;
   _anFlap?: number;
   _anPos?: string;
+  _anLastPos?: string;
+  _anMovedAt?: number;
 
   // Movement stuck detection
   _lastPos?: string;
