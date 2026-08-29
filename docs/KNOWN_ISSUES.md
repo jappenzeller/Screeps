@@ -2,6 +2,30 @@
 
 ## Active Issues
 
+### Remote Targets Validated by Map Route, Not Walkability
+
+**Status:** Open (mitigated)
+
+**Issue:** Four of E47N41's remote creeps sat idle in their home room for hundreds of ticks, correctly assigned to an active remote (E47N43) with a clean two-hop map route, unable to get there.
+
+**Root Cause:** `getRemoteInvalidReason()` validates a remote with `Game.map.findRoute`, which operates on the **room graph** and knows nothing about obstacles *inside* a room. E47N41's 16 player-built `constructedWall` structures seal its entire northern border, and E47N43 is reachable only by exiting north. `findClosestByPath(FIND_EXIT_TOP, {ignoreCreeps: true})` returns `NONE_REACHABLE` from inside the room, while `Game.map.findRoute` cheerfully returns `E47N42>E47N43`.
+
+The creeps could still reach their own spawn, so the room is not sealed — only its northern exit is.
+
+**Mitigation applied:** E47N43 indefinitely paused (`pauseReason` with no `pausedUntil`, which `syncRemoteRooms()` respects permanently) so creeps stop being assigned and spawned for it.
+
+**Fix directions, not yet chosen:**
+
+1. Validate exit reachability, not just a map route — check `findClosestByPath` to the exit direction the route requires. Correct, but costs a pathfind per remote per sync.
+2. Let the anomaly detector drive it: a remote whose creeps are repeatedly flagged STUCK in their home room is unreachable in practice, whichever obstacle is responsible.
+3. Open a gap or place a rampart in E47N41's north wall — a defensive decision for the operator, and it fixes only this instance.
+
+Option 2 generalises best and reuses machinery that already exists, but this is an architecture-level question about which layer owns reachability, so it is deliberately left for that discussion.
+
+**Files:** `src/core/ColonyManager.ts` (`getRemoteInvalidReason`, `getRouteDistance`)
+
+---
+
 ### Spawn Stalls on the Last Distant Extension
 
 **Status:** Fixed
