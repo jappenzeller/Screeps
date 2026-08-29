@@ -47,6 +47,12 @@ function roomHasFiller(room: Room): boolean {
  */
 
 /**
+ * A hauler carrying at least this fraction of its capacity has a worthwhile load and
+ * should deliver rather than wait on a drained container for the remainder.
+ */
+const PARTIAL_LOAD_FRACTION = 0.5;
+
+/**
  * Select the best container to collect from based on energy, distance, and competition.
  * Called when transitioning to COLLECTING state.
  */
@@ -486,6 +492,26 @@ export function runHauler(creep: Creep): void {
     creep.memory.state = "DELIVERING";
     delete creep.memory.targetContainer;
     creep.say("DLV");
+  }
+
+  // Don't wait for a full load that is not coming. A hauler parked on a drained
+  // container holding most of a load delivers nothing, blocks its own next trip, and
+  // only escapes when the room happens to drop below the emergency threshold below.
+  // Observed live: 970/1200 on an empty container for 84+ ticks while the room sat at
+  // 76% - comfortably above the emergency trigger, so nothing ever released it.
+  if (
+    creep.memory.state === "COLLECTING" &&
+    creep.store[RESOURCE_ENERGY] >= creep.store.getCapacity() * PARTIAL_LOAD_FRACTION
+  ) {
+    const src = creep.memory.targetContainer
+      ? Game.getObjectById(creep.memory.targetContainer)
+      : null;
+
+    if (!src || src.store[RESOURCE_ENERGY] === 0) {
+      creep.memory.state = "DELIVERING";
+      delete creep.memory.targetContainer;
+      creep.say("DLV");
+    }
   }
 
   // Also switch to deliver earlier if spawn critically needs energy
