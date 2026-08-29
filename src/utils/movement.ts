@@ -205,6 +205,13 @@ let newRoutesTick = 0;
 const MAX_NEW_ROUTES_PER_TICK = 5;
 
 /**
+ * Ticks before a stored safe-waypoint is abandoned and the route recomputed. A waypoint
+ * that cannot be reached would otherwise be pursued forever, since it was only ever
+ * cleared on arrival.
+ */
+const SAFE_WAYPOINT_TIMEOUT = 100;
+
+/**
  * Reset route rate limiter at start of each tick.
  * Call this from main loop.
  */
@@ -587,9 +594,20 @@ export function moveToRoom(
 
   // CASE 2: Check for stored waypoint from previous tick
   if (creep.memory._safeWaypoint) {
-    if (creep.room.name === creep.memory._safeWaypoint) {
+    // Expire it. The waypoint was only ever cleared on arrival, so a waypoint that turns
+    // out to be unreachable - blocked, or chosen from intel that has since changed - is
+    // routed to forever and the creep never recomputes. Observed live: three remote
+    // creeps bound for E47N43 sat motionless in their home room with this flag set,
+    // fatigue 0, for hundreds of ticks. Re-route rather than commit indefinitely.
+    const setAt = creep.memory._safeWaypointAt || 0;
+    if (Game.time - setAt > SAFE_WAYPOINT_TIMEOUT) {
+      delete creep.memory._safeWaypoint;
+      delete creep.memory._safeWaypointAt;
+      // Fall through to re-route from scratch
+    } else if (creep.room.name === creep.memory._safeWaypoint) {
       // Reached waypoint, clear it and continue to target
       delete creep.memory._safeWaypoint;
+      delete creep.memory._safeWaypointAt;
       // Fall through to re-route
     } else {
       // Still heading to waypoint - route there instead
@@ -606,6 +624,7 @@ export function moveToRoom(
       const waypoint = findSafeWaypoint(creep.room.name, targetRoom);
       if (waypoint) {
         creep.memory._safeWaypoint = waypoint;
+        creep.memory._safeWaypointAt = Game.time;
         creep.say("REROUTE");
         return moveToRoomInternal(creep, waypoint, visualStroke, true);
       } else {

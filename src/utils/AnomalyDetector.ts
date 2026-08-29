@@ -27,6 +27,13 @@
 /** Ticks of unchanged energy AND unchanged state before a creep counts as stuck. */
 const STUCK_TICKS = 100;
 
+/**
+ * Movement beyond this many tiles from where energy last changed counts as travelling,
+ * not stalling. Set just above the radius of a genuine oscillation (the first stall this
+ * caught spanned three tiles) and well below a real haul route.
+ */
+const TRAVEL_RADIUS = 5;
+
 /** A state that lasts fewer ticks than this did no useful work - count it as a flap. */
 const FLAP_MIN_STATE_TICKS = 4;
 
@@ -71,6 +78,7 @@ export class AnomalyDetector {
       mem._anEnergyAt = Game.time;
       mem._anState = state;
       mem._anStateAt = Game.time;
+      mem._anPos = creep.pos.x + ":" + creep.pos.y + ":" + creep.room.name;
       return;
     }
 
@@ -78,6 +86,36 @@ export class AnomalyDetector {
     if (energy !== mem._anEnergy) {
       mem._anEnergy = energy;
       mem._anEnergyAt = Game.time;
+      mem._anPos = creep.pos.x + ":" + creep.pos.y + ":" + creep.room.name;
+    }
+
+    // A creep that is travelling has unchanged energy by definition - a remote hauler
+    // crossing two rooms carries nothing for well over 100 ticks and is working exactly
+    // as intended. Displacement from where the energy last changed is what separates
+    // "walking somewhere" from "walking in circles": the hauler this detector first
+    // caught oscillated inside three tiles for 100+ ticks. Re-anchor when it moves on.
+    if (mem._anPos) {
+      const parts = mem._anPos.split(":");
+      if (parts[2] !== creep.room.name) {
+        mem._anEnergyAt = Game.time;
+        mem._anPos = creep.pos.x + ":" + creep.pos.y + ":" + creep.room.name;
+      } else {
+        const dx = Math.abs(creep.pos.x - Number(parts[0]));
+        const dy = Math.abs(creep.pos.y - Number(parts[1]));
+        if (Math.max(dx, dy) > TRAVEL_RADIUS) {
+          mem._anEnergyAt = Game.time;
+          mem._anPos = creep.pos.x + ":" + creep.pos.y + ":" + creep.room.name;
+        }
+      }
+    } else {
+      mem._anPos = creep.pos.x + ":" + creep.pos.y + ":" + creep.room.name;
+    }
+
+    // A creep with WORK parts standing on a source is producing, even though its own
+    // store never changes - static miners deposit straight into the container beneath
+    // them. That is the designed pattern, not a stall.
+    if (creep.getActiveBodyparts(WORK) > 0 && creep.pos.findInRange(FIND_SOURCES, 1).length > 0) {
+      return;
     }
 
     // --- state transitions ---

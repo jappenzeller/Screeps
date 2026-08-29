@@ -33,11 +33,13 @@ interface CreepMemory {
   _anState?: string;
   _anStateAt?: number;
   _anFlap?: number;
+  _anPos?: string;
 
   // Movement stuck detection
   _lastPos?: string;
   _stuckCount?: number;
   _safeWaypoint?: string; // Intermediate room for safe multi-hop routing
+  _safeWaypointAt?: number; // Tick the waypoint was set, so it can expire if unreachable
 
   // Hauler container targeting (dynamic per-trip selection)
   targetContainer?: Id<StructureContainer> | null;
