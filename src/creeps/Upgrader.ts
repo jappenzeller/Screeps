@@ -115,7 +115,15 @@ function upgrade(creep: Creep): void {
       filter: (s) => s.structureType === STRUCTURE_LINK,
     })[0] as StructureLink | undefined;
 
-    if (controllerLink && creep.pos.getRangeTo(controllerLink) > 1) {
+    // Only drift if standing beside the link would still be inside upgrade range. The
+    // link is matched anywhere within range 4 of the controller, but upgrading needs
+    // range 3 - chasing a range-4 link walks the creep out of upgrade range, which pulls
+    // it back next tick, and it oscillates away roughly half its upgrade ticks.
+    if (
+      controllerLink &&
+      creep.pos.getRangeTo(controllerLink) > 1 &&
+      controllerLink.pos.getRangeTo(controller) <= 3
+    ) {
       smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 10 });
     }
   }

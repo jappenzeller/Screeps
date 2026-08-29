@@ -66,11 +66,15 @@ export class RampartPlanner {
         // Global 100-site cap reached - nothing more to do this tick.
         return;
       } else {
+        // Skip this tile, don't abandon the pass. Targets are scanned in a fixed
+        // spawn -> tower -> storage -> terminal order, so returning here would let one
+        // un-rampartable spawn tile permanently block ramparts on every other critical
+        // structure, re-failing identically every 25 ticks.
         logger.warn(
           "RampartPlanner",
           `${this.room.name}: rampart at ${target.pos.x},${target.pos.y} failed (${result})`
         );
-        return;
+        continue;
       }
     }
   }

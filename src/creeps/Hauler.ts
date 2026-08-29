@@ -635,10 +635,21 @@ function deliver(creep: Creep): void {
   // container stays empty and upgraders walk to storage for each 150-energy load.
   // Genuine defense emergencies are already handled at Priority 0 (<300), and this
   // container caps at 2000, so the diversion is bounded and brief.
+  // Must exclude source-adjacent containers. selectContainer() collects from source
+  // containers, so if a source sits within 3 of the controller the hauler would withdraw
+  // from that container, flip to DELIVERING, and transfer the load straight back into the
+  // same container - free capacity exists precisely because it just drained it. That is an
+  // infinite ping-pong that never supplies spawn, towers or storage. E47N41's container at
+  // (7,33) is both source-adjacent and range 1 from its controller, so this is a real
+  // layout, not a hypothetical. A source container is a producer; only a dedicated
+  // controller container is a valid delivery target.
+  const sources = creep.room.find(FIND_SOURCES);
   const controllerContainer = creep.room.controller
     ? (creep.room.controller.pos.findInRange(FIND_STRUCTURES, 3, {
         filter: (s) =>
-          s.structureType === STRUCTURE_CONTAINER && s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
+          s.structureType === STRUCTURE_CONTAINER &&
+          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+          !sources.some((src) => src.pos.getRangeTo(s) <= 2),
       })[0] as StructureContainer | undefined)
     : undefined;
 

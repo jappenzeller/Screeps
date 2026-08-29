@@ -109,6 +109,12 @@ export function loop(): void {
   ) || "";
   for (const roomName in Game.rooms) {
     gatherRoomIntel(Game.rooms[roomName], homeRoom);
+
+    // Fold event logs from EVERY visible room, not just owned ones. runRoom() only runs
+    // for owned rooms, so counting there would miss all remote-mining harvests while
+    // still counting their spawn cost at home - a permanent phantom energy deficit in
+    // the stats the AWS advisor reads.
+    StatsCollector.recordRoomEvents(Game.rooms[roomName]);
   }
 
   // Process each owned room
@@ -179,9 +185,6 @@ export function loop(): void {
 function runRoom(room: Room): void {
   // 0. Track energy flow metrics (for utility spawning)
   trackEnergyFlow(room);
-
-  // 0a. Fold this room's engine event log into tick stats (harvest/build/upgrade/repair)
-  StatsCollector.recordRoomEvents(room);
 
   // 0b. Track economy metrics (for /live export)
   const economyTracker = new EconomyTracker(room);

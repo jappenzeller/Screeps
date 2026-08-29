@@ -971,6 +971,13 @@ export class ColonyManager {
       var sc = scoredCandidates[i];
       var candidate = sc.candidate;
 
+      // Overlap check first: it applies to reactivating a known remote exactly as much as
+      // to adding a new one. Checking it only on the add path lets two colonies staff the
+      // same remote, one of them by reactivation.
+      if (empireAssignments[candidate.roomName] && empireAssignments[candidate.roomName] !== this.roomName) {
+        continue;
+      }
+
       // Already known: never overwrite its config. But if it is merely inactive
       // (trimmed by the cap earlier, not paused), bring it back rather than skipping —
       // otherwise a trimmed remote is stranded off forever even once there is room.
@@ -983,11 +990,6 @@ export class ColonyManager {
           currentCount++;
           added.push(candidate.roomName + "(reactivated)");
         }
-        continue;
-      }
-
-      // Double-check overlap (another colony may have added it)
-      if (empireAssignments[candidate.roomName] && empireAssignments[candidate.roomName] !== this.roomName) {
         continue;
       }
 
