@@ -280,6 +280,28 @@ threats()
 // E47N38: ACTIVE THREAT (scan 12 ticks ago, 2 hostiles)
 ```
 
+### anomalies()
+
+Show creeps that runtime invariant checks have flagged. These are measured on live
+behaviour rather than inferred from code, and each finding is a lead worth chasing.
+
+```javascript
+anomalies()
+// === Runtime Anomalies ===
+// STUCK E43N39 HAULER HAULER_77300113
+//       state=DELIVERING energy=800 stuck=100 seen=12 ticks ago
+// FLAP  E47N41 UPGRADER UPGRADER_77301204
+//       state=COLLECTING energy=0 flaps=7 seen=3 ticks ago
+```
+
+- **STUCK** — carried energy *and* state both unchanged for 100+ ticks. The creep is
+  waiting on a source that will never arrive. Creeps that are travelling, or standing on
+  a source (static miners), are excluded.
+- **FLAP** — state cycling faster than the work could complete, which usually means two
+  steps are undoing each other.
+
+Findings also ride to AWS in segment 90, so the advisor correlates them against metrics.
+
 ### ramparts(roomName?)
 
 Show rampart coverage of critical structures (spawns, towers, storage, terminal).
@@ -463,6 +485,7 @@ checkSK("E45N36")
 | Expansion | `expansion.status()` | Empire |
 | Expansion | `integration()` | Integration diagnostics |
 | Defense | `threats()` | Hostiles |
+| Defense | `anomalies()` | Stuck/flapping creeps |
 | Defense | `ramparts()` | Rampart coverage |
 | Defense | `safemode()` | Safe mode |
 | Military | `military.status()` | Campaign status |

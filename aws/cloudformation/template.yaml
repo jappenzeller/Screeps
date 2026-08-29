@@ -283,21 +283,9 @@ Resources:
           Arn: !Ref AnalysisWorkflow
           RoleArn: !GetAtt EventBridgeStepFunctionsRole.Arn
 
-  # Rule for recommendations -> outcome evaluator (delayed check)
-  OutcomeCheckRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub ${ProjectName}-outcome-check
-      EventBusName: !Ref ScreepsEventBus
-      EventPattern:
-        source:
-          - screeps.advisor
-        detail-type:
-          - RecommendationCreated
-      State: ENABLED
-      Targets:
-        - Id: outcome-evaluator
-          Arn: !GetAtt OutcomeEvaluatorFunction.Arn
+  # NOTE: OutcomeCheckRule (RecommendationCreated -> outcome-evaluator) was removed.
+  # The evaluator is now driven by the RecommendationsTable DynamoDB stream below, and
+  # its handler ignores EventBridge-shaped invocations - so the rule fired into a no-op.
 
   # ==================== Critical Alerts (SNS) ====================
   CriticalAlertsTopic:
@@ -1219,14 +1207,6 @@ Resources:
           RECOMMENDATIONS_TABLE: !Ref RecommendationsTable
           KNOWLEDGE_TABLE: !Ref KnowledgeTable
           METRICS_TABLE: !Ref MetricsHistoryTable
-
-  OutcomeEvaluatorPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref OutcomeEvaluatorFunction
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt OutcomeCheckRule.Arn
 
   # Event Source Mapping: DynamoDB Stream -> Outcome Evaluator
   OutcomeEvaluatorStreamMapping:

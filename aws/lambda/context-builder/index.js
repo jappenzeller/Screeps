@@ -34,6 +34,7 @@ export async function handler(event) {
     relevantKnowledge,
     previousRecommendations,
     metricsTrends,
+    lastAnalysisTimestamp,
   ] = await Promise.all([
     getLatestSnapshot(roomName),
     getRecentSnapshots(roomName, 12), // Last 12 snapshots (~1 hour)
@@ -41,13 +42,21 @@ export async function handler(event) {
     getRelevantKnowledge(roomName, triggerType),
     getPreviousRecommendations(roomName, 10),
     getMetricsTrends(roomName),
+    getLastAnalysisTimestamp(roomName),
   ]);
+
+  // Calculate how long ago the last analysis ran (for throttling)
+  // Use a large number (1 year in ms) instead of Infinity for JSON compatibility
+  const recentAnalysisAge = lastAnalysisTimestamp
+    ? Date.now() - lastAnalysisTimestamp
+    : 365 * 24 * 60 * 60 * 1000;
 
   // Build the context object
   const context = {
     timestamp: Date.now(),
     triggerType,
     roomName,
+    recentAnalysisAge, // Time since last analysis (ms) - for throttling
 
     // Current state
     currentState: {
@@ -194,6 +203,29 @@ async function getPreviousRecommendations(roomName, limit) {
 }
 
 /**
+ * Get the timestamp of the last analysis/recommendation for this room
+ * Used to throttle rapid-fire analysis
+ */
+async function getLastAnalysisTimestamp(roomName) {
+  try {
+    const response = await docClient.send(new QueryCommand({
+      TableName: RECOMMENDATIONS_TABLE,
+      IndexName: "room-index",
+      KeyConditionExpression: "roomName = :room",
+      ExpressionAttributeValues: { ":room": roomName },
+      ScanIndexForward: false,
+      Limit: 1,
+      ProjectionExpression: "createdAt",
+    }));
+
+    return response.Items?.[0]?.createdAt || null;
+  } catch (error) {
+    console.log("Failed to get last analysis timestamp:", error.message);
+    return null;
+  }
+}
+
+/**
  * Get metrics trends from DynamoDB metrics history table
  */
 async function getMetricsTrends(roomName) {
@@ -243,7 +275,7 @@ async function getMetricsTrends(roomName) {
 
     return trends;
   } catch (error) {
-    console.log("Metrics query failed (may not have data yet):", error.message);
+    console.log("DynamoDB metrics query failed:", error.message);
     return {};
   }
 }
@@ -265,6 +297,7 @@ function determinePhase(snapshot) {
 
 /**
  * Calculate overall colony health
+ * Handles both flat and nested snapshot structures
  */
 function calculateHealth(snapshot) {
   if (!snapshot) return { score: 0, issues: ["No snapshot data"] };
@@ -272,9 +305,14 @@ function calculateHealth(snapshot) {
   const issues = [];
   let score = 100;
 
-  // Check energy
-  if (snapshot.energyAvailable !== undefined && snapshot.energyCapacity !== undefined) {
-    const energyRatio = snapshot.energyAvailable / snapshot.energyCapacity;
+  // Get energy values (handle nested or flat structure)
+  const energyAvailable = snapshot.energy?.available ?? snapshot.energyAvailable;
+  const energyCapacity = snapshot.energy?.capacity ?? snapshot.energyCapacity;
+  const energyStored = snapshot.energy?.stored ?? snapshot.storageEnergy;
+
+  // Check spawn energy
+  if (energyAvailable !== undefined && energyCapacity !== undefined && energyCapacity > 0) {
+    const energyRatio = energyAvailable / energyCapacity;
     if (energyRatio < 0.2) {
       score -= 20;
       issues.push("Low spawn energy");
@@ -282,19 +320,22 @@ function calculateHealth(snapshot) {
   }
 
   // Check storage
-  if (snapshot.storageEnergy !== undefined && snapshot.storageEnergy < 10000) {
+  if (energyStored !== undefined && energyStored < 10000) {
     score -= 15;
     issues.push("Low storage reserves");
   }
 
-  // Check threats
-  if (snapshot.threatLevel > 0) {
-    score -= snapshot.threatLevel * 10;
-    issues.push(`Threat level ${snapshot.threatLevel}`);
+  // Check threats (handle nested or flat structure)
+  const hostileCount = snapshot.threats?.hostileCount ?? snapshot.hostileCount ?? 0;
+  const threatLevel = snapshot.threatLevel ?? (hostileCount > 0 ? 1 : 0);
+  if (threatLevel > 0 || hostileCount > 0) {
+    score -= Math.max(threatLevel, 1) * 10;
+    issues.push(`Threat detected (${hostileCount} hostiles)`);
   }
 
-  // Check creeps
-  if (snapshot.creepCount !== undefined && snapshot.creepCount < 5) {
+  // Check creeps (handle nested or flat structure)
+  const creepCount = snapshot.creeps?.total ?? snapshot.creepCount;
+  if (creepCount !== undefined && creepCount < 5) {
     score -= 25;
     issues.push("Low creep count");
   }
@@ -307,6 +348,7 @@ function calculateHealth(snapshot) {
 
 /**
  * Summarize snapshots for context
+ * Handles both flat and nested snapshot structures
  */
 function summarizeSnapshots(snapshots) {
   if (snapshots.length === 0) return null;
@@ -314,12 +356,16 @@ function summarizeSnapshots(snapshots) {
   const first = snapshots[snapshots.length - 1];
   const last = snapshots[0];
 
+  // Helper to get energy values from either structure
+  const getEnergy = (s, field) => s?.energy?.[field] ?? s?.[`energy${field.charAt(0).toUpperCase() + field.slice(1)}`] ?? 0;
+  const getCreepCount = (s) => s?.creeps?.total ?? s?.creepCount ?? 0;
+
   return {
     timeSpanMs: last.timestamp - first.timestamp,
     count: snapshots.length,
-    energyTrend: last.energyAvailable - first.energyAvailable,
-    storageTrend: (last.storageEnergy || 0) - (first.storageEnergy || 0),
-    creepTrend: (last.creepCount || 0) - (first.creepCount || 0),
+    energyTrend: getEnergy(last, 'available') - getEnergy(first, 'available'),
+    storageTrend: getEnergy(last, 'stored') - getEnergy(first, 'stored'),
+    creepTrend: getCreepCount(last) - getCreepCount(first),
   };
 }
 

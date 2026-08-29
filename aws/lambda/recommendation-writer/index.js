@@ -4,7 +4,11 @@ import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge
 import { randomUUID } from "crypto";
 
 const ddbClient = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(ddbClient);
+const docClient = DynamoDBDocumentClient.from(ddbClient, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 const eventBridge = new EventBridgeClient({});
 
 const RECOMMENDATIONS_TABLE = process.env.RECOMMENDATIONS_TABLE;
