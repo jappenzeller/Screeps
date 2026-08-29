@@ -2107,10 +2107,20 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   // with 1877 available and ~20 energy/tick of income.
   const isDowngradeRescue = role === "UPGRADER" && isDowngradeRisk(state.room);
 
+  // Don't stall waiting on the last, most distant extension. Sizing bodies to exactly
+  // energyCapacityAvailable means a room must be 100% full to spawn anything, so one
+  // far-flung extension gates every spawn behind a long filler round trip for a handful
+  // of energy - E43N39 sat idle at 1781/1800 with 983k banked, blocked on 19 energy in
+  // an extension 41 path-steps away. Once available is within 10% of capacity, build to
+  // available: a marginally smaller creep now beats a full-size one eighty ticks later.
+  // A room that can actually reach full is already at full when this is evaluated, so
+  // healthy rooms still get full-size bodies.
+  const nearlyFull = state.energyAvailable >= state.energyCapacity * 0.9;
+
   // In emergency OR hauler bootstrap OR downgrade rescue, build what we can afford NOW
   // Otherwise, build for full capacity (wait for energy)
   const energy =
-    isEmergency || isHaulerBootstrap || isDowngradeRescue
+    isEmergency || isHaulerBootstrap || isDowngradeRescue || nearlyFull
       ? state.energyAvailable
       : state.energyCapacity;
 

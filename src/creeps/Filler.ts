@@ -178,13 +178,24 @@ export function runFiller(creep: Creep): void {
     creep.say("no stor");
   }
 
-  // Find unfilled spawn/extension
-  var target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function(s: AnyOwnedStructure) {
-      return (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-        (s as StructureSpawn | StructureExtension).store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-    }
-  }) as StructureSpawn | StructureExtension | null;
+  // Find unfilled spawn/extension.
+  // findClosestByPath treats creeps as obstacles, so a cluster around the spawn makes it
+  // return null even when a hungry spawn is two tiles away - and the filler then falls
+  // through to the tower top-off below and walks off while the spawn sits on
+  // WAIT_ENERGY. Fall back to range so a reachable target is never missed; smartMoveTo
+  // does the actual pathing and has its own stuck handling.
+  var fillFilter = function(s: AnyOwnedStructure) {
+    return (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
+      (s as StructureSpawn | StructureExtension).store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+  };
+
+  var target = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, { filter: fillFilter }) as
+    StructureSpawn | StructureExtension | null;
+
+  if (!target) {
+    target = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, { filter: fillFilter }) as
+      StructureSpawn | StructureExtension | null;
+  }
 
   if (target) {
     if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
