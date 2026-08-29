@@ -2,6 +2,25 @@
 
 ## Active Issues
 
+### Spawn Stalls on the Last Distant Extension
+
+**Status:** Fixed
+
+**Issue:** E43N39's climb to RCL 6 ran at ~9 progress/tick with 983,000 banked and its spawn sitting **idle**. It held 2 upgraders against a target of 5.
+
+**Root Cause:** Two throughput defects.
+
+1. **Filler targeting.** `findClosestByPath` treats creeps as obstacles, so a cluster around the spawn made it return `null` even with a hungry spawn two tiles away. The filler then fell through to the tower top-off branch below it and walked across the room while the spawn sat on `WAIT_ENERGY`.
+2. **Body sizing.** Bodies are built to exactly `energyCapacityAvailable`, so a room must be **100% full** to spawn anything. E43N39 idled at 1781/1800, blocked on 19 energy in an extension **41 path-steps** from its filler — an ~80-tick round trip gating every spawn.
+
+**Fix Applied:** The filler falls back to `findClosestByRange` when the path query returns empty (`smartMoveTo` does the real pathing and has its own stuck handling). Body sizing builds to `energyAvailable` once available is within 10% of capacity — a room that can reach full is already at full when this is evaluated, so healthy rooms still get full-size bodies; the rule only bites in the band where the room would otherwise idle.
+
+**Files:** `src/creeps/Filler.ts`, `src/spawning/utilitySpawning.ts`
+
+**Verified:** E43N39 spawned at 1781 rather than waiting, and correctly resumed waiting at 1131. Progress rate improved from ~9.3 to ~12.5 per tick.
+
+---
+
 ### Room Death Spiral: Filler Stranded by Empty Storage
 
 **Status:** Fixed
