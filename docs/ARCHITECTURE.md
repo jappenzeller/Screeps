@@ -149,6 +149,37 @@ AWS Lambda → Writes to Segment 95 → DirectiveReader.run()
 **Staleness Protection:**
 Directives older than 500 ticks automatically trigger fallback to local logic. Toggle via `Memory.settings.useDirectives`.
 
+### AnomalyDetector (`src/utils/AnomalyDetector.ts`)
+
+Runtime invariant checks on creep behaviour. Static review predicts what code will do;
+this measures what it actually does, and exists because a run of production defects broke
+one-line runtime invariants that code review did not catch.
+
+Runs after each creep's role, on creeps with CARRY parts. Two generic detectors:
+
+| Detector | Condition | Catches |
+|---|---|---|
+| `STUCK` | carried energy AND state both unchanged 100+ ticks | waiting on a source that never arrives |
+| `FLAP` | state cycling faster than the work could complete | two steps undoing each other |
+
+Excluded to avoid false positives: creeps that have moved more than `TRAVEL_RADIUS` tiles
+since their energy last changed (travelling, not stalling), and creeps with WORK parts
+standing on a source (static miners deposit into the container beneath them, so their own
+store never changes by design).
+
+```
+runCreep() → AnomalyDetector.inspect() → Memory.stats.anomalies (capped at 12)
+                                              ↓
+                            per-colony in Segment 90 → /colonies/{room} → advisor
+```
+
+Read locally with `anomalies()`. The advisor is prompted to treat findings as
+high-confidence evidence and to correlate them against metrics, so a defect can surface
+without a human suspecting it first. Findings are pruned when their creep dies.
+
+**Known limit:** only catches code paths that actually execute. Static review still
+covers the rest.
+
 ## Colony Phases
 
 ```
@@ -297,7 +328,8 @@ src/
     ├── cpuCache.ts         # CPU bucket guards
     ├── movement.ts         # Pathfinding + route cache
     ├── Logger.ts           # Logging
-    └── StatsCollector.ts   # Metrics
+    ├── StatsCollector.ts   # Metrics
+    └── AnomalyDetector.ts  # Runtime invariant checks (stuck/flap)
 ```
 
 ## CPU Management
