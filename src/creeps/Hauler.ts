@@ -478,6 +478,7 @@ export function runHauler(creep: Creep): void {
     // Select best container for this collection trip
     const target = selectContainer(creep);
     creep.memory.targetContainer = target?.id || null;
+    delete creep.memory.deliverTarget; // stale once we are collecting again
     creep.say("GET");
   }
 
@@ -589,7 +590,34 @@ function collect(creep: Creep): void {
   }
 }
 
+/** Deliver to a chosen target and remember it, so the choice survives to the next tick. */
+function deliverTo(creep: Creep, target: AnyStoreStructure, stroke: string): void {
+  creep.memory.deliverTarget = target.id;
+  if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+    smartMoveTo(creep, target, { visualizePathStyle: { stroke: stroke }, reusePath: 5 });
+  }
+}
+
 function deliver(creep: Creep): void {
+  // Stick to the chosen target until it is delivered to or becomes invalid.
+  //
+  // Re-running the whole priority chain every tick lets a flickering condition alternate
+  // the target between two structures on opposite sides of the room, and the hauler walks
+  // back and forth without ever arriving. Observed live: the controller container filled
+  // and drained as upgraders withdrew from it, so a hauler beside it alternated between
+  // that container (east) and a low tower (west), oscillating across three tiles for 100+
+  // ticks while holding a full 800 energy. The runtime anomaly detector caught it.
+  if (creep.memory.deliverTarget) {
+    const cached = Game.getObjectById(creep.memory.deliverTarget);
+    if (cached && cached.store && cached.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+      if (creep.transfer(cached, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+        smartMoveTo(creep, cached, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
+      }
+      return;
+    }
+    delete creep.memory.deliverTarget;
+  }
+
   // Priority 0: CRITICAL towers - defense emergency
   // Towers below 300 can't effectively defend (1 attack = 10 energy, need buffer for combat)
   // This MUST come before spawn/extensions to prevent tower starvation
@@ -601,9 +629,7 @@ function deliver(creep: Creep): void {
   }) as StructureTower | null;
 
   if (emergencyTower) {
-    if (creep.transfer(emergencyTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, emergencyTower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
-    }
+    deliverTo(creep, emergencyTower, "#ff0000");
     return;
   }
 
@@ -617,12 +643,7 @@ function deliver(creep: Creep): void {
     });
 
     if (spawnOrExtension) {
-      if (creep.transfer(spawnOrExtension, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, spawnOrExtension, {
-          visualizePathStyle: { stroke: "#ffffff" },
-          reusePath: 5,
-        });
-      }
+      deliverTo(creep, spawnOrExtension as AnyStoreStructure, "#ffffff");
       return;
     }
   }
@@ -654,12 +675,7 @@ function deliver(creep: Creep): void {
     : undefined;
 
   if (controllerContainer) {
-    if (creep.transfer(controllerContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, controllerContainer, {
-        visualizePathStyle: { stroke: "#00ffff" },
-        reusePath: 5,
-      });
-    }
+    deliverTo(creep, controllerContainer, "#00ffff");
     return;
   }
 
@@ -672,9 +688,7 @@ function deliver(creep: Creep): void {
   }) as StructureTower | null;
 
   if (lowTower) {
-    if (creep.transfer(lowTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, lowTower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
-    }
+    deliverTo(creep, lowTower, "#ff0000");
     return;
   }
 
@@ -682,9 +696,7 @@ function deliver(creep: Creep): void {
   // NOTE: Haulers never deliver to links - LINK_FILLER handles link logistics
   const storage = creep.room.storage;
   if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-    if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
-    }
+    deliverTo(creep, storage, "#00ff00");
     return;
   }
 
@@ -696,9 +708,7 @@ function deliver(creep: Creep): void {
   }) as StructureTower | null;
 
   if (towerTopOff) {
-    if (creep.transfer(towerTopOff, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, towerTopOff, { visualizePathStyle: { stroke: "#ff6600" }, reusePath: 5 });
-    }
+    deliverTo(creep, towerTopOff, "#ff6600");
     return;
   }
 
