@@ -544,6 +544,12 @@ live creep behaviour, and it is high-confidence evidence rather than inference:
   - FLAP: a creep changing state faster than the work could complete, which usually
     means two steps are undoing each other (e.g. withdrawing and depositing to the
     same structure).
+  - A "diagnosis" field, when present, is the result of a deeper pathfinding check run
+    at the moment the stall was confirmed. It states the measured cause - for example
+    that a map route to a target room exists but no exit toward it is reachable, or
+    that energy is present in the room but none of it can be pathed to. Quote it
+    directly in your observation; it is measurement, not inference, and it is the most
+    specific evidence you will get about a defect.
 Treat these as leads worth correlating against the metrics - if a room's throughput is
 flat and it has a STUCK hauler, those are very likely the same fact.
 

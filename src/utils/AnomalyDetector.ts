@@ -57,9 +57,14 @@ export interface Anomaly {
   /** Carried energy at detection - "beside a full container with 0" is the tell. */
   energy: number;
   detectedAt: number;
+  /** Why it is stuck, from the deeper path diagnostic. Absent if none was run. */
+  diagnosis?: string;
 }
 
 export class AnomalyDetector {
+  /** Last tick a deep diagnosis ran - one per tick empire-wide caps the pathfinding. */
+  private static lastDiagnosisTick = 0;
+
   /**
    * Inspect one creep. Called once per creep per tick, after its role has run so the
    * state and store reflect this tick's decisions.
@@ -139,6 +144,17 @@ export class AnomalyDetector {
     const stateIdle = Game.time - mem._anStateAt;
 
     if (energyIdle >= STUCK_TICKS && stateIdle >= STUCK_TICKS) {
+      // Pay for the expensive explanation only now, and only once per tick.
+      let diagnosis: string | undefined;
+      if (Game.time !== this.lastDiagnosisTick) {
+        this.lastDiagnosisTick = Game.time;
+        try {
+          diagnosis = this.diagnose(creep);
+        } catch (err) {
+          diagnosis = `diagnosis failed: ${String(err)}`;
+        }
+      }
+
       this.record({
         type: "STUCK",
         creep: creep.name,
@@ -148,6 +164,7 @@ export class AnomalyDetector {
         ticks: energyIdle,
         energy,
         detectedAt: Game.time,
+        diagnosis,
       });
       // Re-baseline so one stuck creep reports periodically rather than every tick.
       mem._anEnergyAt = Game.time;
@@ -170,6 +187,70 @@ export class AnomalyDetector {
     }
   }
 
+  /**
+   * Explain WHY a creep is stuck, using checks too expensive to run continuously.
+   *
+   * Only ever reached for a creep the cheap detectors have already confirmed STUCK, and
+   * rate-limited to one per tick empire-wide, so the pathfinding is paid a handful of
+   * times per thousand ticks. The payoff is turning "creep X is stuck" into a specific
+   * cause without a human investigating.
+   *
+   * The distinctions here are the ones that took manual work to establish the first time:
+   * a map route existing says nothing about whether a creep can walk out of its own room
+   * (Game.map.findRoute operates on the room graph and ignores walls inside a room), and
+   * "cannot reach the exit" is a very different fault from "cannot reach anything".
+   */
+  private static diagnose(creep: Creep): string {
+    const target = creep.memory.targetRoom;
+
+    // Cross-room assignment: can it physically leave toward the target at all?
+    if (target && target !== creep.room.name) {
+      const route = Game.map.findRoute(creep.room.name, target);
+      if (route === ERR_NO_PATH || route.length === 0) {
+        return `no map route to ${target}`;
+      }
+
+      const exit = creep.pos.findClosestByPath(route[0].exit, { ignoreCreeps: true });
+      if (!exit) {
+        // Separate "this border is sealed" from "this creep is walled into a pocket".
+        const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS, { ignoreCreeps: true });
+        return spawn
+          ? `map route to ${target} exists but no exit toward it is reachable - border sealed`
+          : `isolated - cannot reach any exit or spawn`;
+      }
+      return `exit toward ${target} is reachable - blocked or oscillating en route`;
+    }
+
+    // Empty and going nowhere: is there energy it cannot get to?
+    if (creep.store[RESOURCE_ENERGY] === 0) {
+      const sources = creep.room.find(FIND_STRUCTURES, {
+        filter: (s) =>
+          (s.structureType === STRUCTURE_CONTAINER || s.structureType === STRUCTURE_STORAGE) &&
+          (s as StructureContainer | StructureStorage).store[RESOURCE_ENERGY] > 0,
+      });
+      if (sources.length === 0) return "no stored energy anywhere in room";
+
+      const reachable = creep.pos.findClosestByPath(sources, { ignoreCreeps: true });
+      return reachable
+        ? `energy available and reachable at ${reachable.pos.x},${reachable.pos.y} - not collecting it`
+        : "energy present in room but none of it is reachable";
+    }
+
+    // Carrying energy with nowhere to put it.
+    const sinks = creep.room.find(FIND_MY_STRUCTURES, {
+      filter: (s) => {
+        const store = (s as AnyStoreStructure).store;
+        return !!store && store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+      },
+    });
+    if (sinks.length === 0) return "carrying energy, every sink in the room is full";
+
+    const sink = creep.pos.findClosestByPath(sinks, { ignoreCreeps: true });
+    return sink
+      ? `sink reachable at ${sink.pos.x},${sink.pos.y} - not delivering to it`
+      : "carrying energy, no reachable sink";
+  }
+
   /** Store a finding, replacing any existing one for the same creep. */
   private static record(anomaly: Anomaly): void {
     if (!Memory.stats) return;
@@ -178,6 +259,10 @@ export class AnomalyDetector {
     const list = Memory.stats.anomalies;
     const existing = list.findIndex((a) => a.creep === anomaly.creep);
     if (existing >= 0) {
+      // Keep an earlier diagnosis rather than losing it to a rate-limited re-report.
+      if (!anomaly.diagnosis && list[existing].diagnosis) {
+        anomaly.diagnosis = list[existing].diagnosis;
+      }
       list[existing] = anomaly;
     } else {
       list.push(anomaly);
@@ -189,7 +274,8 @@ export class AnomalyDetector {
 
     console.log(
       `[anomaly] ${anomaly.type} ${anomaly.role} ${anomaly.creep} in ${anomaly.room}: ` +
-        `state=${anomaly.state} energy=${anomaly.energy} ticks=${anomaly.ticks}`
+        `state=${anomaly.state} energy=${anomaly.energy} ticks=${anomaly.ticks}` +
+        (anomaly.diagnosis ? ` :: ${anomaly.diagnosis}` : "")
     );
   }
 

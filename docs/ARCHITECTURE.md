@@ -173,6 +173,22 @@ runCreep() → AnomalyDetector.inspect() → Memory.stats.anomalies (capped at 1
                             per-colony in Segment 90 → /colonies/{room} → advisor
 ```
 
+**Deep diagnosis.** When a STUCK is confirmed, one pathfinding pass runs to explain *why*
+— rate-limited to one per tick empire-wide, so the cost is paid a handful of times per
+thousand ticks rather than continuously. It distinguishes causes that are otherwise
+expensive to tell apart:
+
+| Diagnosis | Meaning |
+|---|---|
+| `no map route to X` | the room graph itself has no path |
+| `map route exists but no exit toward X is reachable` | walls or terrain seal that border — `Game.map.findRoute` cannot see this |
+| `isolated - cannot reach any exit or spawn` | the creep is walled into a pocket |
+| `energy present in room but none of it is reachable` | supply exists, path does not |
+| `sink reachable at x,y - not delivering to it` | topology is fine; the fault is in role logic |
+
+The last distinction matters most: it separates "the world is shaped wrong" from "our code
+is wrong", which is the first question worth answering about any stall.
+
 Read locally with `anomalies()`. The advisor is prompted to treat findings as
 high-confidence evidence and to correlate them against metrics, so a defect can surface
 without a human suspecting it first. Findings are pruned when their creep dies.
