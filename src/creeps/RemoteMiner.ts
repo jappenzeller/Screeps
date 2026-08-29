@@ -1,6 +1,6 @@
 import { logger } from "../utils/Logger";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
-import { updateRoomIntel, shouldFlee, fleeToSafety } from "../utils/remoteIntel";
+import { updateRoomIntel, shouldFlee, fleeToSafety, resolveRemoteTarget } from "../utils/remoteIntel";
 
 /**
  * RemoteMiner - Harvests sources in adjacent rooms
@@ -8,12 +8,14 @@ import { updateRoomIntel, shouldFlee, fleeToSafety } from "../utils/remoteIntel"
  * Drops energy for RemoteHaulers to collect
  */
 export function runRemoteMiner(creep: Creep): void {
-  const targetRoom = creep.memory.targetRoom;
+  // Re-validate the assignment: the remote may have been paused or trimmed since this
+  // creep was spawned, and walking to a room the colony no longer mines wastes its life.
+  const targetRoom = resolveRemoteTarget(creep);
   const sourceId = creep.memory.sourceId;
 
   // Need a target room assigned
   if (!targetRoom) {
-    logger.warn("RemoteMiner", `${creep.name} has no target room assigned`);
+    logger.warn("RemoteMiner", `${creep.name} has no active remote to work`);
     return;
   }
 

@@ -161,3 +161,53 @@ export function hasDangerousHostiles(roomName: string): boolean {
   // If no details, assume any hostiles are dangerous
   return (intel.hostiles || 0) > 0;
 }
+
+/**
+ * Validate a remote creep's assignment against its colony's currently active remotes.
+ *
+ * Remotes get paused, trimmed or removed while creeps are already alive and travelling,
+ * and nothing ever revoked the assignment - so a miner could spend its entire 1500-tick
+ * life walking toward a room its colony stopped mining. Observed live: two of E43N39's
+ * miners targeted E42N38 and E45N41 while its only active remote was E43N38.
+ *
+ * Returns a still-valid target, reassigning to the least-crowded active remote when the
+ * original is gone. Returns null only when the colony has no active remotes at all, in
+ * which case the caller should idle rather than walk somewhere pointless.
+ */
+export function resolveRemoteTarget(creep: Creep): string | null {
+  const colony = Memory.colonies && Memory.colonies[creep.memory.room];
+  if (!colony || !colony.remotes) return creep.memory.targetRoom || null;
+
+  const active: string[] = [];
+  for (const name in colony.remotes) {
+    if (colony.remotes[name].active) active.push(name);
+  }
+
+  if (active.length === 0) return null;
+
+  const current = creep.memory.targetRoom;
+  if (current && active.indexOf(current) !== -1) return current;
+
+  // Stale assignment. Spread onto the least-crowded active remote rather than piling
+  // every reassigned creep onto the same one.
+  const load: Record<string, number> = {};
+  for (const n of active) load[n] = 0;
+  for (const cn in Game.creeps) {
+    const other = Game.creeps[cn];
+    if (other.memory.role !== creep.memory.role) continue;
+    const t = other.memory.targetRoom;
+    if (t && load[t] !== undefined) load[t]++;
+  }
+
+  let replacement = active[0];
+  for (const n of active) {
+    if (load[n] < load[replacement]) replacement = n;
+  }
+
+  creep.memory.targetRoom = replacement;
+  delete creep.memory.sourceId;
+  delete creep.memory._safeWaypoint;
+  delete creep.memory._safeWaypointAt;
+
+  return replacement;
+}

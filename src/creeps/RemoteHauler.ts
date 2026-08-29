@@ -1,5 +1,5 @@
 import { moveToRoom, smartMoveTo } from "../utils/movement";
-import { updateRoomIntel, shouldFlee, fleeToSafety } from "../utils/remoteIntel";
+import { updateRoomIntel, shouldFlee, fleeToSafety, resolveRemoteTarget } from "../utils/remoteIntel";
 
 /**
  * RemoteHauler - Collects energy from remote mining rooms and delivers home
@@ -110,7 +110,8 @@ function tryRenew(creep: Creep): boolean {
 }
 
 export function runRemoteHauler(creep: Creep): void {
-  const targetRoom = creep.memory.targetRoom;
+  // Re-validate: the remote may have been paused or trimmed since spawn.
+  const targetRoom = resolveRemoteTarget(creep);
   const homeRoom = creep.memory.room;
 
   if (!targetRoom || !homeRoom) {
