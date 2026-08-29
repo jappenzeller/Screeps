@@ -273,6 +273,73 @@ Build recovery paths:
 
 ---
 
+## Design Rules Learned From Defects
+
+These are not style preferences. Each one cost real colony downtime, and each was
+invisible to code review but obvious in live data. Check new code against them.
+
+### 1. A preferred source is never the only source
+
+The dominant defect shape in this codebase: a branch picks the *best* source or target,
+then returns unconditionally — so when that source is empty the creep idles forever
+instead of falling through.
+
+Instances found in one session: upgraders idling beside an empty controller link with a
+full container two tiles away; fillers withdrawing only from an empty storage while
+containers held 2,796 energy; haulers whose controller-container branch sat below a
+storage branch that always matched.
+
+**Rule:** after `if (preferred) { use it; return; }`, ask what happens when `preferred`
+exists but is empty. Prefer, then fall through — never prefer exclusively.
+
+### 2. An early branch that can always match starves everything below it
+
+Priority chains silently become single-branch chains when an early condition is
+permanently satisfiable. Storage almost always has *some* free capacity. A tower parked
+just under its threshold captures every delivery forever.
+
+**Rule:** for each branch in a priority chain, ask "can this match indefinitely?" If yes,
+everything below it is dead code in practice.
+
+### 3. Verify the runtime shape, don't infer it from names
+
+A "container near the controller" is not necessarily a controller container — in E47N41
+it was a source container one tile from the controller, which turned a delivery branch
+into an infinite withdraw/deposit loop. Room layouts are data, not assumptions.
+
+**Rule:** before keying logic on a spatial relationship, query the live rooms and confirm
+the assumption holds in each one.
+
+### 4. Self-preservation must yield to the room
+
+Renewal consumes the energy the creep exists to deliver, and `RenewalManager` returning
+true makes `main.ts` skip spawning entirely. A creep renewing in a starved room keeps the
+room starved.
+
+**Rule:** any behaviour that consumes spawn energy or spawn time must check
+`energyAvailable` against capacity first.
+
+### 5. Waiting for perfect blocks good
+
+Bodies sized to exactly `energyCapacityAvailable` require a room to be 100% full to spawn
+anything, so one distant extension gates every spawn behind a long round trip.
+
+**Rule:** thresholds that require an exact maximum will be met rarely. Leave headroom.
+
+### Verify against live state, not by reading
+
+Static reading predicts; only the running game tells you. Use `tools/screeps-api.ts` to
+round-trip a diagnostic through Memory (see the console-command notes in
+`docs/CONSOLE_COMMANDS.md`) and confirm a fix on the live colony before believing it.
+
+`anomalies()` reports runtime invariant violations — creeps STUCK (energy and state
+unchanged 100+ ticks) or FLAPping (state cycling faster than work can complete). These
+findings ride to AWS in segment 90, and the advisor is prompted to treat a frozen output
+alongside a moving input as a defect. That loop exists specifically because reading code
+did not catch any of the defects above.
+
+---
+
 ## Code Quality Standards
 
 ### Do

@@ -10,6 +10,7 @@ import { RoomEvaluator, RoomScore } from "../empire/RoomEvaluator";
 import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/ExpansionReadiness";
 import { getCreepsByRoom, getHostileCreeps, shouldSkipExport } from "./cpuCache";
 import { DirectiveReader, DirectiveAck } from "../core/DirectiveReader";
+import { AnomalyDetector, Anomaly } from "./AnomalyDetector";
 import { getStructureCache, getCreepsForRoom } from "../framework/WorldState";
 
 // Segment allocation for AWS export
@@ -275,6 +276,10 @@ interface ColonyExport {
   mineral: MineralExport;
   economy: ColonyEconomyMetrics;
   remoteRooms: string[];
+  // Runtime invariant violations observed on creeps homed to this colony. Carried
+  // per-colony rather than at payload top level so it flows through the existing
+  // /colonies/{room} API the advisor already reads.
+  anomalies: Anomaly[];
 }
 
 interface DefenseExport {
@@ -1161,6 +1166,10 @@ export class AWSExporter {
         mineral: this.getMineralStatus(room, roomName),
         economy: new EconomyTracker(room).getMetrics(),
         remoteRooms: this.getActiveRemoteRooms(roomName),
+        anomalies: AnomalyDetector.get().filter(function (a) {
+          var c = Game.creeps[a.creep];
+          return c ? c.memory.room === roomName : a.room === roomName;
+        }),
       });
     }
 

@@ -500,6 +500,9 @@ async function analyzeWithClaude(roomName, snapshots, events, patterns, liveColo
     trends: calculateTrends(snapshots),
     recentEvents: summarizeEvents(events),
     detectedPatterns: patterns.map(p => `[${p.severity}] ${p.id}: ${p.message}`),
+    // Runtime invariant violations measured on live creep behaviour. Empire-wide rather
+    // than per-room, filtered to this room so the observer sees only what is local to it.
+    anomalies: (current.anomalies || []).filter(a => !a.room || a.room === roomName),
   };
 
   // Build signal summary
@@ -526,6 +529,23 @@ You are building a continuous understanding of this colony over time. Focus on:
 3. What correlations do you notice between metrics?
 4. What trends are developing?
 5. For healthy colonies: report on efficiency, resource trends, RCL progress rate, and stability metrics
+
+DECOUPLING IS THE HIGHEST-VALUE SIGNAL. The most useful thing you can report is an input
+that changed while its expected output did not. "Upgrader count went 1 to 3 and controller
+progress stayed at exactly 109" localises a bug that no amount of code reading found.
+Whenever you see a quantity frozen at an identical value across windows while related
+inputs move, say so explicitly and name both sides of the relationship - a byte-identical
+value across observations is almost always a defect, not a plateau.
+
+If an "anomalies" array is present, it holds runtime invariant violations measured on
+live creep behaviour, and it is high-confidence evidence rather than inference:
+  - STUCK: a creep whose carried energy AND state were both unchanged for 100+ ticks.
+    It is waiting on a source that will never arrive. Note the role, room and state.
+  - FLAP: a creep changing state faster than the work could complete, which usually
+    means two steps are undoing each other (e.g. withdrawing and depositing to the
+    same structure).
+Treat these as leads worth correlating against the metrics - if a room's throughput is
+flat and it has a STUCK hauler, those are very likely the same fact.
 
 IMPORTANT: Always generate observations, even when everything is running smoothly. A stable, well-functioning colony is worth documenting - note what's working well, current efficiency metrics, and projected milestones.
 

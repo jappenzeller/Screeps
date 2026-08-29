@@ -125,6 +125,8 @@ declare global {
       snapshots: ColonySnapshot[];
       events: ColonyEvent[];
       lastSnapshotTick: number;
+      /** Runtime invariant violations from AnomalyDetector - exported in segment 90. */
+      anomalies?: import("./AnomalyDetector").Anomaly[];
     };
   }
 }

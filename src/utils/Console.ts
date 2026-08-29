@@ -7,6 +7,7 @@ import { ColonyManager } from "../core/ColonyManager";
 import { getSafeModeStatus } from "../defense/AutoSafeMode";
 import { TrafficMonitor } from "../core/TrafficMonitor";
 import { RampartPlanner } from "../structures/RampartPlanner";
+import { AnomalyDetector } from "./AnomalyDetector";
 import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
@@ -81,6 +82,7 @@ syncRemotes()    - Force re-derive remote rooms from intel
 remoteBuilders() - Show remote builder status
 remoteSites("W1N1") - Show construction sites in remote rooms
 threats()        - Show hostile creeps and threat levels
+anomalies()      - Show creeps stuck or flapping (runtime invariant checks)
 ramparts()       - Show rampart coverage of critical structures
 ramparts("W1N1") - Rampart coverage for specific room
 safemode()       - Show safe mode status and threat assessment
@@ -1034,6 +1036,32 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     return "OK";
+  };
+
+  // Runtime invariant violations detected on live creep behaviour
+  global.anomalies = () => {
+    const found = AnomalyDetector.get();
+
+    if (found.length === 0) {
+      return "No anomalies detected — no creep is stuck or flapping.";
+    }
+
+    console.log("=== Runtime Anomalies ===");
+    for (const a of found) {
+      const age = Game.time - a.detectedAt;
+      console.log(
+        `${a.type.padEnd(5)} ${a.room} ${a.role} ${a.creep}\n` +
+          `      state=${a.state} energy=${a.energy} ` +
+          `${a.type === "STUCK" ? "stuck" : "flaps"}=${a.ticks} seen=${age} ticks ago`
+      );
+    }
+
+    console.log(
+      "\nSTUCK = energy and state both unchanged for 100+ ticks (a source that never arrives)." +
+        "\nFLAP  = state cycling faster than the work could complete (collect/deliver ping-pong)."
+    );
+
+    return `${found.length} anomal${found.length === 1 ? "y" : "ies"}`;
   };
 
   // Rampart coverage of critical structures

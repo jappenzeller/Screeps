@@ -17,6 +17,7 @@ import { LinkManager } from "./structures/LinkManager";
 import { runCreep } from "./creeps/roles";
 import { ColonyManager } from "./core/ColonyManager";
 import { StatsCollector, EventType } from "./utils/StatsCollector";
+import { AnomalyDetector } from "./utils/AnomalyDetector";
 import { AWSExporter } from "./utils/AWSExporter";
 import { checkAutoSafeMode } from "./defense/AutoSafeMode";
 import { TrafficMonitor } from "./core/TrafficMonitor";
@@ -320,6 +321,8 @@ function runCreeps(): void {
     if (creep.spawning) continue;
     try {
       runCreep(creep);
+      // Inspect AFTER the role has run, so state and store reflect this tick's decisions.
+      AnomalyDetector.inspect(creep);
     } catch (error) {
       const errMsg = error instanceof Error
         ? (error.stack || error.message)
@@ -348,6 +351,11 @@ function cleanupMemory(): void {
       }
       delete Memory.creeps[name];
     }
+  }
+
+  // Drop anomaly findings whose creep has since died
+  if (Game.time % 50 === 0) {
+    AnomalyDetector.prune();
   }
 
   // Room memory cleanup - less frequent

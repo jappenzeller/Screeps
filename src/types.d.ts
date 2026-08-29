@@ -27,6 +27,13 @@ interface CreepMemory {
   // Energy acquisition coordination
   energyTarget?: Id<StructureContainer | StructureStorage | StructureLink | Resource | Tombstone | Ruin>;
 
+  // Runtime anomaly detection (AnomalyDetector) - baselines for stuck/flap checks
+  _anEnergy?: number;
+  _anEnergyAt?: number;
+  _anState?: string;
+  _anStateAt?: number;
+  _anFlap?: number;
+
   // Movement stuck detection
   _lastPos?: string;
   _stuckCount?: number;
