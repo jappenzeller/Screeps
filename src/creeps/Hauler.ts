@@ -52,6 +52,18 @@ function roomHasFiller(room: Room): boolean {
  */
 const PARTIAL_LOAD_FRACTION = 0.5;
 
+/** Below this a tower cannot meaningfully defend - it outranks every other sink. */
+const TOWER_CRITICAL = 300;
+
+/** Below this a tower is under-provisioned but not an emergency. */
+const TOWER_READY = 500;
+
+/**
+ * Range at which the proximity factor halves. Large enough that need dominates distance
+ * across a room, small enough to break ties toward the nearer of two equal targets.
+ */
+const DISTANCE_HALF_LIFE = 25;
+
 /**
  * Select the best container to collect from based on energy, distance, and competition.
  * Called when transitioning to COLLECTING state.
@@ -624,15 +636,102 @@ function deliverTo(creep: Creep, target: AnyStoreStructure, stroke: string): voi
   }
 }
 
+/**
+ * Score every delivery target and take the best.
+ *
+ * This replaces a chain of early returns. The chain had a structural fault that no
+ * ordering fixed: any branch able to match indefinitely starved everything below it.
+ * Storage almost always has free capacity, so a controller container placed after it was
+ * unreachable; a tower parked at 490 under a "below 500" test captured every delivery
+ * forever. Reordering only moved which branch did the starving.
+ *
+ * Scoring cannot starve an option, because there is no "later" - every candidate is
+ * weighed on the same scale each time. Ordering that genuinely matters is expressed as
+ * weight, which is also more honest than encoding it in control flow.
+ *
+ * Score = base(role) x urgency(how empty) x proximity. Base weights preserve the intent
+ * of the old priorities; urgency lets a full structure yield to an empty one; proximity
+ * breaks ties toward less walking without ever dominating need.
+ */
+function scoreDeliveryTargets(creep: Creep): { target: AnyStoreStructure; score: number } | null {
+  const room = creep.room;
+  const hasFiller = roomHasFiller(room);
+  const sources = room.find(FIND_SOURCES);
+  const controller = room.controller;
+
+  let best: { target: AnyStoreStructure; score: number } | null = null;
+
+  const candidates = room.find(FIND_MY_STRUCTURES, {
+    filter: (s) => {
+      const store = (s as AnyStoreStructure).store;
+      return !!store && store.getFreeCapacity(RESOURCE_ENERGY) > 0;
+    },
+  }) as AnyStoreStructure[];
+
+  // Containers are not MY_STRUCTURES - add the controller container explicitly. Source
+  // containers are excluded: collect() draws from those, so delivering into one lets a
+  // hauler withdraw and immediately deposit into the same structure.
+  if (controller) {
+    const ctrlContainers = controller.pos.findInRange(FIND_STRUCTURES, 3, {
+      filter: (s) =>
+        s.structureType === STRUCTURE_CONTAINER &&
+        (s as StructureContainer).store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
+        !sources.some((src) => src.pos.getRangeTo(s) <= 2),
+    }) as StructureContainer[];
+    for (const c of ctrlContainers) candidates.push(c);
+  }
+
+  for (const s of candidates) {
+    const store = s.store;
+    const free = store.getFreeCapacity(RESOURCE_ENERGY);
+    const cap = store.getCapacity(RESOURCE_ENERGY) || 1;
+    let base = 0;
+
+    switch (s.structureType) {
+      case STRUCTURE_TOWER: {
+        const e = (s as StructureTower).store[RESOURCE_ENERGY];
+        // A tower that cannot defend outranks everything; a topped-up one is filler work.
+        base = e < TOWER_CRITICAL ? 1000 : e < TOWER_READY ? 60 : 20;
+        break;
+      }
+      case STRUCTURE_SPAWN:
+      case STRUCTURE_EXTENSION:
+        // A filler owns this loop when one exists; haulers would only compete for it.
+        base = hasFiller ? 0 : 90;
+        break;
+      case STRUCTURE_CONTAINER:
+        base = 55; // controller container - the only sink that produces RCL
+        break;
+      case STRUCTURE_STORAGE:
+        base = 10; // the buffer of last resort, never zero so it is never unreachable
+        break;
+      case STRUCTURE_TERMINAL:
+        base = 5;
+        break;
+      default:
+        base = 0; // links are LINK_FILLER's job
+    }
+
+    if (base === 0) continue;
+
+    const urgency = 0.4 + 0.6 * (free / cap);
+    const proximity = 1 / (1 + creep.pos.getRangeTo(s) / DISTANCE_HALF_LIFE);
+    const score = base * urgency * proximity;
+
+    if (!best || score > best.score) best = { target: s, score };
+  }
+
+  return best;
+}
+
 function deliver(creep: Creep): void {
-  // Stick to the chosen target until it is delivered to or becomes invalid.
+  // Hold the chosen target until delivered to or invalidated.
   //
-  // Re-running the whole priority chain every tick lets a flickering condition alternate
-  // the target between two structures on opposite sides of the room, and the hauler walks
-  // back and forth without ever arriving. Observed live: the controller container filled
-  // and drained as upgraders withdrew from it, so a hauler beside it alternated between
-  // that container (east) and a low tower (west), oscillating across three tiles for 100+
-  // ticks while holding a full 800 energy. The runtime anomaly detector caught it.
+  // Scoring alone oscillates: two options scoring near-identically flip rank tick to tick
+  // and the creep walks between them. Observed live before this lease existed - a hauler
+  // alternated between a controller container and a low tower on opposite sides of the
+  // room, crossing three tiles for 100+ ticks holding a full load. Scoring prevents
+  // deadlock; the lease prevents the oscillation scoring introduces. Both are required.
   if (creep.memory.deliverTarget) {
     const cached = Game.getObjectById(creep.memory.deliverTarget);
     if (cached && cached.store && cached.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
@@ -644,101 +743,13 @@ function deliver(creep: Creep): void {
     delete creep.memory.deliverTarget;
   }
 
-  // Priority 0: CRITICAL towers - defense emergency
-  // Towers below 300 can't effectively defend (1 attack = 10 energy, need buffer for combat)
-  // This MUST come before spawn/extensions to prevent tower starvation
-  const emergencyTower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function(s) {
-      return s.structureType === STRUCTURE_TOWER &&
-        s.store[RESOURCE_ENERGY] < 300;
-    },
-  }) as StructureTower | null;
-
-  if (emergencyTower) {
-    deliverTo(creep, emergencyTower, "#ff0000");
+  const best = scoreDeliveryTargets(creep);
+  if (best) {
+    deliverTo(creep, best.target, "#ffffff");
     return;
   }
 
-  // Priority 1: Spawn and Extensions (critical for spawning)
-  // SKIP if a FILLER exists — filler handles this more efficiently from storage
-  if (!roomHasFiller(creep.room)) {
-    const spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-      filter: (s) =>
-        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    });
-
-    if (spawnOrExtension) {
-      deliverTo(creep, spawnOrExtension as AnyStoreStructure, "#ffffff");
-      return;
-    }
-  }
-
-  // Priority 2: Controller container (feeds upgraders).
-  // Deliberately ahead of both non-emergency tower top-up and storage. Every branch
-  // below this one can match indefinitely and starve it: storage almost always has
-  // some free capacity, and a tower parked just under its threshold (e.g. 490 while
-  // slowly repairing fresh ramparts) captures every delivery forever. Either way the
-  // container stays empty and upgraders walk to storage for each 150-energy load.
-  // Genuine defense emergencies are already handled at Priority 0 (<300), and this
-  // container caps at 2000, so the diversion is bounded and brief.
-  // Must exclude source-adjacent containers. selectContainer() collects from source
-  // containers, so if a source sits within 3 of the controller the hauler would withdraw
-  // from that container, flip to DELIVERING, and transfer the load straight back into the
-  // same container - free capacity exists precisely because it just drained it. That is an
-  // infinite ping-pong that never supplies spawn, towers or storage. E47N41's container at
-  // (7,33) is both source-adjacent and range 1 from its controller, so this is a real
-  // layout, not a hypothetical. A source container is a producer; only a dedicated
-  // controller container is a valid delivery target.
-  const sources = creep.room.find(FIND_SOURCES);
-  const controllerContainer = creep.room.controller
-    ? (creep.room.controller.pos.findInRange(FIND_STRUCTURES, 3, {
-        filter: (s) =>
-          s.structureType === STRUCTURE_CONTAINER &&
-          s.store.getFreeCapacity(RESOURCE_ENERGY) > 0 &&
-          !sources.some((src) => src.pos.getRangeTo(s) <= 2),
-      })[0] as StructureContainer | undefined)
-    : undefined;
-
-  if (controllerContainer) {
-    deliverTo(creep, controllerContainer, "#00ffff");
-    return;
-  }
-
-  // Priority 3: Towers below 500 (defensive readiness, not an emergency)
-  const lowTower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function(s) {
-      return s.structureType === STRUCTURE_TOWER &&
-        s.store[RESOURCE_ENERGY] < 500;
-    },
-  }) as StructureTower | null;
-
-  if (lowTower) {
-    deliverTo(creep, lowTower, "#ff0000");
-    return;
-  }
-
-  // Priority 4: Storage
-  // NOTE: Haulers never deliver to links - LINK_FILLER handles link logistics
-  const storage = creep.room.storage;
-  if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-    deliverTo(creep, storage, "#00ff00");
-    return;
-  }
-
-  // Priority 5: Top off towers to 80% (when nothing else needs energy)
-  const towerTopOff = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: (s) =>
-      s.structureType === STRUCTURE_TOWER &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 200, // Below 80%
-  }) as StructureTower | null;
-
-  if (towerTopOff) {
-    deliverTo(creep, towerTopOff, "#ff6600");
-    return;
-  }
-
-  // Nothing to deliver to - wait near spawn but off road
+  // Genuinely nothing accepts energy - wait near spawn but off road.
   const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
   if (spawn && creep.pos.getRangeTo(spawn) > 3) {
     smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#888888" } });
