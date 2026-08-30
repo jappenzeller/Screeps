@@ -40,6 +40,13 @@ const DYING_SOON_REMOTE = CONFIG.SPAWNING.REMOTE_REPLACEMENT_TTL;
 const MAX_SURPLUS_UPGRADERS = 4;
 
 /**
+ * Window over which stored energy counts as income when judging sustainability.
+ * Conservative: 805k of storage becomes ~80 energy/tick of notional income, enough to
+ * fund several upgraders without pretending the bank is infinite.
+ */
+const BANK_DRAWDOWN_TICKS = 10000;
+
+/**
  * Detect if a colony is in "pioneer phase"
  * Pioneer phase = RCL 1, no source containers, no storage
  *
@@ -1138,10 +1145,25 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   // Factor 2: Can we sustain another upgrader?
   // Scale down expected work parts for young colonies (they get tiny bodies)
   const expectedWorkParts = hasStorage ? 15 : 1;
+
+  // Count the bank as income, amortised over a drawdown window.
+  //
+  // Judging sustainability on harvest income alone is right for a young colony and
+  // exactly wrong for a room whose job is spending a bank down. E43N39 held 805,790
+  // energy with ~25/tick of income; adding one upgrader put projected consumption at
+  // ~1.56x income, which returns a sustainability factor of precisely 0. Because the
+  // factors combine as a geometric mean, that zeroed the whole utility - so the room
+  // refused to spawn the upgraders it existed to spawn, and sat at 2 of a target of 5
+  // while a million energy went unspent.
+  //
+  // A bank is a funding source. Treating it as income over BANK_DRAWDOWN_TICKS says
+  // "we can afford this deficit for that long", which is the actual question. Rooms with
+  // empty storage are unaffected: the term is zero for them.
+  const bankIncome = hasStorage ? energy.stored / BANK_DRAWDOWN_TICKS : 0;
   const sustainFactor = sustainabilityUtility(
     energy.upgradeConsumption,
     expectedWorkParts,
-    energy.harvestIncome
+    energy.harvestIncome + bankIncome
   );
 
   // Factor 3: Energy trend (are we gaining or losing?)
