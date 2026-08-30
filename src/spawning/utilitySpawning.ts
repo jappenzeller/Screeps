@@ -46,6 +46,9 @@ const MAX_SURPLUS_UPGRADERS = 4;
  */
 const BANK_DRAWDOWN_TICKS = 10000;
 
+/** Floor on the construction-site scaling factor, so one valuable job is not near-zeroed. */
+const MIN_SITE_FACTOR = 0.6;
+
 /**
  * Detect if a colony is in "pioneer phase"
  * Pioneer phase = RCL 1, no source containers, no storage
@@ -1254,10 +1257,14 @@ function builderUtility(deficit: number, state: ColonyState): number {
 
   // Factor 2: Can we sustain another builder?
   const expectedWorkParts = hasStorage ? 5 : 1;
+  // Same bank-as-income reasoning as upgraderUtility: a room with reserves can fund a
+  // build out of storage, and judging it on harvest income alone stalls exactly the rooms
+  // that can most afford to build.
+  const builderBankIncome = hasStorage ? energy.stored / BANK_DRAWDOWN_TICKS : 0;
   const sustainFactor = sustainabilityUtility(
     energy.builderConsumption,
     expectedWorkParts * 0.5, // 50% uptime estimate
-    energy.harvestIncome
+    energy.harvestIncome + builderBankIncome
   );
 
   // Factor 3: Population diminishing returns
@@ -1271,7 +1278,12 @@ function builderUtility(deficit: number, state: ColonyState): number {
   const firstCreepBonus = 1 / (currentCount + 0.5);
 
   // Factor 5: Site urgency (more sites = higher utility)
-  const siteFactor = Math.min(totalSites / 5, 2);
+  // Work that exists is work that needs doing. Dividing by 5 means a lone construction
+  // site scores 0.2 - a 5x penalty - even when that site is a link or a storage worth
+  // far more than five roads. It blocked E43N39's storage link: BUILDER sat at utility 11
+  // behind UPGRADER at 69 and would never have been reached. Count still scales urgency,
+  // but it no longer near-zeroes a single valuable job.
+  const siteFactor = Math.min(Math.max(totalSites / 5, MIN_SITE_FACTOR), 2);
 
   // Factor 6: Remote container boost (critical infrastructure)
   const containerBoost = state.hasRemoteContainerSite ? 1.5 : 1;
