@@ -18,6 +18,7 @@ import { runCreep } from "./creeps/roles";
 import { ColonyManager } from "./core/ColonyManager";
 import { StatsCollector, EventType } from "./utils/StatsCollector";
 import { AnomalyDetector } from "./utils/AnomalyDetector";
+import { ThresholdMonitor } from "./utils/ThresholdMonitor";
 import { AWSExporter } from "./utils/AWSExporter";
 import { checkAutoSafeMode } from "./defense/AutoSafeMode";
 import { TrafficMonitor } from "./core/TrafficMonitor";
@@ -178,6 +179,9 @@ export function loop(): void {
   if (!shouldSkipNonEssential()) {
     DecisionLogger.export();
   }
+
+  // Summarise which boundary conditions are currently constraining the colony
+  ThresholdMonitor.flush();
 
   // End stats tracking for this tick
   StatsCollector.endTick();

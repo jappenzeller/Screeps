@@ -11,6 +11,7 @@ import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/E
 import { getCreepsByRoom, getHostileCreeps, shouldSkipExport } from "./cpuCache";
 import { DirectiveReader, DirectiveAck } from "../core/DirectiveReader";
 import { AnomalyDetector, Anomaly } from "./AnomalyDetector";
+import { ThresholdMonitor, ThresholdReport } from "./ThresholdMonitor";
 import { getStructureCache, getCreepsForRoom } from "../framework/WorldState";
 
 // Segment allocation for AWS export
@@ -182,6 +183,9 @@ interface ColonyPayload {
   empire: EmpireExport | null;
   military: MilitaryExport | null;
   exportMeta: ExportMeta;
+  // Boundary conditions currently constraining the empire. Empire-wide rather than
+  // per-colony, since the instrumented gates are shared code.
+  thresholds?: ThresholdReport[];
   // AWS Directive System acknowledgments
   directiveAcks?: DirectiveAck[];
 }
@@ -972,6 +976,7 @@ export class AWSExporter {
         totalIntelCount: totalIntelCount,
         complete: true,
       },
+      thresholds: ThresholdMonitor.report().length > 0 ? ThresholdMonitor.report() : undefined,
       directiveAcks: directiveAcks.length > 0 ? directiveAcks : undefined,
     };
 

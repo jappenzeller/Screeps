@@ -15,6 +15,7 @@ import { getMilestones } from "../core/ColonyMilestones";
 import { ColonyManager } from "../core/ColonyManager";
 import { buildBody as buildBodyFromConfig, ROLE_MIN_COST } from "./bodyBuilder";
 import { CONFIG } from "../config";
+import { ThresholdMonitor } from "../utils/ThresholdMonitor";
 import { combineUtilities } from "../utils/smoothing";
 import {
   getEnergyState,
@@ -1102,7 +1103,7 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
         (controllerLink && controllerLink.store[RESOURCE_ENERGY] > 0) ||
         (storage && storage.store[RESOURCE_ENERGY] > 1000);
 
-      if (!hasEnergyAtController) {
+      if (!ThresholdMonitor.gate("upgrader.energyAtController", !!hasEnergyAtController)) {
         return 0; // No point spawning upgrader with no energy to use
       }
     } else {
@@ -1177,6 +1178,10 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
   const currentCount = getEffectiveCount(creeps, "UPGRADER", DYING_SOON_LOCAL);
   const optimal = state.targets.UPGRADER || 2;
   const countFactor = roleCountUtility(currentCount, optimal);
+
+  // The geometric mean means any single zero annihilates the result, so watch the factor
+  // that has actually done that: sustainability read E43N39 as unaffordable for days.
+  ThresholdMonitor.gate("upgrader.sustainable", sustainFactor > 0);
 
   // Combine all factors using geometric mean
   const multiplier = combineUtilities(storageFactor, sustainFactor, rateFactor, countFactor);
@@ -2149,7 +2154,10 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
   // available: a marginally smaller creep now beats a full-size one eighty ticks later.
   // A room that can actually reach full is already at full when this is evaluated, so
   // healthy rooms still get full-size bodies.
-  const nearlyFull = state.energyAvailable >= state.energyCapacity * 0.9;
+  const nearlyFull = ThresholdMonitor.gate(
+    "spawn.nearlyFull",
+    state.energyAvailable >= state.energyCapacity * 0.9
+  );
 
   // In emergency OR hauler bootstrap OR downgrade rescue, build what we can afford NOW
   // Otherwise, build for full capacity (wait for energy)

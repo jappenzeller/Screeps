@@ -8,6 +8,7 @@ import { getSafeModeStatus } from "../defense/AutoSafeMode";
 import { TrafficMonitor } from "../core/TrafficMonitor";
 import { RampartPlanner } from "../structures/RampartPlanner";
 import { AnomalyDetector } from "./AnomalyDetector";
+import { ThresholdMonitor } from "./ThresholdMonitor";
 import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
@@ -83,6 +84,7 @@ remoteBuilders() - Show remote builder status
 remoteSites("W1N1") - Show construction sites in remote rooms
 threats()        - Show hostile creeps and threat levels
 anomalies()      - Show creeps stuck or flapping (runtime invariant checks)
+thresholds()     - Show which boundary conditions are blocking, and how often
 ramparts()       - Show rampart coverage of critical structures
 ramparts("W1N1") - Rampart coverage for specific room
 safemode()       - Show safe mode status and threat assessment
@@ -1036,6 +1038,33 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     }
 
     return "OK";
+  };
+
+  // Boundary conditions and how often they block
+  global.thresholds = () => {
+    const all = ThresholdMonitor.all();
+
+    if (all.length === 0) {
+      return "No instrumented thresholds have been evaluated yet.";
+    }
+
+    console.log("=== Threshold Binding ===");
+    console.log("name                          bind%   evals   longest  now");
+    for (const t of all) {
+      console.log(
+        t.name.padEnd(30) +
+          String(Math.round(t.rate * 100) + "%").padEnd(8) +
+          String(t.evaluated).padEnd(8) +
+          String(t.longestBind).padEnd(9) +
+          String(t.bindingNow)
+      );
+    }
+    console.log(
+      "\nA gate blocking most evaluations, or stuck in a long run, is constraining the" +
+        " colony. One that never blocks is dead weight."
+    );
+
+    return `${all.length} instrumented`;
   };
 
   // Runtime invariant violations detected on live creep behaviour

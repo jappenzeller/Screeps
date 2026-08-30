@@ -127,6 +127,8 @@ declare global {
       lastSnapshotTick: number;
       /** Runtime invariant violations from AnomalyDetector - exported in segment 90. */
       anomalies?: import("./AnomalyDetector").Anomaly[];
+      /** Boundary conditions currently constraining the colony - exported in segment 90. */
+      thresholds?: import("./ThresholdMonitor").ThresholdReport[];
     };
   }
 }
