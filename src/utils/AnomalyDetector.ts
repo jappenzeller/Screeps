@@ -240,8 +240,17 @@ export class AnomalyDetector {
       return `exit toward ${target} is reachable - blocked or oscillating en route`;
     }
 
-    // Empty and going nowhere: is there energy it cannot get to?
-    if (creep.store[RESOURCE_ENERGY] === 0) {
+    // Branch on what the creep is TRYING to do, not on whether it happens to hold
+    // energy. A creep in COLLECTING with a partial load is still seeking a source, and
+    // keying off store alone reported the controller link to an upgrader as a "sink it
+    // is not delivering to" - the exact opposite of its problem. Fall back to the store
+    // heuristic only when there is no state to read.
+    const seeking =
+      creep.memory.state === "COLLECTING" ||
+      creep.memory.state === "HARVESTING" ||
+      (!creep.memory.state && creep.store[RESOURCE_ENERGY] === 0);
+
+    if (seeking) {
       const sources = creep.room.find(FIND_STRUCTURES, {
         filter: (s) =>
           (s.structureType === STRUCTURE_CONTAINER || s.structureType === STRUCTURE_STORAGE) &&
@@ -253,6 +262,10 @@ export class AnomalyDetector {
       return reachable
         ? `energy available and reachable at ${reachable.pos.x},${reachable.pos.y} - not collecting it`
         : "energy present in room but none of it is reachable";
+    }
+
+    if (creep.store[RESOURCE_ENERGY] === 0) {
+      return "working state but carrying nothing - state machine did not reset";
     }
 
     // Carrying energy with nowhere to put it.
