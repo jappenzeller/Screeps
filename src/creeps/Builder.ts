@@ -4,6 +4,9 @@ import { smartMoveTo, moveToRoom } from "../utils/movement";
 /** Range at which the proximity factor halves when scoring builder energy sources. */
 const BUILDER_DISTANCE_HALF_LIFE = 25;
 
+/** Ticks a builder holds a chosen site before re-picking by priority. */
+const BUILD_LEASE_TICKS = 60;
+
 /**
  * Builder: Builds construction sites and repairs structures.
  * Supports building in remote rooms (containers for remote mining).
@@ -234,10 +237,24 @@ function buildOrRepair(creep: Creep): void {
   let site: ConstructionSite | null = null;
 
   if (creep.memory.targetSiteId) {
+    // Expire the choice periodically. The cached site was only ever dropped when it
+    // vanished, so a builder that locked onto a road went on building roads while a
+    // higher-priority site sat untouched - observed live, with a storage link stalled at
+    // 315/5000 while the builder worked roads 25 tiles away. Long enough to make real
+    // progress on one site, short enough to notice a link appearing.
+    const leaseAge = Game.time - (creep.memory._buildLeaseAt || 0);
+    if (leaseAge > BUILD_LEASE_TICKS) {
+      delete creep.memory.targetSiteId;
+      delete creep.memory._buildLeaseAt;
+    }
+  }
+
+  if (creep.memory.targetSiteId) {
     site = Game.getObjectById(creep.memory.targetSiteId);
     if (!site) {
       // Site complete or removed
       delete creep.memory.targetSiteId;
+      delete creep.memory._buildLeaseAt;
       if (creep.memory.taskId) {
         const manager = ColonyManager.getInstance(creep.memory.room);
         manager.completeTask(creep.memory.taskId);
@@ -250,6 +267,7 @@ function buildOrRepair(creep: Creep): void {
     site = findConstructionSite(creep);
     if (site) {
       creep.memory.targetSiteId = site.id;
+      creep.memory._buildLeaseAt = Game.time;
     }
   }
 

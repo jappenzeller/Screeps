@@ -21,6 +21,7 @@ interface CreepMemory {
   // Task system
   taskId?: string;
   targetSiteId?: Id<ConstructionSite>;
+  _buildLeaseAt?: number; // tick the build target was chosen, so it can be re-picked
   state?: CreepState;
   emergency?: boolean;
 
