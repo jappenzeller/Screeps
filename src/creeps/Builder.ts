@@ -1,6 +1,9 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { smartMoveTo, moveToRoom } from "../utils/movement";
 
+/** Range at which the proximity factor halves when scoring builder energy sources. */
+const BUILDER_DISTANCE_HALF_LIFE = 25;
+
 /**
  * Builder: Builds construction sites and repairs structures.
  * Supports building in remote rooms (containers for remote mining).
@@ -304,58 +307,88 @@ function buildOrRepair(creep: Creep): void {
   }
 }
 
-function getEnergy(creep: Creep): void {
-  // Check current room for energy sources first (works in home or remote)
+/**
+ * Score every energy source and take the best.
+ *
+ * Replaces a five-branch chain whose first test was `storage.store > 0` - any storage
+ * with a single unit of energy captured the builder and short-circuited containers,
+ * dropped energy and harvesting, however far away that storage was. Scoring weighs all
+ * of them together, so a nearly-empty storage across the room loses to a full container
+ * underfoot instead of winning by position in a list.
+ *
+ * Direct harvest stays in the set at a low but non-zero weight: a builder that can always
+ * fall back to a regenerating source can never be stranded, which is why Builder was
+ * exempt from the exact-maximum deadlock that hit Hauler and RemoteBuilder.
+ */
+function scoreBuilderSources(
+  creep: Creep
+): { target: RoomObject; kind: "withdraw" | "pickup" | "harvest"; score: number } | null {
+  let best: { target: RoomObject; kind: "withdraw" | "pickup" | "harvest"; score: number } | null = null;
+  const need = creep.store.getFreeCapacity(RESOURCE_ENERGY) || 1;
 
-  // Priority 1: Storage (home room only)
+  const consider = (
+    target: RoomObject,
+    kind: "withdraw" | "pickup" | "harvest",
+    base: number,
+    available: number
+  ): void => {
+    if (available <= 0) return;
+    const supply = Math.min(available / need, 1);
+    const proximity = 1 / (1 + creep.pos.getRangeTo(target) / BUILDER_DISTANCE_HALF_LIFE);
+    const score = base * (0.4 + 0.6 * supply) * proximity;
+    if (!best || score > best.score) best = { target, kind, score };
+  };
+
   const storage = creep.room.storage;
-  if (storage && storage.store[RESOURCE_ENERGY] > 0) {
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
+  if (storage) consider(storage, "withdraw", 80, storage.store[RESOURCE_ENERGY]);
 
-  // Priority 2: Any container with energy (works in remote rooms too)
-  const container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-    filter: (s) => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 50,
-  }) as StructureContainer | null;
+  const containers = creep.room.find(FIND_STRUCTURES, {
+    filter: (s) =>
+      s.structureType === STRUCTURE_CONTAINER &&
+      (s as StructureContainer).store[RESOURCE_ENERGY] > 50,
+  }) as StructureContainer[];
+  for (const c of containers) consider(c, "withdraw", 70, c.store[RESOURCE_ENERGY]);
 
-  if (container) {
-    if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Priority 3: Dropped energy
-  const droppedEnergy = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
+  // Decays if left, so collecting it is strictly better than ignoring it.
+  const dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
     filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
   });
+  for (const d of dropped) consider(d, "pickup", 75, d.amount);
 
-  if (droppedEnergy) {
-    if (creep.pickup(droppedEnergy) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, droppedEnergy, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+  // Only harvest at home - a builder in a remote should head back rather than mine there.
+  if (creep.room.name === creep.memory.room) {
+    const source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
+    if (source) consider(source, "harvest", 25, source.energy);
+  }
+
+  return best;
+}
+
+function getEnergy(creep: Creep): void {
+  const best = scoreBuilderSources(creep);
+
+  if (best) {
+    let result: ScreepsReturnCode;
+    if (best.kind === "withdraw") {
+      result = creep.withdraw(best.target as AnyStoreStructure, RESOURCE_ENERGY);
+    } else if (best.kind === "pickup") {
+      result = creep.pickup(best.target as Resource);
+    } else {
+      result = creep.harvest(best.target as Source);
+    }
+
+    if (result === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, best.target, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
     }
     return;
   }
 
-  // Priority 4: If in remote room with no local energy, return home
+  // Nothing here holds energy. In a remote that means going home; at home it means wait.
   if (creep.room.name !== creep.memory.room) {
     moveToRoom(creep, creep.memory.room, "#ffaa00");
     return;
   }
 
-  // Priority 5: Harvest from source as last resort (home room only)
-  const source = creep.pos.findClosestByPath(FIND_SOURCES_ACTIVE);
-  if (source) {
-    if (creep.harvest(source) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // No energy available - wait near spawn but off road
   const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS);
   if (spawn && creep.pos.getRangeTo(spawn) > 3) {
     smartMoveTo(creep, spawn, { visualizePathStyle: { stroke: "#888888" } });
