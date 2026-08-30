@@ -1,6 +1,13 @@
 import { smartMoveTo } from "../utils/movement";
 
 /**
+ * Range at which the proximity factor halves when scoring energy sources. Large enough
+ * that supply dominates distance across a room, small enough to break ties toward the
+ * nearer of two comparable sources.
+ */
+const DISTANCE_HALF_LIFE = 25;
+
+/**
  * Upgrader: Takes energy and upgrades the room controller.
  * Simple implementation - no external dependencies.
  */
@@ -129,107 +136,106 @@ function upgrade(creep: Creep): void {
   }
 }
 
+/**
+ * Score every energy source and take the best.
+ *
+ * Replaces a six-branch priority chain. That chain had already produced two separate
+ * deadlocks: the controller link was treated as an exclusive source, so an empty link
+ * stranded upgraders beside a full container; and each branch returned unconditionally,
+ * so anything matching early starved everything after it.
+ *
+ * Scoring cannot strand a creep, because every source is weighed on the same scale and
+ * an empty one simply scores zero rather than short-circuiting the rest. Weights preserve
+ * the intent of the old order - the link is cheapest to draw from, a controller container
+ * next, storage is worth a walk, dropped energy decays so it is worth collecting - while
+ * amount and distance decide between them.
+ */
+function scoreEnergySources(creep: Creep): { target: RoomObject; kind: "withdraw" | "pickup" | "harvest"; score: number } | null {
+  const controller = creep.room.controller;
+  if (!controller) return null;
+
+  let best: { target: RoomObject; kind: "withdraw" | "pickup" | "harvest"; score: number } | null = null;
+  const need = creep.store.getFreeCapacity(RESOURCE_ENERGY) || 1;
+
+  const consider = (
+    target: RoomObject,
+    kind: "withdraw" | "pickup" | "harvest",
+    base: number,
+    available: number
+  ): void => {
+    if (available <= 0) return;
+    // Enough to be worth the trip, capped so a huge store does not beat a closer one
+    // purely on size.
+    const supply = Math.min(available / need, 1);
+    const proximity = 1 / (1 + creep.pos.getRangeTo(target) / DISTANCE_HALF_LIFE);
+    const score = base * (0.4 + 0.6 * supply) * proximity;
+    if (!best || score > best.score) best = { target, kind, score };
+  };
+
+  // Controller link - cheapest energy in the room when supplied.
+  const link = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
+    filter: (s) => s.structureType === STRUCTURE_LINK,
+  })[0] as StructureLink | undefined;
+  if (link) consider(link, "withdraw", 100, link.store[RESOURCE_ENERGY]);
+
+  // Containers - controller-adjacent ones are staged for exactly this.
+  const containers = creep.room.find(FIND_STRUCTURES, {
+    filter: (s) =>
+      s.structureType === STRUCTURE_CONTAINER &&
+      (s as StructureContainer).store[RESOURCE_ENERGY] > 0,
+  }) as StructureContainer[];
+  for (const c of containers) {
+    const nearController = c.pos.getRangeTo(controller) <= 4;
+    consider(c, "withdraw", nearController ? 85 : 40, c.store[RESOURCE_ENERGY]);
+  }
+
+  // Storage - always worth the walk when nothing closer has energy.
+  const storage = creep.room.storage;
+  if (storage) consider(storage, "withdraw", 50, storage.store[RESOURCE_ENERGY]);
+
+  // Dropped energy decays, so collecting it is strictly better than leaving it.
+  const dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
+    filter: (rsc) => rsc.resourceType === RESOURCE_ENERGY && rsc.amount >= 25,
+  });
+  for (const d of dropped) consider(d, "pickup", 60, d.amount);
+
+  // Direct harvest - last resort, but never zero, so a creep is never left with nothing.
+  const source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
+  if (source) consider(source, "harvest", 15, source.energy);
+
+  return best;
+}
+
 function getEnergy(creep: Creep): void {
   const controller = creep.room.controller;
   if (!controller) return;
 
-  // RCL 5+: prefer the controller link - it is by far the cheapest source when supplied.
-  let controllerLink: StructureLink | undefined;
-  if (controller.level >= 5) {
-    controllerLink = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
-      filter: (s) => s.structureType === STRUCTURE_LINK,
-    })[0] as StructureLink | undefined;
+  const best = scoreEnergySources(creep);
 
-    if (controllerLink && controllerLink.store[RESOURCE_ENERGY] >= 100) {
-      if (creep.withdraw(controllerLink, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, controllerLink, { visualizePathStyle: { stroke: "#00ffff" }, reusePath: 5 });
-      }
-      return;
+  if (best) {
+    let result: ScreepsReturnCode;
+    if (best.kind === "withdraw") {
+      result = creep.withdraw(best.target as AnyStoreStructure, RESOURCE_ENERGY);
+    } else if (best.kind === "pickup") {
+      result = creep.pickup(best.target as Resource);
+    } else {
+      result = creep.harvest(best.target as Source);
     }
-  }
 
-  // Link empty or absent: fall through to the other sources rather than idling next
-  // to it. Treating the link as exclusive deadlocks the room the moment the link
-  // stops being filled - upgraders park beside an empty link indefinitely while a
-  // full container sits two tiles away, the controller earns nothing, and the
-  // downgrade timer runs down. Waiting is only correct when nothing else has energy.
-
-  // Priority 1: Container near controller
-  const container = controller.pos.findInRange(FIND_STRUCTURES, 4, {
-    filter: (s) => s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 0,
-  })[0] as StructureContainer | undefined;
-
-  if (container) {
-    if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    if (result === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, best.target, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
     }
     return;
   }
 
-  // Priority 2: Storage (only if no link and no container)
-  const storage = creep.room.storage;
-  if (storage && storage.store[RESOURCE_ENERGY] > 0) {
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
+  // Nothing in the room holds energy. Hold beside the controller link if there is one, so
+  // the next transfer is picked up immediately.
+  const link = controller.pos.findInRange(FIND_MY_STRUCTURES, 4, {
+    filter: (s) => s.structureType === STRUCTURE_LINK,
+  })[0] as StructureLink | undefined;
 
-  // Priority 3: Dropped energy near controller
-  var droppedEnergy = controller.pos.findInRange(FIND_DROPPED_RESOURCES, 5, {
-    filter: function(r) { return r.resourceType === RESOURCE_ENERGY && r.amount >= 50; },
-  })[0];
-
-  if (droppedEnergy) {
-    if (creep.pickup(droppedEnergy) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, droppedEnergy, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // === FALLBACK for integrating colonies with no controller infrastructure ===
-
-  // Priority 4: Any container in room (source containers)
-  var anyContainer = creep.room.find(FIND_STRUCTURES, {
-    filter: function(s) {
-      return s.structureType === STRUCTURE_CONTAINER &&
-        (s as StructureContainer).store[RESOURCE_ENERGY] > 0;
-    },
-  })[0] as StructureContainer | undefined;
-
-  if (anyContainer) {
-    if (creep.withdraw(anyContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, anyContainer, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Priority 5: Dropped energy anywhere in room
-  var anyDropped = creep.pos.findClosestByRange(FIND_DROPPED_RESOURCES, {
-    filter: function(r) { return r.resourceType === RESOURCE_ENERGY && r.amount >= 30; },
-  });
-
-  if (anyDropped) {
-    if (creep.pickup(anyDropped) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, anyDropped, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Priority 6: Direct harvest from source (last resort for integrating colonies)
-  var source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
-  if (source) {
-    var harvestResult = creep.harvest(source);
-    if (harvestResult === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 10 });
-    }
-    return;
-  }
-
-  // Nothing in the room has energy. Now waiting is genuinely correct - hold beside the
-  // controller link if there is one, so the next link transfer is picked up instantly.
-  const holdTarget = controllerLink || controller;
-  const holdRange = controllerLink ? 1 : 3;
+  const holdTarget: RoomObject = link || controller;
+  const holdRange = link ? 1 : 3;
 
   if (creep.pos.getRangeTo(holdTarget) > holdRange) {
     smartMoveTo(creep, holdTarget, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
