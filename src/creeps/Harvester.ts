@@ -1,5 +1,9 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { smartMoveTo } from "../utils/movement";
+import { ThresholdMonitor } from "../utils/ThresholdMonitor";
+
+/** Stored energy above which a room can afford to route harvest into links. */
+const LINK_BANK_THRESHOLD = 50000;
 import { shouldEmergencyRenew } from "../managers/RenewalManager";
 
 /**
@@ -203,7 +207,19 @@ function runStaticMiner(creep: Creep, source: Source, container: StructureContai
   var spawnEnergyRatio = room.energyCapacityAvailable > 0
     ? room.energyAvailable / room.energyCapacityAvailable
     : 1;
-  var useLink = spawnEnergyRatio >= 0.8;
+  // Divert harvest into the source link when the colony can spare it. The ratio gate
+  // alone is a cliff: E43N39 sat at 1,430/1,800 - 79.4% against a 0.8 threshold - so
+  // harvesters never once fed the link and the entire link network stayed dark while a
+  // storage link had just been built for it. A room with a large bank is not spawn-
+  // starved in any meaningful sense; its filler refills extensions from storage
+  // regardless, so sending fresh harvest to the controller is the better use of it.
+  var storageRich = creep.room.storage
+    ? creep.room.storage.store[RESOURCE_ENERGY] > LINK_BANK_THRESHOLD
+    : false;
+  var useLink = ThresholdMonitor.gate(
+    "harvester.useLink",
+    spawnEnergyRatio >= 0.8 || storageRich
+  );
 
   // Check for source link (RCL 5+) - only use when spawn energy is healthy
   var sourceLink: StructureLink | undefined = undefined;
