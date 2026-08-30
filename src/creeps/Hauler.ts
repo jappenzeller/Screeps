@@ -65,6 +65,18 @@ const TOWER_READY = 500;
 const DISTANCE_HALF_LIFE = 25;
 
 /**
+ * Ticks a delivery lease is held before it is released and the target re-scored.
+ *
+ * The lease exists to stop scoring from oscillating, but an unbounded lease is the
+ * "commitment without expiry" fault in its own right - the same shape as _safeWaypoint,
+ * which pursued an unreachable room forever because it was only ever cleared on arrival.
+ * Observed here: a hauler leased to a tower 32 path-steps away kept walking to it while
+ * nearer sinks went unserved. Long enough to complete a cross-room delivery, short enough
+ * that a bad or stale choice cannot become permanent.
+ */
+const DELIVER_LEASE_TICKS = 50;
+
+/**
  * Select the best container to collect from based on energy, distance, and competition.
  * Called when transitioning to COLLECTING state.
  */
@@ -497,6 +509,7 @@ export function runHauler(creep: Creep): void {
     const target = selectContainer(creep);
     creep.memory.targetContainer = target?.id || null;
     delete creep.memory.deliverTarget; // stale once we are collecting again
+    delete creep.memory._deliverLeaseAt;
     creep.say("GET");
   }
 
@@ -631,6 +644,7 @@ function collect(creep: Creep): void {
 /** Deliver to a chosen target and remember it, so the choice survives to the next tick. */
 function deliverTo(creep: Creep, target: AnyStoreStructure, stroke: string): void {
   creep.memory.deliverTarget = target.id;
+  creep.memory._deliverLeaseAt = Game.time;
   if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
     smartMoveTo(creep, target, { visualizePathStyle: { stroke: stroke }, reusePath: 5 });
   }
@@ -733,14 +747,23 @@ function deliver(creep: Creep): void {
   // room, crossing three tiles for 100+ ticks holding a full load. Scoring prevents
   // deadlock; the lease prevents the oscillation scoring introduces. Both are required.
   if (creep.memory.deliverTarget) {
+    const leaseAge = Game.time - (creep.memory._deliverLeaseAt || 0);
     const cached = Game.getObjectById(creep.memory.deliverTarget);
-    if (cached && cached.store && cached.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
+
+    if (
+      leaseAge < DELIVER_LEASE_TICKS &&
+      cached &&
+      cached.store &&
+      cached.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+    ) {
       if (creep.transfer(cached, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
         smartMoveTo(creep, cached, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
       }
       return;
     }
+
     delete creep.memory.deliverTarget;
+    delete creep.memory._deliverLeaseAt;
   }
 
   const best = scoreDeliveryTargets(creep);

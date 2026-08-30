@@ -298,10 +298,25 @@ export class AnomalyDetector {
     );
   }
 
-  /** Drop findings for creeps that no longer exist. Called from memory cleanup. */
+  /**
+   * Drop findings that are no longer true. Called from memory cleanup.
+   *
+   * Dead creeps go, obviously - but so do creeps that have since recovered. Keeping a
+   * finding until its creep dies makes the list a mix of live faults and history, which
+   * is actively misleading: a hauler that stalled once and resolved 2000 ticks ago should
+   * not still be reported as stuck. Energy differing from the value captured at detection
+   * is proof the creep started moving resources again.
+   */
   static prune(): void {
     if (!Memory.stats || !Memory.stats.anomalies) return;
-    Memory.stats.anomalies = Memory.stats.anomalies.filter((a) => !!Game.creeps[a.creep]);
+
+    Memory.stats.anomalies = Memory.stats.anomalies.filter((a) => {
+      const creep = Game.creeps[a.creep];
+      if (!creep) return false;
+      // Recovered: it is shifting energy again, so whatever blocked it has cleared.
+      if (creep.store[RESOURCE_ENERGY] !== a.energy) return false;
+      return true;
+    });
   }
 
   /** Current findings, newest first. */

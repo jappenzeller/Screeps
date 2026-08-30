@@ -53,6 +53,7 @@ interface CreepMemory {
 
   // Remote hauler delivery target cache (cleared on state change)
   deliverTarget?: Id<AnyStoreStructure>;
+  _deliverLeaseAt?: number; // tick the delivery lease was taken, so it can expire
 
   // Harvester/defender renewal state
   renewing?: boolean;
