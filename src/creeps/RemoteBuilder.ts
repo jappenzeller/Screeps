@@ -24,11 +24,56 @@ export function runRemoteBuilder(creep: Creep): void {
     mem.working = true;
   }
 
+  // Release on a partial load when the supply has run dry.
+  //
+  // Waiting for a full load is only safe when the supply is unbounded. Builder can fall
+  // back to harvest(source), which always refills, so its identical gate is harmless.
+  // collectEnergy() here draws from storage, containers and dropped energy only - all of
+  // which can be empty at once - so a remote builder that fills partway then finds
+  // nothing left never reaches full and never starts building. The anomaly detector
+  // flagged exactly this as STUCK in E47N41.
+  if (
+    !mem.working &&
+    creep.store[RESOURCE_ENERGY] >= creep.store.getCapacity() * PARTIAL_LOAD_FRACTION &&
+    !hasCollectableEnergy(creep)
+  ) {
+    mem.working = true;
+    creep.say("PART");
+  }
+
   if (mem.working) {
     buildInRemote(creep, mem);
   } else {
     collectEnergy(creep, mem);
   }
+}
+
+/** Ratio of capacity at which a partial load is worth building with. */
+const PARTIAL_LOAD_FRACTION = 0.5;
+
+/**
+ * Whether collectEnergy() would find anything. Mirrors its three sources and their
+ * thresholds exactly, so the release check below agrees with what collection can see -
+ * if these ever diverge the creep will either strand or thrash.
+ */
+function hasCollectableEnergy(creep: Creep): boolean {
+  const mem = creep.memory as RemoteBuilderMemory;
+  const home = Game.rooms[mem.room];
+  if (!home) return true; // no vision - assume energy exists rather than abandon the trip
+
+  if (home.storage && home.storage.store[RESOURCE_ENERGY] > 1000) return true;
+
+  const container = home.find(FIND_STRUCTURES, {
+    filter: (s) =>
+      s.structureType === STRUCTURE_CONTAINER &&
+      (s as StructureContainer).store[RESOURCE_ENERGY] > 200,
+  })[0];
+  if (container) return true;
+
+  const dropped = home.find(FIND_DROPPED_RESOURCES, {
+    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount > 50,
+  })[0];
+  return !!dropped;
 }
 
 /**
