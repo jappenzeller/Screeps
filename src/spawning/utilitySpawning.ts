@@ -50,6 +50,12 @@ const BANK_DRAWDOWN_TICKS = 10000;
 /** Floor on the construction-site scaling factor, so one valuable job is not near-zeroed. */
 const MIN_SITE_FACTOR = 0.6;
 
+/** Stored energy above which a room is limited by refill throughput, not by energy. */
+const BANK_RICH_THRESHOLD = 50000;
+
+/** Minimum fill fraction to build from, so a rich room still gets a sensible body. */
+const MIN_BODY_FILL = 0.6;
+
 /**
  * Detect if a colony is in "pioneer phase"
  * Pioneer phase = RCL 1, no source containers, no storage
@@ -2159,10 +2165,25 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
     state.energyAvailable >= state.energyCapacity * 0.9
   );
 
+  // A room with a bank is limited by how fast it can refill extensions, not by energy.
+  // Sizing bodies to full capacity there means the most expensive role can never spawn:
+  // cheaper creeps drain the pool the moment they become affordable, so it never reaches
+  // the top. Measured on E43N39 - spawn.nearlyFull bound on 100% of 1,077 evaluations,
+  // 238 ticks unbroken, while a 1,400 upgrader repeatedly beat an 1,800 builder to the
+  // energy and a needed link sat unbuilt at 0/5000.
+  //
+  // Above BANK_RICH the constraint is throughput, so build with what is present. The
+  // floor keeps bodies reasonable rather than spawning runts at any fill level.
+  const bankRich = state.energyStored > BANK_RICH_THRESHOLD;
+  const throughputLimited = ThresholdMonitor.gate(
+    "spawn.throughputLimited",
+    !(bankRich && state.energyAvailable >= state.energyCapacity * MIN_BODY_FILL)
+  );
+
   // In emergency OR hauler bootstrap OR downgrade rescue, build what we can afford NOW
   // Otherwise, build for full capacity (wait for energy)
   const energy =
-    isEmergency || isHaulerBootstrap || isDowngradeRescue || nearlyFull
+    isEmergency || isHaulerBootstrap || isDowngradeRescue || nearlyFull || !throughputLimited
       ? state.energyAvailable
       : state.energyCapacity;
 
