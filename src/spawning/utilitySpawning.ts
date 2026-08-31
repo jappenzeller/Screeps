@@ -233,6 +233,7 @@ interface ColonyState {
 
   // Work to do
   constructionSites: number; // Total including remote + assumed sites
+  observedSites: number; // Sites actually seen, excluding assumptions about blind rooms
   hasRemoteContainerSite: boolean; // Critical infrastructure flag
   remoteRooms: string[];
 
@@ -630,12 +631,14 @@ function getColonyState(room: Room): ColonyState {
 
   // Count construction sites (home + remote + assumed for non-visible remotes)
   let constructionSites = room.find(FIND_CONSTRUCTION_SITES).length;
+  let observedSites = constructionSites;
   let hasRemoteContainerSite = false;
   for (const remoteName of remoteRooms) {
     const remoteRoom = Game.rooms[remoteName];
     if (remoteRoom) {
       const remoteSites = remoteRoom.find(FIND_CONSTRUCTION_SITES);
       constructionSites += remoteSites.length;
+      observedSites += remoteSites.length;
       if (remoteSites.some((s) => s.structureType === STRUCTURE_CONTAINER)) {
         hasRemoteContainerSite = true;
       }
@@ -664,6 +667,7 @@ function getColonyState(room: Room): ColonyState {
     homeThreats: room.find(FIND_HOSTILE_CREEPS).length,
     remoteThreatsByRoom,
     constructionSites,
+    observedSites,
     hasRemoteContainerSite,
     remoteRooms,
     dyingSoon,
@@ -1294,7 +1298,15 @@ function builderUtility(deficit: number, state: ColonyState): number {
   // far more than five roads. It blocked E43N39's storage link: BUILDER sat at utility 11
   // behind UPGRADER at 69 and would never have been reached. Count still scales urgency,
   // but it no longer near-zeroes a single valuable job.
-  const siteFactor = Math.min(Math.max(totalSites / 5, MIN_SITE_FACTOR), 2);
+  // The floor exists so one genuinely valuable job (a link, a storage) is not scored at
+  // 0.2 - it was never meant to prop up a guess. Sites in rooms we cannot see are
+  // assumed, not observed, and E43N39 had zero real sites while two fabricated ones made
+  // BUILDER the top candidate at 1,800 energy, outranking the upgraders that were the
+  // room's entire purpose. Apply the floor only when something was actually seen.
+  const sawSomething = state.observedSites > 0;
+  const siteFactor = sawSomething
+    ? Math.min(Math.max(totalSites / 5, MIN_SITE_FACTOR), 2)
+    : Math.min(totalSites / 5, 2);
 
   // Factor 6: Remote container boost (critical infrastructure)
   const containerBoost = state.hasRemoteContainerSite ? 1.5 : 1;
