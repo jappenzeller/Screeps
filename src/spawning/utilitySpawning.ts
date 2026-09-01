@@ -2157,6 +2157,8 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
     harvesterCount: state.counts.HARVESTER || 0,
     haulerCount: state.counts.HAULER || 0,
     downgradeRisk: isDowngradeRisk(state.room),
+    sourceCount: state.room.find(FIND_SOURCES).length,
+    stalledTicks: state.room.memory._spawnStall || 0,
   });
 
   // Kept as instrumentation only - these gates no longer decide anything here, but their

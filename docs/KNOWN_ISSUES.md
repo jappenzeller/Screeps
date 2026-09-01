@@ -1,6 +1,33 @@
 # Known Issues
 
 
+## Capacity-sized bodies deadlocked a starved room (FIXED)
+
+**Symptom:** E47N41 (RCL 7, `energyCapacityAvailable` 4600) ran on a **single 200-energy
+harvester** while both spawns sat idle, `energyAvailable` frozen at 617 across ~90 ticks,
+and its two sources sat full at 3,000 and 1,740.
+
+**Cause:** `resolveSpawnEnergyBudget()` — added earlier the same session to fix the
+framework's spawn failures — falls through to sizing bodies at `energyCapacity` when a
+room is neither nearly-full nor bank-rich. Waiting for capacity is only rational if
+capacity is reachable. A room whose income cannot fill its extensions never reaches it, so
+it built nothing, so income never recovered. `ERR_NOT_ENOUGH_ENERGY` was swallowed without
+even a log line, so the deadlock was invisible.
+
+This is the "waiting for perfect blocks good" rule, reintroduced by the fix for a
+different instance of it.
+
+**Fix:** two release conditions on the capacity gate.
+- **Understaffed:** fewer harvesters than sources means the room is not extracting what it
+  owns. Survival beats optimality — build what is affordable now.
+- **Stalled:** `spawnCreeps` now counts consecutive `ERR_NOT_ENOUGH_ENERGY` refusals into
+  `room.memory._spawnStall` and resets on success. Past `SPAWN_STALL_LIMIT` (150) the
+  budget drops to available. This is outcome-driven and independent of *why* the room is
+  poor.
+
+**Verified:** E47N41 went from 1 harvester to 2 within ~100 ticks of deploy.
+
+
 ## Haulers refused to fill spawn and extensions whenever a filler existed (FIXED)
 
 **Symptom:** E43N39 held 586,590 energy in storage with 19 of 30 extensions empty, 11

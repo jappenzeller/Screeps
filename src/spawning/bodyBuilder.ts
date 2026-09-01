@@ -244,6 +244,10 @@ export interface SpawnBudgetInputs {
   haulerCount: number;
   /** True when the controller is close enough to downgrade to justify a small creep now. */
   downgradeRisk: boolean;
+  /** Sources in the room. Fewer harvesters than sources means income is not maxed. */
+  sourceCount: number;
+  /** Consecutive ticks a spawn was attempted and refused for lack of energy. */
+  stalledTicks: number;
 }
 
 /** Stored energy above which a room is limited by refill throughput, not by energy. */
@@ -251,6 +255,14 @@ export const BANK_RICH_THRESHOLD = 50000;
 
 /** Minimum fill fraction to build from, so a rich room still gets a sensible body. */
 export const MIN_BODY_FILL = 0.6;
+
+/**
+ * Consecutive energy-refused spawn attempts after which we stop waiting for capacity.
+ *
+ * Long enough that a normal refill (haulers topping up extensions) is never interrupted,
+ * short enough that a genuine deadlock is broken in well under a creep's lifetime.
+ */
+export const SPAWN_STALL_LIMIT = 150;
 
 export function resolveSpawnEnergyBudget(i: SpawnBudgetInputs): {
   energy: number;
@@ -273,6 +285,27 @@ export function resolveSpawnEnergyBudget(i: SpawnBudgetInputs): {
   }
   if (i.energyStored > BANK_RICH_THRESHOLD && i.energyAvailable >= i.energyCapacity * MIN_BODY_FILL) {
     return { energy: i.energyAvailable, reason: "throughput limited" };
+  }
+
+  // Waiting for capacity is only rational if capacity is reachable, and a room whose
+  // income cannot fill its extensions will never reach it. E47N41 (RCL 7, capacity 4600)
+  // was left with a single 200-energy harvester while both spawns sat idle at 617
+  // available and its two sources sat full at 3,000 and 1,740: it could not afford a
+  // capacity-sized body, so it built nothing, so income never recovered. A textbook
+  // deadlock, and one this function introduced.
+  //
+  // Fewer harvesters than sources means the room is not extracting what it owns. Survival
+  // beats optimality: build what is affordable now.
+  if (i.harvesterCount < i.sourceCount) {
+    return { energy: i.energyAvailable, reason: "understaffed" };
+  }
+
+  // General backstop, independent of why the room is poor: if we have actually tried to
+  // spawn and been refused for energy this many consecutive ticks, the target is not
+  // being approached and waiting longer is not a strategy. Every gate that blocks
+  // progress needs a release; this is the one for capacity-sized bodies.
+  if (i.stalledTicks >= SPAWN_STALL_LIMIT) {
+    return { energy: i.energyAvailable, reason: "stalled" };
   }
 
   return { energy: i.energyCapacity, reason: "wait for capacity" };

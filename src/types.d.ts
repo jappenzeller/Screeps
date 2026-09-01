@@ -84,6 +84,8 @@ interface RoomTask {
 // Extend RoomMemory from @types/screeps
 // Note: Intel data (hostiles, lastScan, controller, hasKeepers) lives in Memory.intel[roomName]
 interface RoomMemory {
+  /** Consecutive ticks a spawn was attempted and refused for lack of energy. */
+  _spawnStall?: number;
   sources?: Id<Source>[];
   containerPlan?: ContainerPlan;
   tasks?: RoomTask[];

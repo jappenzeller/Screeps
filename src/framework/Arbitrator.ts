@@ -350,6 +350,8 @@ export class ActionExecutor {
       harvesterCount: counts.HARVESTER,
       haulerCount: counts.HAULER,
       downgradeRisk,
+      sourceCount: room.find(FIND_SOURCES).length,
+      stalledTicks: room.memory._spawnStall || 0,
     });
 
     const body = buildBody(action.role, budget.energy);
