@@ -353,6 +353,39 @@ Clear memory at path.
 clearMemory("rooms.W1N1.tasks")
 ```
 
+## Framework Migration Commands
+
+The declarative framework is being migrated in one domain at a time. A domain in *shadow*
+is scored every tick but never executed, so its choices can be compared with the incumbent
+on live data. See `docs/ARCHITECTURE.md`, "Framework migration".
+
+### `fxShadow()`
+
+Compares the shadow `SpawnEvaluator` with the live `utilitySpawning`, and shows what the
+framework's executors actually did.
+
+```
+=== Framework spawn shadow (2400 ticks) ===
+  agree 11 / disagree 2 / shadow-silent 1
+  agreement: 79% over 14 spawns
+  E43N39 proposed HAULER:1830 UPGRADER:412 BUILDER:158
+  recent mismatches:
+    T31840219 E43N39 shadow=UPGRADER actual=HAULER
+  executor:
+    remotes  ok:14 fail:0 wait:0
+```
+
+- **agree / disagree** — the two systems' choice at the moment a creep was actually spawned.
+- **shadow-silent** — the incumbent spawned while the shadow proposed nothing. Counted, not
+  ignored: this is how a framework in charge would let a role lapse.
+- **wait** — an action correctly declined (cannot afford the body yet) rather than attempted
+  and failed. Kept separate so `fail` stays a real defect signal.
+
+### `resetShadow()`
+
+Clears the comparison window and starts counting from the current tick. Use after changing
+evaluator weights so old disagreements do not mask new agreement.
+
 ## AWS Commands
 
 ### awsExport()

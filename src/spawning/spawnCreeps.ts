@@ -11,6 +11,7 @@
 
 import { getSpawnCandidate } from "./utilitySpawning";
 import { StatsCollector } from "../utils/StatsCollector";
+import { recordActualSpawn } from "../framework/ShadowSpawn";
 import * as DuoManager from "../combat/DuoManager";
 import * as MilitaryManager from "../military/MilitaryManager";
 import * as WaveCoordinator from "../military/WaveCoordinator";
@@ -35,6 +36,9 @@ export function spawnCreeps(room: Room): void {
 
   const result = spawn.spawnCreep(candidate.body, name, { memory });
   if (result === OK) {
+    // Compare the incumbent's choice with the framework SpawnEvaluator's shadow proposal.
+    recordActualSpawn(room.name, candidate.role);
+
     const targetInfo = candidate.memory.targetRoom ? ` -> ${candidate.memory.targetRoom}` : "";
     console.log(
       `[${room.name}] Spawning ${candidate.role}${targetInfo} (utility: ${candidate.utility.toFixed(1)})`

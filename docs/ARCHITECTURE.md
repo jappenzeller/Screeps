@@ -217,9 +217,43 @@ was not idle by design: it runs **before** `spawnCreeps` and failed only because
 cleared that bar it would have spawned a creep of its own choosing ahead of the real
 spawner. The military `attack` path likewise creates a real `MilitaryManager` campaign.
 
-Only `RemoteMiningEvaluator` is registered. The other three evaluators remain on disk —
-they are a reasonable design that was never finished, and re-registering one is a single
-line if a domain is ever genuinely migrated.
+### Framework migration
+
+The framework is not a dead end to be deleted. Git history shows it is the **deliberate
+successor** to the managers — the managers landed Jan 16/23, the framework Feb 14 with the
+commit message *"Score everything, gate nothing"*, which is the same conclusion the
+boundary-condition work reached independently. The split architecture is an unfinished
+migration, not an accident, and the resolution is to finish it rather than to pick a side.
+
+Migration proceeds one domain at a time, and each domain passes through three states:
+
+| State | Registered with | Executes? |
+|---|---|---|
+| Dormant | not registered | no |
+| **Shadow** | `registerShadow()` | no — scored and compared only |
+| Live | `register()` | yes |
+
+**Spawning is currently in SHADOW.** `SpawnEvaluator` is scored every tick against live
+state; its actions are split out in `runFramework()` and recorded by
+`src/framework/ShadowSpawn.ts` instead of being executed. When `utilitySpawning` actually
+spawns, the two choices are compared. Read the result with `fxShadow()`:
+
+```
+=== Framework spawn shadow (2400 ticks) ===
+  agree 11 / disagree 2 / shadow-silent 1
+  agreement: 79% over 14 spawns
+```
+
+Promotion to `register()` is justified by agreement on live data, not by code review — the
+spawn arm read correctly and still failed 191 times out of 191.
+
+**Fixed as part of this:** `executeSpawn()` sized bodies to `energyCapacityAvailable`,
+which is why it never once spawned — E43N39 does not reach capacity. Both spawn paths now
+call the shared `resolveSpawnEnergyBudget()` in `bodyBuilder.ts`, so they cannot disagree
+about body size. Spawns declined because the room genuinely cannot afford the body are now
+counted as `wait`, not `fail`, so the failure count stays a real defect signal.
+
+`ConstructionEvaluator` and `MilitaryEvaluator` remain dormant on disk, next in the queue.
 
 **One owner per domain:**
 

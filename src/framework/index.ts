@@ -55,6 +55,8 @@ export {
 } from "./Telemetry";
 
 import { captureWorldState, getWorldState } from "./WorldState";
+import { recordShadowProposals } from "./ShadowSpawn";
+import type { FrameworkAction } from "./types";
 import { evaluatorRegistry, initializeEvaluators } from "./Evaluator";
 import { arbitrator, executor } from "./Arbitrator";
 import { TelemetryManager, OutcomeTracker } from "./Telemetry";
@@ -119,8 +121,18 @@ export function runFramework(): void {
     // cadence, with no coordination between them. The comments here previously claimed
     // nothing executed, which made an empire-wide remote shutdown look unexplained from
     // the main loop. Ownership is documented in docs/ARCHITECTURE.md.
-    if (actions.length > 0) {
-      const results = executor.execute(actions, colony);
+    // Split off shadow domains. They are scored and recorded, never executed, so a
+    // candidate owner can be compared with the incumbent on live data before cutover.
+    const shadow: FrameworkAction[] = [];
+    const live: FrameworkAction[] = [];
+    for (const a of actions) {
+      if (evaluatorRegistry.isShadowAction(a)) shadow.push(a);
+      else live.push(a);
+    }
+    recordShadowProposals(roomName, shadow);
+
+    if (live.length > 0) {
+      const results = executor.execute(live, colony);
 
       // Probe: record what the framework actually EXECUTES, by domain and outcome.
       // The code path says all four domains execute, but observed spawns have all
@@ -129,9 +141,14 @@ export function runFramework(): void {
       const fx = (Memory as any)._fxExec || ((Memory as any)._fxExec = {});
       for (const r of results || []) {
         const key = (r.action && r.action.type) || "unknown";
-        const slot = fx[key] || (fx[key] = { ok: 0, fail: 0, lastError: "" });
+        const slot = fx[key] || (fx[key] = { ok: 0, fail: 0, wait: 0, lastError: "" });
         if (r.success) slot.ok++;
-        else {
+        else if (r.deferred) {
+          // Declined on purpose (cannot afford it yet), not a defect. Counted apart so a
+          // real failure still stands out the way the 191/191 spawn failures did.
+          slot.wait = (slot.wait || 0) + 1;
+          if (r.error) slot.lastWait = String(r.error).slice(0, 60);
+        } else {
           slot.fail++;
           if (r.error) slot.lastError = String(r.error).slice(0, 60);
         }

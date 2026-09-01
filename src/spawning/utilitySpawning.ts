@@ -13,7 +13,7 @@ import { RemoteSquadManager } from "../defense/RemoteSquadManager";
 import { LinkManager } from "../structures/LinkManager";
 import { getMilestones } from "../core/ColonyMilestones";
 import { ColonyManager } from "../core/ColonyManager";
-import { buildBody as buildBodyFromConfig, ROLE_MIN_COST } from "./bodyBuilder";
+import { buildBody as buildBodyFromConfig, ROLE_MIN_COST, resolveSpawnEnergyBudget } from "./bodyBuilder";
 import { CONFIG } from "../config";
 import { ThresholdMonitor } from "../utils/ThresholdMonitor";
 import { combineUtilities } from "../utils/smoothing";
@@ -2145,59 +2145,24 @@ function isDowngradeRisk(room: Room): boolean {
 }
 
 function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
-  const noHarvesters = (state.counts.HARVESTER || 0) === 0;
-  const noHaulers = (state.counts.HAULER || 0) === 0;
+  // Budget resolution is shared with the framework's executeSpawn via bodyBuilder, so the
+  // two spawn paths cannot silently disagree about how big a body should be. They did:
+  // the framework always sized to capacity and therefore never spawned anything.
+  const budget = resolveSpawnEnergyBudget({
+    role,
+    energyAvailable: state.energyAvailable,
+    energyCapacity: state.energyCapacity,
+    energyStored: state.energyStored,
+    harvesterCount: state.counts.HARVESTER || 0,
+    haulerCount: state.counts.HAULER || 0,
+    downgradeRisk: isDowngradeRisk(state.room),
+  });
 
-  // True emergency: economy is completely dead
-  // Both harvesters AND haulers must be gone, OR we have no harvesters and low storage
-  const isEmergency =
-    (noHarvesters && noHaulers) || (noHarvesters && state.energyStored < 1000);
+  // Kept as instrumentation only - these gates no longer decide anything here, but their
+  // binding rate is the signal that told us the room never reaches capacity.
+  ThresholdMonitor.gate("spawn.nearlyFull", budget.reason !== "wait for capacity");
 
-  // Special case: First hauler bootstrap
-  // If harvesters exist but no haulers, harvesters may be stationary at containers
-  // Energy won't reach spawn naturally - build first hauler with available energy
-  const isHaulerBootstrap = role === "HAULER" && noHaulers;
-
-  // A controller nearing downgrade needs an upgrader NOW, not the biggest possible one
-  // eventually. A starved room otherwise sits in WAIT_ENERGY indefinitely chasing a
-  // full-capacity body while its RCL ticks away - E46N37 wanted a 4300-energy upgrader
-  // with 1877 available and ~20 energy/tick of income.
-  const isDowngradeRescue = role === "UPGRADER" && isDowngradeRisk(state.room);
-
-  // Don't stall waiting on the last, most distant extension. Sizing bodies to exactly
-  // energyCapacityAvailable means a room must be 100% full to spawn anything, so one
-  // far-flung extension gates every spawn behind a long filler round trip for a handful
-  // of energy - E43N39 sat idle at 1781/1800 with 983k banked, blocked on 19 energy in
-  // an extension 41 path-steps away. Once available is within 10% of capacity, build to
-  // available: a marginally smaller creep now beats a full-size one eighty ticks later.
-  // A room that can actually reach full is already at full when this is evaluated, so
-  // healthy rooms still get full-size bodies.
-  const nearlyFull = ThresholdMonitor.gate(
-    "spawn.nearlyFull",
-    state.energyAvailable >= state.energyCapacity * 0.9
-  );
-
-  // A room with a bank is limited by how fast it can refill extensions, not by energy.
-  // Sizing bodies to full capacity there means the most expensive role can never spawn:
-  // cheaper creeps drain the pool the moment they become affordable, so it never reaches
-  // the top. Measured on E43N39 - spawn.nearlyFull bound on 100% of 1,077 evaluations,
-  // 238 ticks unbroken, while a 1,400 upgrader repeatedly beat an 1,800 builder to the
-  // energy and a needed link sat unbuilt at 0/5000.
-  //
-  // Above BANK_RICH the constraint is throughput, so build with what is present. The
-  // floor keeps bodies reasonable rather than spawning runts at any fill level.
-  const bankRich = state.energyStored > BANK_RICH_THRESHOLD;
-  const throughputLimited = ThresholdMonitor.gate(
-    "spawn.throughputLimited",
-    !(bankRich && state.energyAvailable >= state.energyCapacity * MIN_BODY_FILL)
-  );
-
-  // In emergency OR hauler bootstrap OR downgrade rescue, build what we can afford NOW
-  // Otherwise, build for full capacity (wait for energy)
-  const energy =
-    isEmergency || isHaulerBootstrap || isDowngradeRescue || nearlyFull || !throughputLimited
-      ? state.energyAvailable
-      : state.energyCapacity;
+  const energy = budget.energy;
 
   // Pioneer uses its own body builder
   // Expansion pioneers: use available energy to spawn quickly

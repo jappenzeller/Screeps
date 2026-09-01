@@ -31,6 +31,19 @@ import { MilitaryEvaluator } from "./evaluators/MilitaryEvaluator";
 // EVALUATOR REGISTRY
 // ============================================================================
 
+/** Maps each action type to the evaluator domain that produces it. */
+const ACTION_DOMAIN: Record<string, string> = {
+  spawn: "spawning",
+  build: "construction",
+  activate_remote: "remotes",
+  deactivate_remote: "remotes",
+  pause_remote: "remotes",
+  attack: "military",
+  defend: "military",
+  retreat: "military",
+  patrol: "military",
+};
+
 /**
  * Registry of all evaluators
  */
@@ -38,10 +51,40 @@ class EvaluatorRegistry {
   private evaluators: Map<string, BaseEvaluator<FrameworkAction>> = new Map();
 
   /**
+   * Domains that are scored but never executed. Shadow domains let a candidate owner run
+   * against live state and be compared with the incumbent before it is trusted with the
+   * room - the framework's spawn arm looked healthy in code review and failed 191 times
+   * out of 191 in production, which is the argument for measuring instead of reasoning.
+   */
+  private shadowDomains: Set<string> = new Set();
+
+  /**
    * Register an evaluator
    */
   register<T extends FrameworkAction>(evaluator: BaseEvaluator<T>): void {
     this.evaluators.set(evaluator.domain, evaluator as BaseEvaluator<FrameworkAction>);
+  }
+
+  /**
+   * Register an evaluator that is scored and logged but whose actions are never executed.
+   */
+  registerShadow<T extends FrameworkAction>(evaluator: BaseEvaluator<T>): void {
+    this.register(evaluator);
+    this.shadowDomains.add(evaluator.domain);
+  }
+
+  /** True when the domain is scored for comparison only. */
+  isShadow(domain: string): boolean {
+    return this.shadowDomains.has(domain);
+  }
+
+  /**
+   * True when an action came from a shadow domain. Action types and domain names differ
+   * (a "spawn" action comes from the "spawning" domain), so the mapping is explicit
+   * rather than inferred - guessing it would silently execute what should be shadowed.
+   */
+  isShadowAction(action: FrameworkAction): boolean {
+    return this.shadowDomains.has(ACTION_DOMAIN[action.type] || action.type);
   }
 
   /**
@@ -122,5 +165,14 @@ export function initializeEvaluators(): void {
   // domain while failing silently.
   evaluatorRegistry.register(new RemoteMiningEvaluator());
 
-  logger.info("Evaluator", "Evaluator registry: remotes only (see initializeEvaluators for why)");
+  // Spawning is the first domain being migrated back. It runs in SHADOW: scored every
+  // tick against live state, compared with what utilitySpawning actually spawns, and
+  // never executed. Read the comparison with fxShadow(). Promote it to register() only
+  // once the two agree - see docs/ARCHITECTURE.md, "Framework migration".
+  evaluatorRegistry.registerShadow(new SpawnEvaluator());
+
+  logger.info(
+    "Evaluator",
+    "Evaluator registry: remotes execute, spawn shadows (see initializeEvaluators)"
+  );
 }

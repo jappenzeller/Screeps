@@ -19,7 +19,7 @@ import {
   DecisionLogEntry,
 } from "./types";
 import { logger } from "../utils/Logger";
-import { buildBody, getMinCost } from "../spawning/bodyBuilder";
+import { buildBody, calculateCost, getMinCost, resolveSpawnEnergyBudget } from "../spawning/bodyBuilder";
 import { findBuildPosition } from "../structures/placeStructures";
 import { ColonyManager } from "../core/ColonyManager";
 import * as MilitaryManager from "../military/MilitaryManager";
@@ -317,13 +317,57 @@ export class ActionExecutor {
     // Check minimum energy for role
     const minCost = getMinCost(action.role);
     if (room.energyAvailable < minCost) {
-      return { action, success: false, error: `Not enough energy (need ${minCost}, have ${room.energyAvailable})` };
+      return {
+        action,
+        success: false,
+        deferred: true,
+        error: `Waiting for energy (need ${minCost}, have ${room.energyAvailable})`,
+      };
     }
 
     // Build body based on available energy
-    const body = buildBody(action.role, room.energyCapacityAvailable);
+    // Same budget resolution utilitySpawning uses. Sizing to energyCapacityAvailable is
+    // why this executor failed 191 times out of 191: E43N39 never reaches capacity, so a
+    // capacity-sized body was never affordable and the framework never spawned anything.
+    const counts = { HARVESTER: 0, HAULER: 0 };
+    for (const n in Game.creeps) {
+      const c = Game.creeps[n];
+      if (c.memory.room !== colony.roomName) continue;
+      if (c.memory.role === "HARVESTER") counts.HARVESTER++;
+      else if (c.memory.role === "HAULER") counts.HAULER++;
+    }
+
+    const ctrl = room.controller;
+    const downgradeMax = ctrl ? CONTROLLER_DOWNGRADE[ctrl.level] || 0 : 0;
+    const downgradeRisk =
+      !!ctrl && downgradeMax > 0 && ctrl.ticksToDowngrade < downgradeMax * 0.5;
+
+    const budget = resolveSpawnEnergyBudget({
+      role: action.role,
+      energyAvailable: room.energyAvailable,
+      energyCapacity: room.energyCapacityAvailable,
+      energyStored: room.storage ? room.storage.store[RESOURCE_ENERGY] : 0,
+      harvesterCount: counts.HARVESTER,
+      haulerCount: counts.HAULER,
+      downgradeRisk,
+    });
+
+    const body = buildBody(action.role, budget.energy);
     if (body.length === 0) {
       return { action, success: false, error: `Failed to build body for ${action.role}` };
+    }
+
+    // The "wait for capacity" budget deliberately sizes above what the room holds right
+    // now. Attempting that spawn is guaranteed ERR_NOT_ENOUGH_ENERGY, so decline it here
+    // rather than burning an intent and logging a failure every tick.
+    const cost = calculateCost(body);
+    if (cost > room.energyAvailable) {
+      return {
+        action,
+        success: false,
+        deferred: true,
+        error: `Waiting for ${cost} (${budget.reason}), have ${room.energyAvailable}`,
+      };
     }
 
     // Create unique name
@@ -486,6 +530,13 @@ export interface ExecutionResult {
   success: boolean;
   error?: string;
   note?: string;
+  /**
+   * True when the action was correctly declined rather than attempted and failed - e.g.
+   * a spawn deferred because the room cannot afford the body yet. Kept distinct from
+   * `success` so the failure count stays a real defect signal: a framework that relabels
+   * its deadlocks as successes cannot tell you it is deadlocked.
+   */
+  deferred?: boolean;
 }
 
 // ============================================================================

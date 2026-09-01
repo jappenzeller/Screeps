@@ -9,6 +9,7 @@ import { TrafficMonitor } from "../core/TrafficMonitor";
 import { RampartPlanner } from "../structures/RampartPlanner";
 import { AnomalyDetector } from "./AnomalyDetector";
 import { ThresholdMonitor } from "./ThresholdMonitor";
+import { getShadow, resetShadow } from "../framework/ShadowSpawn";
 import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
@@ -2605,5 +2606,52 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       console.log("      Added: tick " + d.addedAt + " (" + (Game.time - d.addedAt) + " ticks ago)");
     }
     return "OK";
+  };
+
+  /**
+   * Framework spawn migration: how often the shadow SpawnEvaluator agrees with the
+   * incumbent utilitySpawning, and where it does not. Cutover evidence.
+   */
+  global.fxShadow = () => {
+    const s = getShadow();
+    const window = Game.time - s.since;
+    const decided = s.agree + s.disagree + s.silent;
+
+    console.log("=== Framework spawn shadow (" + window + " ticks) ===");
+    if (decided === 0) {
+      console.log("  No real spawns observed yet - nothing to compare.");
+    } else {
+      const pct = ((s.agree / decided) * 100).toFixed(0);
+      console.log("  agree " + s.agree + " / disagree " + s.disagree + " / shadow-silent " + s.silent);
+      console.log("  agreement: " + pct + "% over " + decided + " spawns");
+    }
+
+    for (const room in s.proposals) {
+      const roles = s.proposals[room];
+      const parts: string[] = [];
+      for (const r in roles) parts.push(r + ":" + roles[r]);
+      console.log("  " + room + " proposed " + parts.join(" "));
+    }
+
+    if (s.recent.length > 0) {
+      console.log("  recent mismatches:");
+      for (const line of s.recent) console.log("    " + line);
+    }
+
+    const fx = (Memory as any)._fxExec || {};
+    console.log("  executor:");
+    for (const k in fx) {
+      const v = fx[k];
+      console.log(
+        "    " + k + "  ok:" + v.ok + " fail:" + v.fail + " wait:" + (v.wait || 0) +
+        (v.lastError ? "  last-fail: " + v.lastError : "")
+      );
+    }
+    return "OK";
+  };
+
+  global.resetShadow = () => {
+    resetShadow();
+    return "Shadow comparison window reset";
   };
 }

@@ -223,3 +223,57 @@ export const ROLE_MIN_COST: Record<string, number> = {
   DEMOLISHER: getMinEnergyCost("DEMOLISHER"),
   RECLAIM_BLOCKER: getMinEnergyCost("RECLAIM_BLOCKER"),
 };
+
+/**
+ * Decide how much energy a body should be built from.
+ *
+ * Sizing to energyCapacityAvailable is right only when a room can actually reach
+ * capacity. Where it cannot, it is a deadlock dressed as a quality setting - and it was
+ * the sole reason the declarative framework's executeSpawn() failed 191 times out of 191
+ * with "Not enough energy" while utilitySpawning, which had this logic, spawned normally.
+ *
+ * Shared so both spawn paths agree. Two systems sizing bodies differently is how one of
+ * them silently never spawns anything.
+ */
+export interface SpawnBudgetInputs {
+  role: string;
+  energyAvailable: number;
+  energyCapacity: number;
+  energyStored: number;
+  harvesterCount: number;
+  haulerCount: number;
+  /** True when the controller is close enough to downgrade to justify a small creep now. */
+  downgradeRisk: boolean;
+}
+
+/** Stored energy above which a room is limited by refill throughput, not by energy. */
+export const BANK_RICH_THRESHOLD = 50000;
+
+/** Minimum fill fraction to build from, so a rich room still gets a sensible body. */
+export const MIN_BODY_FILL = 0.6;
+
+export function resolveSpawnEnergyBudget(i: SpawnBudgetInputs): {
+  energy: number;
+  reason: string;
+} {
+  const noHarvesters = i.harvesterCount === 0;
+  const noHaulers = i.haulerCount === 0;
+
+  if ((noHarvesters && noHaulers) || (noHarvesters && i.energyStored < 1000)) {
+    return { energy: i.energyAvailable, reason: "emergency" };
+  }
+  if (i.role === "HAULER" && noHaulers) {
+    return { energy: i.energyAvailable, reason: "hauler bootstrap" };
+  }
+  if (i.role === "UPGRADER" && i.downgradeRisk) {
+    return { energy: i.energyAvailable, reason: "downgrade rescue" };
+  }
+  if (i.energyAvailable >= i.energyCapacity * 0.9) {
+    return { energy: i.energyAvailable, reason: "nearly full" };
+  }
+  if (i.energyStored > BANK_RICH_THRESHOLD && i.energyAvailable >= i.energyCapacity * MIN_BODY_FILL) {
+    return { energy: i.energyAvailable, reason: "throughput limited" };
+  }
+
+  return { energy: i.energyCapacity, reason: "wait for capacity" };
+}
