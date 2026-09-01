@@ -1,14 +1,24 @@
 /**
  * Declarative Framework - Main Entry Point
  *
- * Phase 1: Framework foundation
- * - WorldState capture
- * - WeightTable management
- * - Evaluator/Arbitrator skeleton
- * - Telemetry logging
+ * A second decision system, running every tick alongside the creep roles and utility
+ * spawning in src/spawning. Four evaluators score options; an arbitrator resolves them.
  *
- * The framework runs alongside existing systems in Phase 1.
- * Evaluators return empty arrays, so existing code continues to make decisions.
+ * WHAT ACTUALLY EXECUTES - this is not uniform, and the difference matters:
+ *
+ *   remotes       EXECUTES. Arbitrator.executeRemote() calls ColonyManager.addRemote(),
+ *                 removeRemote() and toggleRemote(), changing live colony config. This
+ *                 is a real second writer to remote state, which ColonyManager's
+ *                 syncRemoteRooms() also owns, on a different cadence.
+ *   spawn         logs only
+ *   construction  logs only
+ *   military      logs only
+ *
+ * An earlier version of this header claimed evaluators returned empty arrays and nothing
+ * executed. That was wrong, and it cost real time: every remote in the empire was paused
+ * by RemoteMiningEvaluator with the reason "Hostile detected" while the main loop had no
+ * indication of where the decision came from. Do not restore that claim without checking
+ * Arbitrator.executeRemote().
  */
 
 // Export types
@@ -67,15 +77,15 @@ export function initializeFramework(): void {
   initializeEvaluators();
   initialized = true;
 
-  logger.info("Framework", "Declarative framework initialized (Phase 1)");
+  logger.info("Framework", "Declarative framework initialized (remotes execute; other domains log only)");
 }
 
 /**
  * Run the declarative framework for a tick.
  * Call this from the main loop.
  *
- * In Phase 1, this captures world state and logs decisions,
- * but doesn't override existing systems.
+ * Captures world state, scores options, logs decisions to telemetry, and executes the
+ * domains that have real executors - currently remotes only. See the file header.
  */
 export function runFramework(): void {
   if (!initialized) {
@@ -92,14 +102,23 @@ export function runFramework(): void {
     // Evaluate all domains
     const options = evaluatorRegistry.evaluateAll(state, colony);
 
-    // Resolve conflicts (in Phase 1, this just logs - doesn't execute)
+    // Resolve conflicts into a chosen action set.
     const actions = arbitrator.resolve(options, state, colony);
 
     // Log decisions to telemetry
     const decisions = arbitrator.getDecisions();
     TelemetryManager.logDecisions(decisions);
 
-    // Execute actions (in Phase 1, executors are placeholders)
+    // Execute. NOT a placeholder for every domain - read Arbitrator.executeRemote()
+    // before assuming otherwise. Remote actions (activate / deactivate / pause) call
+    // straight into ColonyManager and change live colony config; spawn, construction and
+    // military currently only log.
+    //
+    // This matters because it makes the framework a SECOND decision system writing to
+    // the same remote config that ColonyManager.syncRemoteRooms() owns, on a different
+    // cadence, with no coordination between them. The comments here previously claimed
+    // nothing executed, which made an empire-wide remote shutdown look unexplained from
+    // the main loop. Ownership is documented in docs/ARCHITECTURE.md.
     if (actions.length > 0) {
       executor.execute(actions, colony);
     }

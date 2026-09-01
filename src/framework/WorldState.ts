@@ -592,9 +592,23 @@ function captureRemotes(colonyName: string): RemoteSnapshot[] {
       }
     }
 
-    // Check for hostiles in intel (memory read - cheap)
+    // Check for hostiles in intel (memory read - cheap).
+    //
+    // Only creeps that can actually hurt a miner count. Treating any hostile as a threat
+    // shut down remote mining across the whole empire: a single enemy scout passing
+    // through pauses a remote for 5,000 ticks, and in a neighbourhood with 33 hostile
+    // rooms something is always passing through. All nine remotes sat paused with the
+    // reason "Hostile detected" while the two RCL 7 rooms had no external income at all.
+    //
+    // When intel carries body detail, require a combat part. Without detail we cannot
+    // tell, so fall back to the conservative reading and treat presence as threat.
     const intel = Memory.intel?.[roomName];
-    const hostilePresent = intel ? intel.hostiles > 0 : false;
+    let hostilePresent = false;
+    if (intel && intel.hostiles > 0) {
+      const details = intel.hostileDetails;
+      hostilePresent =
+        details && details.length > 0 ? details.some((h) => h.hasCombat) : true;
+    }
 
     // Check for containers in the remote room (if we have vision)
     let hasContainers = false;

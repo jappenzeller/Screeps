@@ -196,6 +196,38 @@ without a human suspecting it first. Findings are pruned when their creep dies.
 **Known limit:** only catches code paths that actually execute. Static review still
 covers the rest.
 
+### Declarative Framework (`src/framework/`)
+
+A **second decision system**, running every tick alongside the creep roles and utility
+spawning. Four evaluators score options; an arbitrator resolves them.
+
+Execution is **not uniform across domains**, and that difference is the single most
+important thing to know about it:
+
+| Domain | Behaviour |
+|---|---|
+| `remotes` | **Executes.** `Arbitrator.executeRemote()` calls `ColonyManager.addRemote()`, `removeRemote()` and `toggleRemote()`, changing live colony config. |
+| `spawn` | Logs only |
+| `construction` | Logs only |
+| `military` | Logs only |
+
+**Ownership of remote config is therefore split**, which is a known wart rather than a
+design:
+
+- `ColonyManager.syncRemoteRooms()` (every 1000 ticks) owns validity, distance, the
+  per-colony cap, overlap between colonies, and pause expiry.
+- `RemoteMiningEvaluator` (every tick, via the framework) owns pause-on-threat and
+  activation proposals.
+
+They write the same `Memory.colonies[room].remotes` entries on different cadences with no
+coordination. If remote behaviour looks inexplicable from the main loop, check the
+framework first — a stale comment claiming the framework executed nothing once made an
+empire-wide remote shutdown look like it came from nowhere.
+
+**Threat sensitivity:** pausing keys on hostiles that carry combat parts, not on any
+hostile presence. Treating a passing enemy scout as a threat paused every remote in the
+empire for 5,000 ticks at a time, permanently, in a neighbourhood with 33 hostile rooms.
+
 ## Colony Phases
 
 ```

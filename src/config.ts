@@ -4,23 +4,6 @@ export const CONFIG = {
   // Logging
   LOG_LEVEL: LogLevel.INFO,
 
-  // Spawning priorities (lower = higher priority)
-  SPAWN_PRIORITY: {
-    HARVESTER: 1,
-    HAULER: 2,
-    FILLER: 3, // Dedicated spawn/extension filling from storage
-    SCOUT: 4, // Intel gathering before extra upgraders
-    UPGRADER: 5,
-    BUILDER: 6,
-    DEFENDER: 7,
-    REMOTE_DEFENDER: 8,
-    REMOTE_DEFENDER_RANGED: 9,
-    RESERVER: 10,
-    REMOTE_MINER: 11,
-    REMOTE_HAULER: 12,
-    CLAIMER: 13,
-    LINK_FILLER: 14,
-  } as const,
 
   // Minimum creep counts per room
   MIN_CREEPS: {
@@ -108,4 +91,7 @@ export const CONFIG = {
   MEMORY_CLEANUP_INTERVAL: 100,
 } as const;
 
-export type Role = keyof typeof CONFIG.SPAWN_PRIORITY;
+// NOTE: SPAWN_PRIORITY and the Role type derived from it were removed. Spawning has been
+// utility-scored since src/spawning/utilitySpawning.ts replaced static priorities; the
+// table was referenced nowhere and described a design that no longer exists. SpawnRole in
+// utilitySpawning.ts is the live role union.
