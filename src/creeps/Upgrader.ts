@@ -1,11 +1,8 @@
 import { smartMoveTo } from "../utils/movement";
+import { Chooser, proximityFactor, supplyFactor } from "../core/Decision";
 
-/**
- * Range at which the proximity factor halves when scoring energy sources. Large enough
- * that supply dominates distance across a room, small enough to break ties toward the
- * nearer of two comparable sources.
- */
-const DISTANCE_HALF_LIFE = 25;
+/** What a creep does to collect from a scored target. */
+type EnergyAction = "withdraw" | "pickup" | "harvest";
 
 /**
  * Upgrader: Takes energy and upgrades the room controller.
@@ -150,26 +147,29 @@ function upgrade(creep: Creep): void {
  * next, storage is worth a walk, dropped energy decays so it is worth collecting - while
  * amount and distance decide between them.
  */
-function scoreEnergySources(creep: Creep): { target: RoomObject; kind: "withdraw" | "pickup" | "harvest"; score: number } | null {
+function scoreEnergySources(creep: Creep): { target: RoomObject; kind: EnergyAction; score: number } | null {
   const controller = creep.room.controller;
   if (!controller) return null;
 
-  let best: { target: RoomObject; kind: "withdraw" | "pickup" | "harvest"; score: number } | null = null;
+  // The scoring arithmetic lives in core/Decision. This function used to carry its own
+  // copy, byte-identical to Builder.ts's - and a copied formula is a copied defect.
+  const chooser = new Chooser<{ target: RoomObject; kind: EnergyAction }>();
   const need = creep.store.getFreeCapacity(RESOURCE_ENERGY) || 1;
 
   const consider = (
     target: RoomObject,
-    kind: "withdraw" | "pickup" | "harvest",
+    kind: EnergyAction,
     base: number,
     available: number
   ): void => {
     if (available <= 0) return;
-    // Enough to be worth the trip, capped so a huge store does not beat a closer one
-    // purely on size.
-    const supply = Math.min(available / need, 1);
-    const proximity = 1 / (1 + creep.pos.getRangeTo(target) / DISTANCE_HALF_LIFE);
-    const score = base * (0.4 + 0.6 * supply) * proximity;
-    if (!best || score > best.score) best = { target, kind, score };
+    chooser.consider(
+      { target, kind },
+      kind,
+      base,
+      supplyFactor(available, need),
+      proximityFactor(creep.pos.getRangeTo(target))
+    );
   };
 
   // Controller link - cheapest energy in the room when supplied.
@@ -203,7 +203,9 @@ function scoreEnergySources(creep: Creep): { target: RoomObject; kind: "withdraw
   const source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
   if (source) consider(source, "harvest", 15, source.energy);
 
-  return best;
+  const winner = chooser.best();
+  if (!winner) return null;
+  return { target: winner.target.target, kind: winner.target.kind, score: winner.score };
 }
 
 function getEnergy(creep: Creep): void {

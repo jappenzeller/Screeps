@@ -13,6 +13,7 @@ import {
   ColonySnapshot,
   FrameworkAction,
 } from "./types";
+import { FACTOR_FLOOR, softCeiling } from "../core/Decision";
 
 // ============================================================================
 // BASE EVALUATOR CLASS
@@ -45,7 +46,12 @@ export abstract class BaseEvaluator<T extends FrameworkAction> implements Evalua
 
     for (const factorName in factors) {
       const factor = factors[factorName];
-      score *= 1 + factor.contribution;
+      // Floor the multiplier for the same reason core/Decision does: a factor of zero
+      // wipes out the whole product, so one input reading zero silently deletes an option
+      // every other factor rated highly. A factor may suppress an option almost
+      // completely; it may not erase it. To exclude an option, do not emit it.
+      const multiplier = 1 + factor.contribution;
+      score *= multiplier > FACTOR_FLOOR ? multiplier : FACTOR_FLOOR;
     }
 
     // Bound to 0-100 WITHOUT losing ordering.
@@ -186,25 +192,3 @@ export const FactorUtils = {
     return Math.max(0.1, 1 + netFlow / harvestIncome);
   },
 };
-
-// ============================================================================
-// SCORE BOUNDING
-// ============================================================================
-
-/** Scores below this are passed through untouched. */
-const SOFT_CEILING_KNEE = 90;
-
-/** Larger values compress more gently above the knee. */
-const SOFT_CEILING_SCALE = 60;
-
-/**
- * Map [0, inf) onto [0, 100) monotonically, leaving everything below the knee unchanged.
- *
- * Replaces a hard Math.min(100, x), which mapped every strong option onto the same value
- * and silently destroyed the ranking among them.
- */
-export function softCeiling(score: number): number {
-  if (score <= SOFT_CEILING_KNEE) return score;
-  const headroom = 100 - SOFT_CEILING_KNEE;
-  return SOFT_CEILING_KNEE + headroom * (1 - Math.exp(-(score - SOFT_CEILING_KNEE) / SOFT_CEILING_SCALE));
-}

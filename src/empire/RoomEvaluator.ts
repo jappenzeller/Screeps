@@ -1,3 +1,4 @@
+import { softCeiling } from "../core/Decision";
 /**
  * RoomEvaluator - Scores rooms for expansion viability
  * Uses Memory.intel (populated by Scout.ts) to rank candidates
@@ -257,7 +258,9 @@ export class RoomEvaluator {
     const remotePotential = this.countRemotePotential(roomName);
     score += Math.min(remotePotential * 5, 20);
 
-    return Math.min(100, Math.max(0, score));
+    // Order-preserving bound. A hard Math.min(100, ...) makes every strong candidate an
+    // exact tie, and expansion then picks its target by array order rather than by merit.
+    return softCeiling(Math.max(0, score));
   }
 
   private scoreStrategic(roomName: string, distFromOwned: number, distFromEnemy: number): number {
@@ -285,7 +288,9 @@ export class RoomEvaluator {
       score -= 30;
     }
 
-    return Math.min(100, Math.max(0, score));
+    // Order-preserving bound. A hard Math.min(100, ...) makes every strong candidate an
+    // exact tie, and expansion then picks its target by array order rather than by merit.
+    return softCeiling(Math.max(0, score));
   }
 
   private scoreDefensive(data: ScoutedRoom, distFromEnemy: number): number {
@@ -304,7 +309,9 @@ export class RoomEvaluator {
       score += 10;
     }
 
-    return Math.min(100, Math.max(0, score));
+    // Order-preserving bound. A hard Math.min(100, ...) makes every strong candidate an
+    // exact tie, and expansion then picks its target by array order rather than by merit.
+    return softCeiling(Math.max(0, score));
   }
 
   private countRemotePotential(roomName: string): number {

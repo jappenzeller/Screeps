@@ -297,6 +297,56 @@ an out-of-lane proposal is recorded as `wait`, not `fail`. The executor's failur
 presence. Treating a passing enemy scout as a threat paused every remote in the empire for
 5,000 ticks at a time, permanently, in a neighbourhood with 33 hostile rooms.
 
+## The Decision Primitive (`src/core/Decision.ts`)
+
+Every decision this bot makes has one shape: enumerate the options, score each as a base
+weight times some factors, take the highest. That shape was implemented **five separate
+times** — `utilitySpawning.calculateUtility`, the framework's `SpawnEvaluator`, and the
+`Hauler`, `Upgrader` and `Builder` roles. `Upgrader.ts` and `Builder.ts` had drifted to
+byte-identical scoring lines by copy-paste.
+
+The split worth caring about was never managers-vs-framework. Both systems compute
+`base × ∏ factors → pick max`; they differ in coefficients, not in design. It is one
+design written five times, and **each copy independently reintroduced the same defect**,
+because the defect lives in the arithmetic rather than in any caller.
+
+`core/Decision` is that arithmetic, extracted once, with the failure modes made
+structurally impossible:
+
+| Rule | Failure it prevents | Observed as |
+|---|---|---|
+| Factors floored, never zero | A zero factor annihilates the product, deleting an option every other factor rated highly | Haulers scored spawn delivery `hasFiller ? 0 : 90` and abandoned a room holding 586,590 energy with 11 in the spawn |
+| Order-preserving `softCeiling` | A hard `Math.min(100, …)` maps strong options onto one value; arbitration falls through to array order | E43N39 scored LINK_FILLER 116 and UPGRADER 107; both became 100 and array order picked the weaker |
+| Exclusion ≠ score of zero | "Never choose this" and "this input read zero" become indistinguishable | `SpawnEvaluator` set `score = 0` for `target === 0`, inside the same product carrying every real signal |
+| `emptyReason()` | "Nothing scored well" and "there were no options" conflate into one `null`, and callers idle on both | The general shape behind the frozen remote creeps |
+
+The underlying rule is the one this codebase already learned the hard way: **a predicate
+that gates progress must have a release condition.** Scoring is how that rule gets
+enforced by construction instead of by review.
+
+### Using it
+
+```ts
+const chooser = new Chooser<Target>();
+chooser.consider(target, label, base, supplyFactor(have, need), proximityFactor(range));
+const winner = chooser.best();          // null only per emptyReason()
+```
+
+`consider()` ignores a non-positive base — that is how an option is excluded. Never pass
+a zero factor to mean "not allowed"; simply do not offer the option.
+
+The geometric mean in `utils/smoothing` follows the same rule with its own epsilon:
+`FACTOR_FLOOR` (0.01) would be pulled back to ~0.32 by a fourth root, so `UTILITY_EPSILON`
+(1e-9) is used there to survive the root as a decisive suppression.
+
+### Where it is used
+
+`Hauler`, `Upgrader`, `Builder` (via `Chooser`); `BaseEvaluator` and every framework
+evaluator (via `softCeiling` and the factor floor); `RoomEvaluator`'s expansion scoring;
+`utilitySpawning` (via the floored geometric mean). Adding a new scored decision means
+calling this, not writing a sixth copy.
+
+
 ## Colony Phases
 
 ```

@@ -1,8 +1,9 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { smartMoveTo, moveToRoom } from "../utils/movement";
+import { Chooser, proximityFactor, supplyFactor } from "../core/Decision";
 
-/** Range at which the proximity factor halves when scoring builder energy sources. */
-const BUILDER_DISTANCE_HALF_LIFE = 25;
+/** What a builder does to collect from a scored target. */
+type BuilderEnergyAction = "withdraw" | "pickup" | "harvest";
 
 /** Ticks a builder holds a chosen site before re-picking by priority. */
 const BUILD_LEASE_TICKS = 60;
@@ -340,21 +341,25 @@ function buildOrRepair(creep: Creep): void {
  */
 function scoreBuilderSources(
   creep: Creep
-): { target: RoomObject; kind: "withdraw" | "pickup" | "harvest"; score: number } | null {
-  let best: { target: RoomObject; kind: "withdraw" | "pickup" | "harvest"; score: number } | null = null;
+): { target: RoomObject; kind: BuilderEnergyAction; score: number } | null {
+  // Shared arithmetic - this function's scoring line was byte-identical to Upgrader's.
+  const chooser = new Chooser<{ target: RoomObject; kind: BuilderEnergyAction }>();
   const need = creep.store.getFreeCapacity(RESOURCE_ENERGY) || 1;
 
   const consider = (
     target: RoomObject,
-    kind: "withdraw" | "pickup" | "harvest",
+    kind: BuilderEnergyAction,
     base: number,
     available: number
   ): void => {
     if (available <= 0) return;
-    const supply = Math.min(available / need, 1);
-    const proximity = 1 / (1 + creep.pos.getRangeTo(target) / BUILDER_DISTANCE_HALF_LIFE);
-    const score = base * (0.4 + 0.6 * supply) * proximity;
-    if (!best || score > best.score) best = { target, kind, score };
+    chooser.consider(
+      { target, kind },
+      kind,
+      base,
+      supplyFactor(available, need),
+      proximityFactor(creep.pos.getRangeTo(target))
+    );
   };
 
   const storage = creep.room.storage;
@@ -379,7 +384,9 @@ function scoreBuilderSources(
     if (source) consider(source, "harvest", 25, source.energy);
   }
 
-  return best;
+  const winner = chooser.best();
+  if (!winner) return null;
+  return { target: winner.target.target, kind: winner.target.kind, score: winner.score };
 }
 
 function getEnergy(creep: Creep): void {

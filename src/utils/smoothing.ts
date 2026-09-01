@@ -8,6 +8,15 @@
 /**
  * Linear interpolation
  */
+/**
+ * Stand-in for a zero factor in a geometric mean.
+ *
+ * Small enough that it survives the n-th root as a decisive suppression: at four factors
+ * it yields ~0.006, at three ~0.001. Its only job is to keep the result nonzero so a
+ * suppressed option remains reachable when every alternative is worse.
+ */
+const UTILITY_EPSILON = 1e-9;
+
 export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * Math.max(0, Math.min(1, t));
 }
@@ -75,7 +84,17 @@ export function scale(
  */
 export function combineUtilities(...factors: number[]): number {
   if (factors.length === 0) return 0;
-  const product = factors.reduce((a, b) => a * Math.max(0, b), 1);
+  // Floored, not clamped to zero. A geometric mean annihilates on any single zero, so one
+  // factor reading zero deletes a role every other factor rated highly - which is exactly
+  // how the upgrader's sustainability factor read E43N39 as unaffordable for days while
+  // the room held most of a million energy. A factor may suppress a role to near-nothing;
+  // it may not erase it. core/Decision enforces the same rule at the choosing layer.
+  //
+  // The epsilon is far below core/Decision's FACTOR_FLOOR on purpose: the n-th root pulls
+  // it back toward 1, so a floor of 0.01 across four factors would only suppress by ~3x
+  // rather than decisively. UTILITY_EPSILON is chosen so the combined result stays tiny
+  // after the root for any realistic factor count.
+  const product = factors.reduce((a, b) => a * Math.max(UTILITY_EPSILON, b), 1);
   return Math.pow(product, 1 / factors.length);
 }
 
@@ -93,7 +112,7 @@ export function combineWeighted(
 
   let product = 1;
   for (const f of factors) {
-    product *= Math.pow(Math.max(0, f.value), f.weight / totalWeight);
+    product *= Math.pow(Math.max(UTILITY_EPSILON, f.value), f.weight / totalWeight);
   }
 
   return product;

@@ -26,6 +26,7 @@ import { BaseEvaluator } from "../BaseEvaluator";
 import * as CampaignChain from "../../military/CampaignChain";
 import { cachedFindRoute } from "../../military/CampaignChain";
 import * as MilitaryManager from "../../military/MilitaryManager";
+import { softCeiling } from "../../core/Decision";
 
 // ============================================================================
 // MILITARY EVALUATOR
@@ -131,7 +132,7 @@ export class MilitaryEvaluator extends BaseEvaluator<MilitaryAction> {
     }
 
     // Cap score at 100
-    score = Math.min(100, score);
+    score = softCeiling(score); // order-preserving; see core/Decision
 
     // Determine priority
     let priority: "CRITICAL" | "HIGH" | "NORMAL" = "NORMAL";
@@ -280,7 +281,7 @@ export class MilitaryEvaluator extends BaseEvaluator<MilitaryAction> {
     }
 
     // Cap score at 100
-    score = Math.min(100, score);
+    score = softCeiling(score); // order-preserving; see core/Decision
 
     // Only suggest attacks above threshold
     if (score < 35) return null;

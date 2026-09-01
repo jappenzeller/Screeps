@@ -147,12 +147,15 @@ export class SpawnEvaluator extends BaseEvaluator<SpawnAction> {
       score *= threatFactor;
     }
 
+    // === EXCLUSION: no target ===
+    // Not a factor of zero but an absence of candidacy. Expressing "never spawn this"
+    // as a score annihilates it inside the same product that carries every other signal,
+    // which is indistinguishable from a genuine input reading zero. Returning null says
+    // it plainly and keeps the score meaningful for everything that IS a candidate.
+    if (target === 0) return null;
+
     // === FACTOR: Saturation ===
-    if (target === 0) {
-      // Target is 0 - don't spawn this role at all
-      this.addFactor(factors, "noTarget", 0, 1.0, -1);
-      score = 0;
-    } else if (current > 0 && target > 0) {
+    if (current > 0 && target > 0) {
       const satRatio = current / target;
       const satFactor = satRatio >= 1.0 ? 0.1 : 1 - satRatio * w.factors.saturation;
       this.addFactor(factors, "saturation", satRatio, w.factors.saturation, satFactor - 1);
@@ -169,10 +172,8 @@ export class SpawnEvaluator extends BaseEvaluator<SpawnAction> {
       this.addFactor(factors, "minCountBoost", roleConfig.minCount - current, 1.0, 0.5);
     }
 
-    // === CEILING: maxCount ===
-    if (current >= roleConfig.maxCount) {
-      score = 0;
-    }
+    // === EXCLUSION: at maximum ===
+    if (current >= roleConfig.maxCount) return null;
 
     if (score <= 1) return null;
 

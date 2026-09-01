@@ -1,6 +1,7 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
 import { DecisionLogger } from "../logging/DecisionLogger";
+import { Chooser, proximityFactor, urgencyFactor } from "../core/Decision";
 
 // Extend CreepMemory for renewal wait tracking
 declare global {
@@ -694,7 +695,7 @@ function scoreDeliveryTargets(creep: Creep): { target: AnyStoreStructure; score:
   const sources = room.find(FIND_SOURCES);
   const controller = room.controller;
 
-  let best: { target: AnyStoreStructure; score: number } | null = null;
+  const chooser = new Chooser<AnyStoreStructure>();
 
   const candidates = room.find(FIND_MY_STRUCTURES, {
     filter: (s) => {
@@ -747,19 +748,25 @@ function scoreDeliveryTargets(creep: Creep): { target: AnyStoreStructure; score:
         base = 5;
         break;
       default:
-        base = 0; // links are LINK_FILLER's job
+        // Links belong to LINK_FILLER. Expressed by not offering the option rather than
+        // by a zero score: Chooser treats a non-positive base as "not a candidate", so
+        // exclusion stays a statement about the option set instead of an arithmetic
+        // annihilation that other factors can never recover from.
+        base = 0;
     }
 
-    if (base === 0) continue;
-
-    const urgency = 0.4 + 0.6 * (free / cap);
-    const proximity = 1 / (1 + creep.pos.getRangeTo(s) / DISTANCE_HALF_LIFE);
-    const score = base * urgency * proximity;
-
-    if (!best || score > best.score) best = { target: s, score };
+    chooser.consider(
+      s,
+      s.structureType,
+      base,
+      urgencyFactor(free, cap),
+      proximityFactor(creep.pos.getRangeTo(s))
+    );
   }
 
-  return best;
+  const winner = chooser.best();
+  if (!winner) return null;
+  return { target: winner.target, score: winner.score };
 }
 
 function deliver(creep: Creep): void {
