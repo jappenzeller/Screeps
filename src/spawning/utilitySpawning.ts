@@ -418,8 +418,16 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
   // Can we afford the highest utility role?
   if (best.cost <= room.energyAvailable) {
     logSpawnDecision(room, state, "SPAWN", best, candidates);
+    if (room.memory._spawnStall) delete room.memory._spawnStall;
     return best;
   }
+
+  // Wanted a creep, could not pay for it. THIS is the stall, and it has to be counted
+  // here: the path below returns without ever calling spawnCreep, so counting only failed
+  // API calls left the counter permanently at zero while E47N41 sat deadlocked. Past
+  // SPAWN_STALL_LIMIT, resolveSpawnEnergyBudget stops sizing to capacity and builds what
+  // the room can actually afford - the release condition for waiting to be fully stocked.
+  room.memory._spawnStall = (room.memory._spawnStall || 0) + 1;
 
   // Can't afford best. Check if economy is functional.
   const hasIncome = state.energyIncome > 0;

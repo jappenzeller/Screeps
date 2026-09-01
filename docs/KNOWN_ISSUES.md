@@ -18,14 +18,22 @@ This is the "waiting for perfect blocks good" rule, reintroduced by the fix for 
 different instance of it.
 
 **Fix:** two release conditions on the capacity gate.
-- **Understaffed:** fewer harvesters than sources means the room is not extracting what it
-  owns. Survival beats optimality — build what is affordable now.
-- **Stalled:** `spawnCreeps` now counts consecutive `ERR_NOT_ENOUGH_ENERGY` refusals into
-  `room.memory._spawnStall` and resets on success. Past `SPAWN_STALL_LIMIT` (150) the
-  budget drops to available. This is outcome-driven and independent of *why* the room is
-  poor.
+- **No harvesters at all:** the room has no income and every tick of waiting makes it
+  poorer, so build whatever is affordable. Deliberately *not* "fewer harvesters than
+  sources" — that fires on the common one-harvester-two-sources case and locks the room
+  into perpetually tiny bodies, entrenching the spiral it is meant to break. (Tried first;
+  it produced a second 50-capacity harvester in E47N41 rather than saving for a real one.)
+- **Stalled:** `utilitySpawning` counts each tick it wants a creep it cannot pay for into
+  `room.memory._spawnStall`, resetting on a successful spawn. Past `SPAWN_STALL_LIMIT`
+  (150) the budget drops to available. Outcome-driven and indifferent to *why* the room is
+  poor, so it bounds how long "save for a better body" can last.
 
-**Verified:** E47N41 went from 1 harvester to 2 within ~100 ticks of deploy.
+The counter has to live at the decision, not at the API call. `getSpawnCandidate()` returns
+null when the best candidate is unaffordable and never calls `spawnCreep()`, so counting
+`ERR_NOT_ENOUGH_ENERGY` alone left the counter pinned at zero while the room sat deadlocked.
+
+**Verified:** both stall counters climbed to 150 and released. E43N39 spent 662 energy it
+had been hoarding on a builder; E47N41 spawned a second hauler. Both counters reset.
 
 
 ## Haulers refused to fill spawn and extensions whenever a filler existed (FIXED)

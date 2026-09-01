@@ -294,10 +294,15 @@ export function resolveSpawnEnergyBudget(i: SpawnBudgetInputs): {
   // capacity-sized body, so it built nothing, so income never recovered. A textbook
   // deadlock, and one this function introduced.
   //
-  // Fewer harvesters than sources means the room is not extracting what it owns. Survival
-  // beats optimality: build what is affordable now.
-  if (i.harvesterCount < i.sourceCount) {
-    return { energy: i.energyAvailable, reason: "understaffed" };
+  // No harvester at all is unambiguous: the room has no income and every tick of waiting
+  // makes it poorer. Build whatever is affordable now.
+  //
+  // Deliberately NOT `harvesterCount < sourceCount` - that fires on the very common
+  // one-harvester-two-sources case and locks the room into perpetually tiny bodies, which
+  // entrenches the very spiral it is meant to break. Saving for a real harvester is the
+  // right move there, and the stall release below bounds how long that can take.
+  if (i.harvesterCount === 0 && i.sourceCount > 0) {
+    return { energy: i.energyAvailable, reason: "no harvesters" };
   }
 
   // General backstop, independent of why the room is poor: if we have actually tried to
