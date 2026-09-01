@@ -342,6 +342,7 @@ export interface Evaluator<T> {
 export interface ScoredOption<T> {
   action: T;
   score: number; // 0-100, comparable within domain
+  raw?: number; // Pre-compression score; > 100 means the option was in the saturated band
   factors: FactorBreakdown; // For telemetry/debugging
   label: string; // Human-readable description
 }

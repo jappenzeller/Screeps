@@ -48,12 +48,25 @@ export abstract class BaseEvaluator<T extends FrameworkAction> implements Evalua
       score *= 1 + factor.contribution;
     }
 
-    // Clamp to 0-100
-    score = Math.max(0, Math.min(100, score));
+    // Bound to 0-100 WITHOUT losing ordering.
+    //
+    // This was Math.min(100, score), which is a threshold wearing a score's clothes: in
+    // E43N39 both UPGRADER and LINK_FILLER computed above the ceiling and arrived as an
+    // exact 100/100 tie, so the evaluator had no opinion between them and arbitration
+    // fell through to array order - a static priority list, which is precisely what the
+    // framework was built to replace. A scoring system that saturates degrades into a
+    // branching one exactly where the decisions matter most.
+    //
+    // Below the knee nothing changes; above it, scores are compressed asymptotically
+    // toward 100. The mapping is strictly monotonic, so a genuinely stronger option
+    // always outranks a weaker one no matter how large either grows.
+    const raw = Math.max(0, score);
+    score = softCeiling(raw);
 
     return {
       action,
       score: Math.round(score * 10) / 10,
+      raw: Math.round(raw * 10) / 10,
       factors,
       label,
     };
@@ -173,3 +186,25 @@ export const FactorUtils = {
     return Math.max(0.1, 1 + netFlow / harvestIncome);
   },
 };
+
+// ============================================================================
+// SCORE BOUNDING
+// ============================================================================
+
+/** Scores below this are passed through untouched. */
+const SOFT_CEILING_KNEE = 90;
+
+/** Larger values compress more gently above the knee. */
+const SOFT_CEILING_SCALE = 60;
+
+/**
+ * Map [0, inf) onto [0, 100) monotonically, leaving everything below the knee unchanged.
+ *
+ * Replaces a hard Math.min(100, x), which mapped every strong option onto the same value
+ * and silently destroyed the ranking among them.
+ */
+export function softCeiling(score: number): number {
+  if (score <= SOFT_CEILING_KNEE) return score;
+  const headroom = 100 - SOFT_CEILING_KNEE;
+  return SOFT_CEILING_KNEE + headroom * (1 - Math.exp(-(score - SOFT_CEILING_KNEE) / SOFT_CEILING_SCALE));
+}

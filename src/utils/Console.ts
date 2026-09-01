@@ -2633,6 +2633,10 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       console.log("  " + room + " proposed " + parts.join(" "));
     }
 
+    for (const room in s.scores) {
+      console.log("  " + room + " top: " + s.scores[room].join("  "));
+    }
+
     if (s.recent.length > 0) {
       console.log("  recent mismatches:");
       for (const line of s.recent) console.log("    " + line);

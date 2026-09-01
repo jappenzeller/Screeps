@@ -55,7 +55,7 @@ export {
 } from "./Telemetry";
 
 import { captureWorldState, getWorldState } from "./WorldState";
-import { recordShadowProposals } from "./ShadowSpawn";
+import { recordShadowProposals, recordShadowScores } from "./ShadowSpawn";
 import type { FrameworkAction } from "./types";
 import { evaluatorRegistry, initializeEvaluators } from "./Evaluator";
 import { arbitrator, executor } from "./Arbitrator";
@@ -103,6 +103,12 @@ export function runFramework(): void {
   for (const [roomName, colony] of state.colonies) {
     // Evaluate all domains
     const options = evaluatorRegistry.evaluateAll(state, colony);
+
+    // Capture the shadow domains' full ranking before arbitration collapses it to one
+    // action. The winner alone cannot tell a confident choice from a flat one.
+    for (const [domain, scored] of options) {
+      if (evaluatorRegistry.isShadow(domain)) recordShadowScores(roomName, scored);
+    }
 
     // Resolve conflicts into a chosen action set.
     const actions = arbitrator.resolve(options, state, colony);
