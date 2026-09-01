@@ -2658,4 +2658,36 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
     resetShadow();
     return "Shadow comparison window reset";
   };
+
+  /**
+   * Routes that creeps have been unable to reach safely, and are therefore excluded from
+   * remote spawning until a route reappears.
+   */
+  global.unreachable = () => {
+    const store = (Memory as any)._unreachable || {};
+    const keys = Object.keys(store);
+    if (keys.length === 0) {
+      console.log("No unreachable routes recorded");
+      return "OK";
+    }
+
+    console.log("=== Unreachable routes ===");
+    for (const k of keys) {
+      const e = store[k];
+      const span = e.last - e.first;
+      const stale = Game.time - e.last;
+      const active = e.count >= 50 && span >= 30 && stale <= 3000;
+      console.log(
+        "  " + k + "  fails:" + e.count + " over " + span + " ticks" +
+        "  last seen " + stale + " ticks ago" +
+        (active ? "  [SPAWNING SUPPRESSED]" : "  [below threshold]")
+      );
+    }
+    return "OK";
+  };
+
+  global.clearUnreachable = () => {
+    delete (Memory as any)._unreachable;
+    return "Cleared - remotes will be retried";
+  };
 }

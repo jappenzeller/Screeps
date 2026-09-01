@@ -1,5 +1,55 @@
 # Known Issues
 
+
+## Remote creeps frozen at home by a route refusal with no release (FIXED)
+
+**Symptom:** Three remote miners and a reserver assigned to E47N41 stood motionless in
+their home room at fatigue 0, not fleeing, with an active target remote, across every
+sample taken. Their whole lives, while the colony spawned replacements that did the same.
+
+**Cause:** `moveToRoom()` CASE 3 - when `cachedFindRoute` found no *safe* route and
+`findSafeWaypoint()` returned null, the branch called `creep.say("NOSAFE")` and
+`return false`. No release condition. In a neighbourhood encircled by one large player,
+"no safe route" is the standing condition, not an exception, so the refusal was permanent.
+`moveToRoomInternal()` had the same shape one level down.
+
+This is the catalogued defect class: *any predicate that gates progress must have a
+release condition.* Refusing to move is not the safe option - a creep that crosses a risky
+room might die; a creep that never moves definitely wastes its whole life and its
+replacement's.
+
+**Fix:**
+- `NO_SAFE_ROUTE_GRACE` (30 ticks): try safe routing, then accept the direct route.
+- `moveToRoomInternal` falls back to `findExitTo` instead of returning false.
+- `recordUnreachable()` / `isUnreachable()` track routes nothing can reach, and
+  `getRemoteMiningTargets()` drops them, so the colony stops paying to spawn creeps that
+  never leave home. The record expires (3000 ticks) and is cleared on arrival, so a remote
+  recovers by itself once a route reappears. Read with `unreachable()`.
+
+**Verified:** after deploy, six of seven remote creeps that had been stationary were
+traversing rooms; one had crossed two room borders toward its target.
+
+## Room intel: hostileCount is 0 while hostileDetails lists combat creeps (OPEN)
+
+`Memory.intel[room].hostileCount` reads 0 for rooms whose `hostileDetails` array contains
+live hostiles - including an Invader with 10 parts in E43N38 and a 24-part HailHydra creep
+with `hasCombat: true` in E47N40. `lastSeen` is also unset, so intel freshness cannot be
+judged (`Game.time - lastSeen` returns the full game time).
+
+`shouldFlee()` reads `getHostileCount()` when deciding whether a fleeing creep may return,
+so a creep can be sent back into a room that still holds a combat creep.
+
+Writers and readers disagree about the schema. Per the design rule, verify the runtime
+shape rather than inferring it from names.
+
+## Memory.colonies holds entries for rooms that are not owned (OPEN)
+
+`Memory.colonies` contains E44N37, E44N42, E49N44 and E45N37 alongside the three owned
+rooms. Their `remoteRoomsLastSync` values are 2.3M-4M ticks stale. E44N37 carries ~20
+remote entries of its own and is *simultaneously* listed as an active remote of both
+E43N39 and E47N41 - a room that is 7 rooms from E47N41, far beyond the 2-room guidance.
+
+
 ## Active Issues
 
 ### Remote Targets Validated by Map Route, Not Walkability

@@ -14,6 +14,7 @@ import { LinkManager } from "../structures/LinkManager";
 import { getMilestones } from "../core/ColonyMilestones";
 import { ColonyManager } from "../core/ColonyManager";
 import { buildBody as buildBodyFromConfig, ROLE_MIN_COST, resolveSpawnEnergyBudget } from "./bodyBuilder";
+import { isUnreachable } from "../utils/movement";
 import { CONFIG } from "../config";
 import { ThresholdMonitor } from "../utils/ThresholdMonitor";
 import { combineUtilities } from "../utils/smoothing";
@@ -2537,7 +2538,17 @@ function buildMemory(role: SpawnRole, state: ColonyState): Partial<CreepMemory> 
 function getRemoteMiningTargets(homeRoom: string): string[] {
   // Use ColonyManager as single source of truth
   var manager = ColonyManager.getInstance(homeRoom);
-  return manager.getRemoteMiningTargets();
+  const targets = manager.getRemoteMiningTargets();
+
+  // Drop remotes nothing has been able to route to. Marking a remote active is a
+  // decision, and nothing was checking its outcome: E47N41 kept spawning miners and a
+  // reserver for E47N42 and E44N37 that stood in the home room at zero fatigue for their
+  // whole lives. The record expires on its own, so a remote comes back when a route does.
+  const reachable: string[] = [];
+  for (let i = 0; i < targets.length; i++) {
+    if (!isUnreachable(homeRoom, targets[i])) reachable.push(targets[i]);
+  }
+  return reachable;
 }
 
 function getRemoteThreats(homeRoom: string): Record<string, number> {

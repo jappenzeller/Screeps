@@ -43,6 +43,7 @@ interface CreepMemory {
   _stuckCount?: number;
   _safeWaypoint?: string; // Intermediate room for safe multi-hop routing
   _safeWaypointAt?: number; // Tick the waypoint was set, so it can expire if unreachable
+  _noRouteSince?: number; // First tick safe routing found no path, so refusal can expire
 
   // Hauler container targeting (dynamic per-trip selection)
   targetContainer?: Id<StructureContainer> | null;

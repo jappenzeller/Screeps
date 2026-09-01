@@ -212,6 +212,22 @@ const MAX_NEW_ROUTES_PER_TICK = 5;
 const SAFE_WAYPOINT_TIMEOUT = 100;
 
 /**
+ * How long a creep keeps refusing to move because no *safe* route exists before it
+ * accepts the direct route instead.
+ *
+ * Refusing forever is not the safe option. Observed live: three remote miners and a
+ * reserver sat motionless in E47N41 at zero fatigue with an active target, for their
+ * whole lives, while the colony spawned replacements that did the same - because
+ * findSafeWaypoint() returned null and the branch simply returned false with no release
+ * condition. In a neighbourhood encircled by one large player, "no safe route" is the
+ * normal state, so a permanent refusal is a permanent shutdown.
+ *
+ * A creep that crosses a risky room might die. A creep that never moves definitely
+ * wastes its entire life and its replacement's.
+ */
+const NO_SAFE_ROUTE_GRACE = 30;
+
+/**
  * Reset route rate limiter at start of each tick.
  * Call this from main loop.
  */
@@ -583,6 +599,11 @@ export function moveToRoom(
 
   // CASE 1: Already in target room
   if (creep.room.name === targetRoom) {
+    // Arrival is the only proof the route works. Clearing here is what lets a remote
+    // recover on its own once a siege lifts, instead of staying written off.
+    if (creep.memory.room) clearUnreachable(creep.memory.room, targetRoom);
+    if (creep.memory._noRouteSince !== undefined) delete creep.memory._noRouteSince;
+
     // If on border, move off using PathFinder to avoid routeCallback issues
     if (isOnBorder(creep)) {
       moveOffBorderInRoom(creep, visualStroke);
@@ -628,11 +649,26 @@ export function moveToRoom(
         creep.say("REROUTE");
         return moveToRoomInternal(creep, waypoint, visualStroke, true);
       } else {
-        // No safe path at all
-        creep.say("NOSAFE");
-        console.log(`[Movement] ${creep.name}: No safe path from ${creep.room.name} to ${targetRoom}`);
-        return false;
+        // No safe path at all. Try safe routing for a grace period, then accept the
+        // direct route - see NO_SAFE_ROUTE_GRACE. Without this the creep never moves
+        // again, which is strictly worse than the risk it is avoiding.
+        const since = creep.memory._noRouteSince || Game.time;
+        creep.memory._noRouteSince = since;
+        recordUnreachable(creep.memory.room, targetRoom);
+
+        if (Game.time - since < NO_SAFE_ROUTE_GRACE) {
+          creep.say("NOSAFE");
+          return false;
+        }
+
+        creep.say("RISK");
+        return moveToRoomInternal(creep, targetRoom, visualStroke, false);
       }
+    }
+
+    // A safe route exists, so any previous refusal is over.
+    if (creep.memory._noRouteSince !== undefined) {
+      delete creep.memory._noRouteSince;
     }
   }
 
@@ -664,9 +700,12 @@ function moveToRoomInternal(
     const route = cachedFindRoute(creep.room.name, targetRoom, true, [creep.room.name, targetRoom]);
 
     if (route === ERR_NO_PATH || route.length === 0) {
-      return false;
+      // Same trap one level down: returning false here freezes the creep with no release.
+      // Fall back to the direct exit rather than standing still indefinitely.
+      exitDir = creep.room.findExitTo(targetRoom);
+    } else {
+      exitDir = route[0].exit;
     }
-    exitDir = route[0].exit;
   } else {
     exitDir = creep.room.findExitTo(targetRoom);
   }
@@ -898,4 +937,64 @@ export function smartMoveTo(
   // Normal cross-room - use moveToRoom which handles safe routing
   moveToRoom(creep, targetPos.roomName, opts?.visualizePathStyle?.stroke, { avoidDanger });
   return OK;
+}
+
+// ============================================================================
+// REMOTE REACHABILITY
+// ============================================================================
+
+/**
+ * Ticks an unreachable record survives without being re-observed. Long enough to outlast
+ * a transient siege, short enough that a cleared route is retried.
+ */
+const UNREACHABLE_TTL = 3000;
+
+/**
+ * Record that a creep could not find a safe route from its colony to a remote.
+ *
+ * The missing feedback loop: a remote stayed marked Active forever regardless of whether
+ * anything ever arrived, so the colony kept paying to spawn creeps that never left home.
+ * Marking active is a decision; nothing was checking the outcome of that decision.
+ *
+ * Read with `unreachable()` in the console.
+ */
+export function recordUnreachable(homeRoom: string | undefined, targetRoom: string): void {
+  if (!homeRoom) return;
+  const mem = Memory as unknown as {
+    _unreachable?: Record<string, { count: number; first: number; last: number }>;
+  };
+  const store = mem._unreachable || (mem._unreachable = {});
+  const key = homeRoom + ">" + targetRoom;
+  const entry = store[key];
+
+  if (!entry || Game.time - entry.last > UNREACHABLE_TTL) {
+    store[key] = { count: 1, first: Game.time, last: Game.time };
+    return;
+  }
+
+  entry.count++;
+  entry.last = Game.time;
+}
+
+/**
+ * True when no creep has managed a safe route from home to target recently, and enough
+ * attempts have failed that this is a standing condition rather than a blip.
+ */
+export function isUnreachable(homeRoom: string, targetRoom: string): boolean {
+  const mem = Memory as unknown as {
+    _unreachable?: Record<string, { count: number; first: number; last: number }>;
+  };
+  const entry = mem._unreachable && mem._unreachable[homeRoom + ">" + targetRoom];
+  if (!entry) return false;
+  if (Game.time - entry.last > UNREACHABLE_TTL) return false;
+
+  // Require both volume and duration, so one bad tick during a passing threat does not
+  // shut a remote down.
+  return entry.count >= 50 && entry.last - entry.first >= NO_SAFE_ROUTE_GRACE;
+}
+
+/** Clear the record for a route, e.g. once a creep arrives. */
+export function clearUnreachable(homeRoom: string, targetRoom: string): void {
+  const mem = Memory as unknown as { _unreachable?: Record<string, unknown> };
+  if (mem._unreachable) delete mem._unreachable[homeRoom + ">" + targetRoom];
 }
