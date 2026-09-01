@@ -54,30 +54,17 @@ export const CONFIG = {
     REMOTE_REPLACEMENT_TTL: 200,
 
     // Base utility scores (before modifiers)
-    BASE_UTILITY: {
-      HARVESTER: 100, // Critical - economy foundation
-      HAULER: 90, // Critical - energy distribution
-      FILLER: 75, // Infrastructure - enables faster spawning
-      UPGRADER: 20, // Important but deferrable
-      BUILDER: 25, // Construction
-      DEFENDER: 50, // Defense when needed
-      REMOTE_MINER: 40, // Expansion
-      REMOTE_HAULER: 35, // Support remote mining
-      REMOTE_DEFENDER: 45, // Protect remotes
-      REMOTE_DEFENDER_RANGED: 40, // Support melee defenders
-      RESERVER: 25, // Maintain reservations
-      LINK_FILLER: 70, // Infrastructure
-      SCOUT: 25, // Intel gathering - spawn before second upgrader
-      MINERAL_HARVESTER: 15, // Luxury - future value for labs
-      CLAIMER: 40, // Expansion - high priority when target set
-    },
+    // BASE_UTILITY lived here and is gone. It was one of three tables of the same
+    // constants; the hardcoded literals inside each utility function shadowed it, so
+    // tuning it did nothing for six roles, and it had drifted out of agreement with live
+    // behaviour on four more. The single table is WeightTable.spawning.basePriority,
+    // read via basePriority() - it is the one the AI advisor can actually write to.
 
-    // Optimal counts by RCL (role -> [rcl1, rcl2, ..., rcl8])
-    OPTIMAL_COUNTS: {
-      HARVESTER: [2, 2, 2, 2, 2, 2, 2, 2],
-      HAULER: [1, 2, 2, 2, 2, 2, 3, 3],
-      UPGRADER: [1, 2, 2, 3, 3, 3, 4, 2], // Lower at RCL8 (15/tick cap)
-    },
+
+    // OPTIMAL_COUNTS was here and had no readers at all - target counts are computed
+    // per-role in utilitySpawning and declared in WeightTable.spawning.roles. Dead
+    // configuration is worse than none: it reads as the knob to turn.
+
   } as const,
 
   // Visual debugging

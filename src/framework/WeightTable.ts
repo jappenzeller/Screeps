@@ -26,22 +26,37 @@ export const DEFAULT_WEIGHTS: WeightTable = {
 
   // ========== SPAWNING WEIGHTS ==========
   spawning: {
+    // THE base priority table. Every spawn decision in the bot reads these, both
+    // utilitySpawning (live) and the framework's SpawnEvaluator (shadow).
+    //
+    // There used to be three: this table, CONFIG.SPAWNING.BASE_UTILITY, and a hardcoded
+    // literal inside each utility function. The literals shadowed CONFIG, so tuning
+    // CONFIG did nothing for six roles, and CONFIG had drifted out of agreement with live
+    // behaviour on four more - REMOTE_HAULER 35 vs 40, REMOTE_DEFENDER 45 vs 65,
+    // RESERVER 25 vs 45, SCOUT 25 vs 10. Three tables meant the advisor could tune the
+    // one that was not being read.
+    //
+    // Values below are seeded from what utilitySpawning ACTUALLY used, not from either
+    // stale table, so collapsing them changed no live behaviour.
     basePriority: {
-      HARVESTER: 95,
-      HAULER: 85,
-      PIONEER: 90, // Bootstrap role
+      HARVESTER: 100,
+      HAULER: 90,
+      PIONEER: 150, // Base of `150 - currentPioneers * 10`
       FILLER: 75,
-      UPGRADER: 60,
-      BUILDER: 55,
-      DEFENDER: 90, // High when needed
-      REMOTE_MINER: 50,
-      REMOTE_HAULER: 45,
-      REMOTE_DEFENDER: 70,
-      RESERVER: 30,
-      SCOUT: 25,
-      LINK_FILLER: 65,
+      UPGRADER: 20,
+      BUILDER: 25,
+      DEFENDER: 50, // Multiplied by homeThreats
+      REMOTE_MINER: 40,
+      REMOTE_HAULER: 40,
+      REMOTE_BUILDER: 25,
+      REMOTE_DEFENDER: 65,
+      REMOTE_DEFENDER_RANGED: 40,
+      RESERVER: 45,
+      SCOUT: 10, // Scaled by scan urgency, capped at 50
+      LINK_FILLER: 70,
       CLAIMER: 40,
-      MINERAL_HARVESTER: 20,
+      MINERAL_HARVESTER: 15,
+      ROAD_BUILDER: 10,
     },
 
     factors: {
@@ -686,4 +701,18 @@ export function setWeight(path: string, value: unknown): string {
 export function resetWeights(): string {
   WeightTableManager.resetToDefaults();
   return "Weights reset to defaults";
+}
+
+/**
+ * The base priority for a role - the single tunable coefficient behind every spawn
+ * decision, read by both spawn implementations.
+ *
+ * Falls back rather than returning zero for an unknown role: zero is an annihilating
+ * value in both scoring pipelines (see core/Decision), so a role missing from the table
+ * would silently become unspawnable instead of merely untuned.
+ */
+export function basePriority(role: string, fallback = 20): number {
+  const table = WeightTableManager.getWeights().spawning.basePriority;
+  const value = table[role];
+  return typeof value === "number" ? value : fallback;
 }

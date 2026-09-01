@@ -18,6 +18,7 @@ import { isUnreachable } from "../utils/movement";
 import { CONFIG } from "../config";
 import { ThresholdMonitor } from "../utils/ThresholdMonitor";
 import { combineUtilities } from "../utils/smoothing";
+import { basePriority } from "../framework/WeightTable";
 import {
   getEnergyState,
   storageUtility,
@@ -1005,7 +1006,7 @@ function harvesterUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
 
   // Base utility from deficit
-  let utility = deficit * 100;
+  let utility = deficit * basePriority("HARVESTER");
 
   // Scale by income scarcity
   // As income approaches 0, multiplier approaches infinity
@@ -1032,7 +1033,7 @@ function haulerUtility(deficit: number, state: ColonyState): number {
   if ((state.counts.HARVESTER || 0) === 0) return 0;
 
   // Base utility from deficit
-  let utility = deficit * 90;
+  let utility = deficit * basePriority("HAULER");
 
   // Scale by income - more income needs more hauling
   const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
@@ -1157,7 +1158,7 @@ function upgraderUtility(deficit: number, state: ColonyState): number {
     }
   }
 
-  const base = CONFIG.SPAWNING.BASE_UTILITY.UPGRADER;
+  const base = basePriority("UPGRADER");
 
   // Factor 1: Storage level
   // Young colonies (no storage) get a fixed baseline — they MUST upgrade to progress
@@ -1242,7 +1243,7 @@ function builderUtility(deficit: number, state: ColonyState): number {
   const totalSites = state.constructionSites;
   if (totalSites === 0) return 0;
 
-  const base = CONFIG.SPAWNING.BASE_UTILITY.BUILDER;
+  const base = basePriority("BUILDER");
   const energy = getEnergyState(state.room);
   const hasStorage = !!state.room.storage;
 
@@ -1345,7 +1346,7 @@ function defenderUtility(_deficit: number, state: ColonyState): number {
   if (state.rcl <= 5 && current >= 2) return 0;
 
   // Utility scales with threat count
-  let utility = state.homeThreats * 50;
+  let utility = state.homeThreats * basePriority("DEFENDER");
 
   // Reduce utility if we already have defenders
   utility *= 1 / (current + 1);
@@ -1373,7 +1374,7 @@ function remoteMinerUtility(deficit: number, state: ColonyState): number {
   }
 
   // Base utility
-  let utility = deficit * 40;
+  let utility = deficit * basePriority("REMOTE_MINER");
 
   // Scale by home economy health
   const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
@@ -1456,7 +1457,7 @@ function remoteHaulerUtility(_deficit: number, state: ColonyState): number {
   if (actualDeficit <= 0) return 0;
 
   // Base utility 40
-  let utility = 40;
+  let utility = basePriority("REMOTE_HAULER");
 
   // First-hauler bonus: rooms with miners but NO haulers get +15
   // This ensures the first hauler for an unserviced room spawns quickly
@@ -1514,7 +1515,7 @@ function remoteBuilderUtility(deficit: number, state: ColonyState): number {
   if (totalSites === 0) return 0;
 
   // Base utility 25 - lower than home builder, higher than upgrader
-  var utility = 25;
+  var utility = basePriority("REMOTE_BUILDER");
 
   // Urgency bonus for many sites
   if (totalSites > 10) utility += 5;
@@ -1595,7 +1596,7 @@ function remoteDefenderUtility(state: ColonyState): number {
   if (existingDefenders >= threatenedRooms) return 0;
 
   // Utility 65 - higher than reserver (25), lower than economy roles
-  return 65;
+  return basePriority("REMOTE_DEFENDER");
 }
 
 /**
@@ -1667,7 +1668,7 @@ function reserverUtility(deficit: number, state: ColonyState): number {
 
   // Utility 45 — above remote miners (40), below remote haulers first (55)
   // Reservation protects remote income directly
-  return 45;
+  return basePriority("RESERVER");
 }
 
 /**
@@ -1680,7 +1681,7 @@ function linkFillerUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
 
   // High priority - infrastructure that enables upgraders
-  let utility = deficit * 70;
+  let utility = deficit * basePriority("LINK_FILLER");
 
   // Scale by economy health
   const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
@@ -1701,7 +1702,7 @@ function fillerUtility(deficit: number, state: ColonyState): number {
   if (state.energyStored < 5000) return 0;
 
   // High priority — spawning stalls without this
-  var utility = deficit * 75;
+  var utility = deficit * basePriority("FILLER");
 
   // Scale by economy health
   var incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
@@ -1742,7 +1743,7 @@ function scoutUtility(_deficit: number, state: ColonyState): number {
 
   // Base 10, urgency scales up to 1.5x, cap at 15
   const urgency = Math.min(roomsNeedingScan / 20, 1.5);
-  let scoutUtilityValue = (10 * urgency) / (existingScouts + 1);
+  let scoutUtilityValue = (basePriority("SCOUT") * urgency) / (existingScouts + 1);
 
   // Boost scout priority if any military campaign needs vision
   var militaryMem = (Memory as any).military;
@@ -1774,7 +1775,7 @@ function mineralHarvesterUtility(deficit: number, state: ColonyState): number {
   if (deficit <= 0) return 0;
 
   // Low priority - economy roles come first
-  let utility = deficit * 15;
+  let utility = deficit * basePriority("MINERAL_HARVESTER");
 
   // Scale by economy health - only spawn when economy is healthy
   const incomeRatio = state.energyIncome / Math.max(state.energyIncomeMax, 1);
@@ -1808,7 +1809,7 @@ function roadBuilderUtility(deficit: number, state: ColonyState): number {
   if (roadSites.length === 0) return 0;
 
   // Low priority utility — roads are nice-to-have, not critical
-  var utility = 10;
+  var utility = basePriority("ROAD_BUILDER");
 
   // More sites = slightly more urgency
   if (roadSites.length > 10) utility += 3;
@@ -1851,7 +1852,7 @@ function claimerUtility(state: ColonyState): number {
   }).length;
   if (existingClaimers > 0) return 0;
 
-  return 40;
+  return basePriority("CLAIMER");
 }
 
 /**
@@ -1889,7 +1890,7 @@ function pioneerUtility(state: ColonyState): number {
 
   // High utility - pioneers are critical for survival
   // First pioneer: 150, second: 140, etc.
-  return 150 - (currentPioneers * 10);
+  return basePriority("PIONEER") - currentPioneers * 10;
 }
 
 /**

@@ -347,6 +347,35 @@ evaluator (via `softCeiling` and the factor floor); `RoomEvaluator`'s expansion 
 calling this, not writing a sixth copy.
 
 
+### One coefficient table
+
+Base priorities had **three** homes: `WeightTable.spawning.basePriority`,
+`CONFIG.SPAWNING.BASE_UTILITY`, and a hardcoded literal inside each utility function. The
+literals shadowed `CONFIG`, so tuning `CONFIG` did nothing for six roles — and `CONFIG`
+had drifted out of agreement with live behaviour on four more:
+
+| Role | CONFIG said | Live actually used |
+|---|---|---|
+| `REMOTE_HAULER` | 35 | 40 |
+| `REMOTE_DEFENDER` | 45 | 65 |
+| `RESERVER` | 25 | 45 |
+| `SCOUT` | 25 | 10 |
+
+Three tables meant the AI advisor could tune the one that was not being read.
+
+`WeightTable.spawning.basePriority` is now the only table, reached through
+`basePriority(role)`. Its defaults were seeded from **what utilitySpawning actually used**,
+not from either stale table, so the collapse changed no live behaviour. `CONFIG.SPAWNING.BASE_UTILITY`
+is deleted, as is `OPTIMAL_COUNTS`, which had no readers at all — dead configuration is
+worse than none, because it reads as the knob to turn.
+
+`basePriority()` falls back rather than returning 0 for an unknown role: zero annihilates
+in both scoring pipelines, so a role missing from the table would become unspawnable
+rather than merely untuned.
+
+Both spawn implementations now read one table, so a tuning change reaches both.
+
+
 ## Colony Phases
 
 ```
