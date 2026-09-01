@@ -1,6 +1,31 @@
 # Known Issues
 
 
+## Haulers refused to fill spawn and extensions whenever a filler existed (FIXED)
+
+**Symptom:** E43N39 held 586,590 energy in storage with 19 of 30 extensions empty, 11
+energy in the spawn, and three haulers carrying energy they would not deliver. The room
+could not spawn anything, and the spawn energy budget consequently sat in its
+"wait for capacity" branch permanently.
+
+**Cause:** `scoreDeliveryTargets()` scored spawn and extension delivery as
+`base = hasFiller ? 0 : 90`. A zero base annihilates the score, so "a filler is preferred"
+silently meant "a filler is the only one allowed" - with no way back when the single
+filler fell behind 30 extensions plus a spawn.
+
+Both catalogued rules, in one line: *a preferred source is never the only source*, and
+*an early branch that can always match starves everything below it* (a filler almost
+always exists).
+
+**Fix:** deference is now conditional on the filler actually coping - measured, not
+assumed. Below `FILLER_BEHIND_FRACTION` (50% of `energyCapacityAvailable`) haulers resume
+filling at full priority. Above it they use `FILLER_PRESENT_BASE` (12) rather than zero,
+so they prefer other work without being locked out.
+
+**Verified:** after deploy the spawn resumed spawning, storage began drawing down for the
+first time in the session, and extension fill started climbing.
+
+
 ## Remote creeps frozen at home by a route refusal with no release (FIXED)
 
 **Symptom:** Three remote miners and a reserver assigned to E47N41 stood motionless in

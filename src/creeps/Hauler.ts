@@ -77,6 +77,19 @@ const DISTANCE_HALF_LIFE = 25;
 const DELIVER_LEASE_TICKS = 50;
 
 /**
+ * Spawn+extension fill below this fraction of capacity means the filler is not coping,
+ * whatever its intentions, and haulers resume filling at full priority.
+ */
+const FILLER_BEHIND_FRACTION = 0.5;
+
+/**
+ * Base weight for spawn/extension delivery while a filler IS coping. Low enough that
+ * haulers prefer other work, never zero - a zero base cannot be recovered from by any
+ * amount of urgency.
+ */
+const FILLER_PRESENT_BASE = 12;
+
+/**
  * Select the best container to collect from based on energy, distance, and competition.
  * Called when transitioning to COLLECTING state.
  */
@@ -670,6 +683,14 @@ function deliverTo(creep: Creep, target: AnyStoreStructure, stroke: string): voi
 function scoreDeliveryTargets(creep: Creep): { target: AnyStoreStructure; score: number } | null {
   const room = creep.room;
   const hasFiller = roomHasFiller(room);
+
+  // Whether a filler EXISTS is not the question - whether it is keeping up is. Deferring
+  // to a filler that has fallen behind is how E43N39 ended up with 586,590 energy in
+  // storage, 19 of 30 extensions empty, 11 energy in the spawn, three haulers carrying
+  // energy they refused to deliver, and no ability to spawn anything at all.
+  const cap = room.energyCapacityAvailable;
+  const fillRatio = cap > 0 ? room.energyAvailable / cap : 1;
+  const fillerKeepingUp = hasFiller && fillRatio >= FILLER_BEHIND_FRACTION;
   const sources = room.find(FIND_SOURCES);
   const controller = room.controller;
 
@@ -710,8 +731,11 @@ function scoreDeliveryTargets(creep: Creep): { target: AnyStoreStructure; score:
       }
       case STRUCTURE_SPAWN:
       case STRUCTURE_EXTENSION:
-        // A filler owns this loop when one exists; haulers would only compete for it.
-        base = hasFiller ? 0 : 90;
+        // A filler owns this loop while it is coping, so haulers deprioritise it rather
+        // than competing. Never zero: a zero base annihilates the score outright, which
+        // turned "the filler is preferred" into "the filler is the only one allowed",
+        // with no way back when it fell behind. Prefer, then fall through.
+        base = fillerKeepingUp ? FILLER_PRESENT_BASE : 90;
         break;
       case STRUCTURE_CONTAINER:
         base = 55; // controller container - the only sink that produces RCL
