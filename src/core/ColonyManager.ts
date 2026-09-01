@@ -1420,6 +1420,16 @@ export class ColonyManager {
   }
 
   /**
+   * Get an existing remote's config, or undefined. Lets callers tell "already configured"
+   * apart from "rejected", which addRemote's boolean alone cannot express.
+   */
+  getRemote(roomName: string): RemoteRoomConfig | undefined {
+    var mem = Memory.colonies && Memory.colonies[this.roomName];
+    if (!mem || !mem.remotes) return undefined;
+    return mem.remotes[roomName];
+  }
+
+  /**
    * Remove a remote room from this colony.
    */
   removeRemote(roomName: string): boolean {

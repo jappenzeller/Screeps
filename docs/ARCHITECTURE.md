@@ -285,6 +285,14 @@ Remotes are the one shared domain, and the split is now explicit: `syncRemoteRoo
 every 1000 ticks owns validity, distance, cap, overlap and pause expiry; the evaluator
 every tick owns pause-on-threat and activation proposals.
 
+**The boundary is now enforced, not just documented.** `executeRemote()`'s activate path
+used to call `addRemote()`, so the evaluator was performing discovery — a domain
+`syncRemoteRooms()` owns. It re-proposed E45N41 every tick, `addRemote` rejected it on
+distance every tick, and neither side remembered: 622 failed operations against 21
+successes. Activation now only reactivates a remote already in the config, and declining
+an out-of-lane proposal is recorded as `wait`, not `fail`. The executor's failure count is
+**zero**.
+
 **Threat sensitivity:** pausing keys on hostiles carrying combat parts, not on any hostile
 presence. Treating a passing enemy scout as a threat paused every remote in the empire for
 5,000 ticks at a time, permanently, in a neighbourhood with 33 hostile rooms.

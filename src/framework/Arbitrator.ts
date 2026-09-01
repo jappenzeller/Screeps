@@ -441,12 +441,42 @@ export class ActionExecutor {
       case "activate_remote": {
         // No `|| 1` fallback: inventing a distance is worse than having none, because
         // addRemote now measures it. Pass the hint through only if the evaluator has one.
-        const success = manager.addRemote(action.room, action.distance, action.via);
+        // Proposing a remote that is already configured is a no-op, not a failure. Left
+        // undistinguished it read as 622 failures against 21 successes and buried the
+        // genuine rejections (a room past maxDistance) inside the noise - the same
+        // mislabelling that let executeSpawn's 191/191 sit unexplained.
+        const existing = manager.getRemote(action.room);
+
+        // Discovery belongs to ColonyManager.syncRemoteRooms(), which owns validity,
+        // distance, cap and overlap; this evaluator owns pause-on-threat and reactivation
+        // (docs/ARCHITECTURE.md). Adding rooms from here crossed that line and looped:
+        // the evaluator re-proposed E45N41 every tick, addRemote rejected it on distance
+        // every tick, and neither side remembered. Staying in lane ends the loop without
+        // needing a rejection cache.
+        if (!existing) {
+          return {
+            action,
+            success: false,
+            deferred: true,
+            error: `${action.room} not in remote config - discovery is syncRemoteRooms' job`,
+          };
+        }
+
+        if (existing.active) {
+          return { action, success: false, deferred: true, error: "Remote already active" };
+        }
+
+        // Respect a deliberate indefinite pause; an expiring one is syncRemoteRooms' to clear.
+        if (existing.pauseReason && !existing.pausedUntil) {
+          return { action, success: false, deferred: true, error: "Remote deliberately paused" };
+        }
+
+        const success = manager.toggleRemote(action.room);
         if (success) {
-          logger.info("Executor", `[${colony.roomName}] Activated remote ${action.room} (framework)`);
+          logger.info("Executor", `[${colony.roomName}] Reactivated remote ${action.room} (framework)`);
           return { action, success: true };
         }
-        return { action, success: false, error: "Failed to activate remote (already exists?)" };
+        return { action, success: false, error: `Could not reactivate ${action.room}` };
       }
 
       case "deactivate_remote": {
