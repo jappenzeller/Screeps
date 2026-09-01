@@ -20,6 +20,8 @@ export { BaseEvaluator, FactorUtils } from "./BaseEvaluator";
 import { BaseEvaluator } from "./BaseEvaluator";
 
 // Import evaluators (after BaseEvaluator is defined to avoid circular deps)
+// Retained for future migration - see initializeEvaluators()
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { SpawnEvaluator } from "./evaluators/SpawnEvaluator";
 import { ConstructionEvaluator } from "./evaluators/ConstructionEvaluator";
 import { RemoteMiningEvaluator } from "./evaluators/RemoteMiningEvaluator";
@@ -90,17 +92,35 @@ export const evaluatorRegistry = new EvaluatorRegistry();
  * Initialize all evaluators
  */
 export function initializeEvaluators(): void {
-  // Phase 2: Real SpawnEvaluator
-  evaluatorRegistry.register(new SpawnEvaluator());
-
-  // Phase 3: Real ConstructionEvaluator
-  evaluatorRegistry.register(new ConstructionEvaluator());
-
-  // Phase 4: Real RemoteMiningEvaluator
+  // ONLY remotes. This is a deliberate scoping decision, not an unfinished migration.
+  //
+  // The framework duplicates four domains that already have working owners, and its
+  // executors are real - every action type routes to something that acts. Measuring what
+  // it actually achieved over ~140 ticks settled it:
+  //
+  //   spawn   0 ok / 191 fail  "Not enough energy"
+  //   build   0 ok / 101 fail  "No valid position for lab"
+  //   defend  7 ok /   0 fail  - and every success is a no-op that logs and returns true
+  //   remote  acts for real, and is the only arm doing useful work
+  //
+  // So three of four arms produced ~292 failed operations per 140 ticks, every tick,
+  // forever. Worse, the spawn arm was not idle by design: it runs BEFORE spawnCreeps and
+  // failed only because its minCost gate is stricter than utilitySpawning's body sizing.
+  // Had energy ever cleared that bar it would have spawned a creep of its own choosing
+  // ahead of the real spawner. The military arm's attack path likewise creates a real
+  // MilitaryManager campaign.
+  //
+  // Registering only the remote evaluator gives every domain exactly one owner:
+  //   spawning     -> utilitySpawning
+  //   construction -> the planners + ConstructionCoordinator
+  //   military     -> MilitaryManager
+  //   remotes      -> ColonyManager (config, cap, expiry) + this (threat pausing)
+  //
+  // The other three evaluators are kept on disk, not deleted - they are a reasonable
+  // design that was never finished, and re-registering one is a single line if a domain
+  // is ever genuinely migrated. What is not acceptable is a second system half-owning a
+  // domain while failing silently.
   evaluatorRegistry.register(new RemoteMiningEvaluator());
 
-  // Phase 5: Real MilitaryEvaluator
-  evaluatorRegistry.register(new MilitaryEvaluator());
-
-  logger.info("Evaluator", "Initialized evaluator registry (Phase 2-5: Spawn + Construction + Remotes + Military active)");
+  logger.info("Evaluator", "Evaluator registry: remotes only (see initializeEvaluators for why)");
 }

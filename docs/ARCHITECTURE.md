@@ -198,35 +198,45 @@ covers the rest.
 
 ### Declarative Framework (`src/framework/`)
 
-A **second decision system**, running every tick alongside the creep roles and utility
-spawning. Four evaluators score options; an arbitrator resolves them.
+A second decision system running every tick. **Scoped to remotes only**, deliberately.
 
-Execution is **not uniform across domains**, and that difference is the single most
-important thing to know about it:
+The framework duplicates four domains that already have working owners, and its executors
+are real — every action type routes to something that acts. Measuring what it actually
+achieved over ~140 ticks settled how to resolve that:
 
-| Domain | Behaviour |
+| Domain | Result |
 |---|---|
-| `remotes` | **Executes.** `Arbitrator.executeRemote()` calls `ColonyManager.addRemote()`, `removeRemote()` and `toggleRemote()`, changing live colony config. |
-| `spawn` | Logs only |
-| `construction` | Logs only |
-| `military` | Logs only |
+| `spawn` | 0 ok / **191 fail** — "Not enough energy" |
+| `build` | 0 ok / **101 fail** — "No valid position for lab" |
+| `defend` | 7 ok / 0 fail — but every success is a no-op that logs and returns true |
+| `remotes` | acts for real; the only arm doing useful work |
 
-**Ownership of remote config is therefore split**, which is a known wart rather than a
-design:
+Three of four arms produced ~292 failed operations per 140 ticks, forever. The spawn arm
+was not idle by design: it runs **before** `spawnCreeps` and failed only because its
+`getMinCost` gate is stricter than `utilitySpawning`'s body sizing. Had energy ever
+cleared that bar it would have spawned a creep of its own choosing ahead of the real
+spawner. The military `attack` path likewise creates a real `MilitaryManager` campaign.
 
-- `ColonyManager.syncRemoteRooms()` (every 1000 ticks) owns validity, distance, the
-  per-colony cap, overlap between colonies, and pause expiry.
-- `RemoteMiningEvaluator` (every tick, via the framework) owns pause-on-threat and
-  activation proposals.
+Only `RemoteMiningEvaluator` is registered. The other three evaluators remain on disk —
+they are a reasonable design that was never finished, and re-registering one is a single
+line if a domain is ever genuinely migrated.
 
-They write the same `Memory.colonies[room].remotes` entries on different cadences with no
-coordination. If remote behaviour looks inexplicable from the main loop, check the
-framework first — a stale comment claiming the framework executed nothing once made an
-empire-wide remote shutdown look like it came from nowhere.
+**One owner per domain:**
 
-**Threat sensitivity:** pausing keys on hostiles that carry combat parts, not on any
-hostile presence. Treating a passing enemy scout as a threat paused every remote in the
-empire for 5,000 ticks at a time, permanently, in a neighbourhood with 33 hostile rooms.
+| Domain | Owner |
+|---|---|
+| Spawning | `utilitySpawning` |
+| Construction | the planners + `ConstructionCoordinator` |
+| Military | `MilitaryManager` |
+| Remotes | `ColonyManager` (config, cap, expiry) **+** `RemoteMiningEvaluator` (threat pausing) |
+
+Remotes are the one shared domain, and the split is now explicit: `syncRemoteRooms()`
+every 1000 ticks owns validity, distance, cap, overlap and pause expiry; the evaluator
+every tick owns pause-on-threat and activation proposals.
+
+**Threat sensitivity:** pausing keys on hostiles carrying combat parts, not on any hostile
+presence. Treating a passing enemy scout as a threat paused every remote in the empire for
+5,000 ticks at a time, permanently, in a neighbourhood with 33 hostile rooms.
 
 ## Colony Phases
 

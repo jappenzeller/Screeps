@@ -120,7 +120,22 @@ export function runFramework(): void {
     // nothing executed, which made an empire-wide remote shutdown look unexplained from
     // the main loop. Ownership is documented in docs/ARCHITECTURE.md.
     if (actions.length > 0) {
-      executor.execute(actions, colony);
+      const results = executor.execute(actions, colony);
+
+      // Probe: record what the framework actually EXECUTES, by domain and outcome.
+      // The code path says all four domains execute, but observed spawns have all
+      // matched utilitySpawning's choices - so one of those two readings is wrong and
+      // guessing between them is how the remote shutdown went unexplained for weeks.
+      const fx = (Memory as any)._fxExec || ((Memory as any)._fxExec = {});
+      for (const r of results || []) {
+        const key = (r.action && r.action.type) || "unknown";
+        const slot = fx[key] || (fx[key] = { ok: 0, fail: 0, lastError: "" });
+        if (r.success) slot.ok++;
+        else {
+          slot.fail++;
+          if (r.error) slot.lastError = String(r.error).slice(0, 60);
+        }
+      }
     }
   }
 
