@@ -889,6 +889,19 @@ export class ColonyManager {
         reactivated.push(remoteName);
       }
 
+      // Repair a stored distance that disagrees with the map before validating on it.
+      // Stored distances were caller-supplied and provably wrong (E47N41 held E44N39 at
+      // 1 and E44N37 at 2; findRoute says 5 and 7), and the remote's score, hauler count
+      // and income estimate are all computed from the stored value.
+      var trueDist = this.getRouteDistance(this.roomName, remoteName, intel, myUsername);
+      if (trueDist > 0 && config.distance !== trueDist) {
+        console.log(
+          "[remotes] " + this.roomName + ": corrected " + remoteName +
+          " distance " + config.distance + " -> " + trueDist
+        );
+        config.distance = trueDist;
+      }
+
       var removeReason = this.getRemoteInvalidReason(remoteName, config, empireAssignments, myUsername, intel);
       if (removeReason) {
         console.log("[remotes] " + this.roomName + ": removed " + remoteName + " (" + removeReason + ")");
@@ -1027,6 +1040,13 @@ export class ColonyManager {
     var assignments: Record<string, string> = {};
     var colonies = Memory.colonies || {};
     for (var colName in colonies) {
+      // Skip colonies for rooms we no longer own. Memory.colonies accumulated four dead
+      // entries (E44N37, E44N42, E49N44, E45N37, stale by 2-4M ticks) against three owned
+      // rooms, and a lost colony's claims were still winning overlap arbitration against
+      // live ones.
+      var colRoom = Game.rooms[colName];
+      if (!colRoom || !colRoom.controller || !colRoom.controller.my) continue;
+
       var remotes = colonies[colName].remotes || {};
       for (var remoteName in remotes) {
         assignments[remoteName] = colName;
@@ -1340,12 +1360,45 @@ export class ColonyManager {
   /**
    * Add a remote room to this colony.
    */
-  addRemote(roomName: string, distance: number, via?: string): boolean {
+  addRemote(roomName: string, distance?: number, via?: string): boolean {
     var mem = Memory.colonies && Memory.colonies[this.roomName];
     if (!mem) return false;
 
     if (!mem.remotes) mem.remotes = {};
     if (mem.remotes[roomName]) return false; // Already exists
+
+    // Measure the distance here rather than believing the caller.
+    //
+    // The framework's arbitrator called this as addRemote(room, action.distance || 1),
+    // so an evaluator that supplied no distance fabricated the value 1. E47N41 ended up
+    // with E44N39 stored at distance 1 and E44N37 at 2; findRoute puts them at 5 and 7.
+    // Every downstream consumer - hauler counts, income estimates, remote scoring - then
+    // sized a seven-room haul as if it were next door, and the miners sent there could
+    // not reach it. A default is not a measurement.
+    var allIntel = Memory.intel || {};
+    var firstSpawn = Object.values(Game.spawns)[0];
+    var myUsername = firstSpawn && firstSpawn.owner ? firstSpawn.owner.username : "";
+
+    var measured = this.getRouteDistance(this.roomName, roomName, allIntel, myUsername);
+    if (measured === -1) {
+      // Bucket too low to route, or genuinely no path. Linear distance is free and is a
+      // hard lower bound, so it can still reject the obviously-too-far cases.
+      measured = Game.map.getRoomLinearDistance(this.roomName, roomName);
+    }
+
+    var maxDistance =
+      mem.remoteSettings && mem.remoteSettings.maxDistance !== undefined
+        ? mem.remoteSettings.maxDistance
+        : 2;
+
+    if (measured > maxDistance) {
+      console.log(
+        "[Colony] " + this.roomName + " rejected remote " + roomName +
+        " (distance " + measured + " > max " + maxDistance +
+        (distance !== undefined ? ", caller claimed " + distance : "") + ")"
+      );
+      return false;
+    }
 
     var intel = Memory.intel && Memory.intel[roomName];
     var sources = intel && intel.sources ? intel.sources.length : 2;
@@ -1353,7 +1406,7 @@ export class ColonyManager {
     mem.remotes[roomName] = {
       room: roomName,
       homeColony: this.roomName,
-      distance: distance,
+      distance: measured,
       via: via,
       sources: sources,
       active: true,
@@ -1362,7 +1415,7 @@ export class ColonyManager {
       haulers: [],
     };
 
-    console.log("[Colony] " + this.roomName + " added remote " + roomName + " (distance: " + distance + (via ? ", via: " + via : "") + ")");
+    console.log("[Colony] " + this.roomName + " added remote " + roomName + " (distance: " + measured + (via ? ", via: " + via : "") + ")");
     return true;
   }
 

@@ -29,26 +29,41 @@ replacement's.
 **Verified:** after deploy, six of seven remote creeps that had been stationary were
 traversing rooms; one had crossed two room borders toward its target.
 
-## Room intel: hostileCount is 0 while hostileDetails lists combat creeps (OPEN)
+## Remote distances were fabricated, not measured (FIXED)
 
-`Memory.intel[room].hostileCount` reads 0 for rooms whose `hostileDetails` array contains
-live hostiles - including an Invader with 10 parts in E43N38 and a 24-part HailHydra creep
-with `hasCombat: true` in E47N40. `lastSeen` is also unset, so intel freshness cannot be
-judged (`Game.time - lastSeen` returns the full game time).
+**Symptom:** E47N41 held E44N39 at `distance: 1` and E44N37 at `distance: 2`.
+`Game.map.findRoute` puts them at **5** and **7**. Every downstream consumer - hauler
+counts, income estimates, remote scoring, the `maxDistance: 2` guard - read the stored
+value, so a seven-room haul was budgeted as if the room were adjacent. The miners sent
+there could not reach it and stood in the home room.
 
-`shouldFlee()` reads `getHostileCount()` when deciding whether a fleeing creep may return,
-so a creep can be sent back into a room that still holds a combat creep.
+**Cause:** `Arbitrator.executeRemote()` called
+`manager.addRemote(action.room, action.distance || 1, action.via)`. An evaluator that
+supplied no distance therefore fabricated the value **1**, and `addRemote()` stored the
+caller's number without checking it. A default is not a measurement.
 
-Writers and readers disagree about the schema. Per the design rule, verify the runtime
-shape rather than inferring it from names.
+This is also the split architecture doing concrete damage: the framework's
+`RemoteMiningEvaluator` writes remote config that `ColonyManager.syncRemoteRooms()` owns,
+and the two disagree about the schema - entries written by the evaluator (E47N42, E47N43)
+have no `distance` and no `homeColony` at all.
 
-## Memory.colonies holds entries for rooms that are not owned (OPEN)
+**Fix:**
+- `addRemote()` measures the distance itself via `getRouteDistance()`, falling back to
+  `Game.map.getRoomLinearDistance()` (free, and a hard lower bound) when the bucket is too
+  low to route. It rejects anything beyond the colony's `maxDistance`.
+- The `|| 1` fallback is gone from the arbitrator.
+- `syncRemoteRooms()` repairs a stored distance that disagrees with the map before
+  validating on it, so existing bad entries self-correct and are then removed by the
+  existing distance check.
 
-`Memory.colonies` contains E44N37, E44N42, E49N44 and E45N37 alongside the three owned
-rooms. Their `remoteRoomsLastSync` values are 2.3M-4M ticks stale. E44N37 carries ~20
-remote entries of its own and is *simultaneously* listed as an active remote of both
-E43N39 and E47N41 - a room that is 7 rooms from E47N41, far beyond the 2-room guidance.
+## Memory.colonies accumulated colonies for rooms no longer owned (FIXED)
 
+`Memory.colonies` held 7 entries against 3 owned rooms - E44N37, E44N42, E49N44 and
+E45N37 were stale by 2-4M ticks. `getEmpireRemoteAssignments()` scanned all of them, so a
+lost colony's remote claims still won overlap arbitration against live colonies.
+
+Fixed: the scan skips colonies whose room is not owned. The four dead entries were purged
+from live memory.
 
 ## Active Issues
 

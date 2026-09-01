@@ -439,7 +439,9 @@ export class ActionExecutor {
 
     switch (action.type) {
       case "activate_remote": {
-        const success = manager.addRemote(action.room, action.distance || 1, action.via);
+        // No `|| 1` fallback: inventing a distance is worse than having none, because
+        // addRemote now measures it. Pass the hint through only if the evaluator has one.
+        const success = manager.addRemote(action.room, action.distance, action.via);
         if (success) {
           logger.info("Executor", `[${colony.roomName}] Activated remote ${action.room} (framework)`);
           return { action, success: true };
