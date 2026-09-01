@@ -247,6 +247,23 @@ spawns, the two choices are compared. Read the result with `fxShadow()`:
 Promotion to `register()` is justified by agreement on live data, not by code review — the
 spawn arm read correctly and still failed 191 times out of 191.
 
+**First result: agreement is ~4%** (3 agree / 68 disagree over ~1,000 ticks). Cutover is
+not justified. The disagreements are informative rather than random, though:
+
+- The evaluator repeatedly wants `LINK_FILLER` in E43N39, which has two links and no link
+  filler. The incumbent never spawns one. The evaluator is right here.
+- It wants `UPGRADER` (target 3) in E46N37 and E47N41, which both hold zero stored energy.
+  Acting on that would starve them further. The incumbent is right here.
+- The incumbent spends heavily on `SCOUT` and `REMOTE_MINER`; the evaluator scores neither
+  highly. Given E46N37 is boxed in on all three exits and has no viable remote, that
+  spending is questionable — but the evaluator's alternative is not obviously better.
+
+So neither system dominates, and the migration cannot proceed on agreement alone. The
+useful next step is to reconcile them factor by factor rather than to pick a winner.
+
+Shadow mode also earned its keep immediately by exposing the score clamp (below), which
+was invisible in the winner alone.
+
 **Fixed as part of this:** `executeSpawn()` sized bodies to `energyCapacityAvailable`,
 which is why it never once spawned — E43N39 does not reach capacity. Both spawn paths now
 call the shared `resolveSpawnEnergyBudget()` in `bodyBuilder.ts`, so they cannot disagree
