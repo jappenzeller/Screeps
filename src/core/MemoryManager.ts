@@ -1,4 +1,5 @@
 import { CONFIG } from "../config";
+import { recordCreepDeath } from "./ColonyPopulation";
 import { logger } from "../utils/Logger";
 
 declare global {
@@ -38,6 +39,8 @@ export class MemoryManager {
     if (Game.time % 10 === 0) {
       for (const name in Memory.creeps) {
         if (!Game.creeps[name]) {
+          // Let the death inform future decisions before the evidence is discarded.
+          recordCreepDeath(Memory.creeps[name]);
           delete Memory.creeps[name];
         }
       }

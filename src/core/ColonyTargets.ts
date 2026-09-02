@@ -18,6 +18,7 @@
 
 import { ColonyManager } from "./ColonyManager";
 import { getMilestones } from "./ColonyMilestones";
+import { scoutingViable } from "./ColonyPopulation";
 import { LinkManager } from "../structures/LinkManager";
 import { CONFIG } from "../config";
 
@@ -265,7 +266,11 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
     // Same count the live scout utility enforces (cap 2), not a 1/0 flag. It was binary
     // here while scoutUtility allowed two, so the target map disagreed with the system
     // that was actually spawning - the map has to state the real number to be authority.
-    targets.SCOUT = Math.min(2, countRoomsNeedingScan(room.name));
+    // Scouts that never come home deliver no intel, so demand alone does not justify
+    // spawning them - see scoutingViable().
+    targets.SCOUT = scoutingViable(room.name)
+      ? Math.min(2, countRoomsNeedingScan(room.name))
+      : 0;
 
     // Remote builder target: only spawn when remote rooms have construction sites
     targets.REMOTE_BUILDER = getRemoteBuilderTarget(room, remoteConfigs);

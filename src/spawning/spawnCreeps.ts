@@ -31,6 +31,8 @@ export function spawnCreeps(room: Room): void {
   const memory: CreepMemory = {
     role: candidate.role,
     room: room.name,
+    // Birth tick, so a creep's age at death can distinguish "expired" from "killed".
+    _born: Game.time,
     ...candidate.memory,
   } as CreepMemory;
 

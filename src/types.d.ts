@@ -44,6 +44,7 @@ interface CreepMemory {
   _safeWaypoint?: string; // Intermediate room for safe multi-hop routing
   _safeWaypointAt?: number; // Tick the waypoint was set, so it can expire if unreachable
   _noRouteSince?: number; // First tick safe routing found no path, so refusal can expire
+  _born?: number; // Spawn tick, so age at death separates expiry from being killed
 
   // Hauler container targeting (dynamic per-trip selection)
   targetContainer?: Id<StructureContainer> | null;
@@ -86,6 +87,8 @@ interface RoomTask {
 interface RoomMemory {
   /** Consecutive ticks a spawn was attempted and refused for lack of energy. */
   _spawnStall?: number;
+  /** Scouts from this room killed young, with the window they were counted in. */
+  _scoutLoss?: { deaths: number; since: number };
   sources?: Id<Source>[];
   containerPlan?: ContainerPlan;
   tasks?: RoomTask[];
