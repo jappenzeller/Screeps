@@ -45,6 +45,12 @@ export interface ColonySnapshot {
   creeps: CreepSnapshot[];
   counts: Record<string, number>; // role -> count
   dyingSoon: Record<string, number>; // role -> count with TTL < threshold
+  /**
+   * How many of each role the colony wants, from core/ColonyTargets - the same answer
+   * utilitySpawning uses. The evaluator used to compute this itself and disagreed often
+   * enough to propose nothing on 62% of the ticks where a spawn actually happened.
+   */
+  targets: Record<string, number>;
 
   // Infrastructure
   structures: StructureSnapshot[];

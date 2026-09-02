@@ -376,6 +376,39 @@ rather than merely untuned.
 Both spawn implementations now read one table, so a tuning change reaches both.
 
 
+### One target table (`src/core/ColonyTargets.ts`)
+
+"How many of this role does the colony want" had two answers: `utilitySpawning`'s
+`getCreepTargets()` and the framework's own `SpawnEvaluator.computeTarget()` switch. They
+disagreed often enough to be measurable — over 20,265 ticks of shadow comparison the
+evaluator proposed **nothing** on 870 of the ticks where a spawn actually happened (62%),
+because its target came back 0 where the live system wanted a creep.
+
+That made the shadow comparison measure schema drift rather than judgement, which had to
+go before there could be one spawn implementation.
+
+A target is a fact about the colony, not a policy of whichever module asks.
+`getCreepTargets()` — the version that has been running the colony — moved verbatim into
+`core/ColonyTargets`, is computed once in `captureWorldState()`, rides on
+`ColonySnapshot.targets`, and is read by both spawners. The evaluator's parallel switch
+and its six helper functions (197 lines) are deleted.
+
+Three follow-on defects surfaced from having one table to look at:
+
+- **`maxCount` was a second target table.** `SCOUT.maxCount` was 1 while the live system
+  ran 2, so the evaluator excluded SCOUT outright. `targets` already bounds a role and the
+  saturation factor already scores down past it, so the `maxCount` exclusion is gone.
+  `minCount` stays — it is a floor expressed as a boost, not a competing target.
+- **`ROAD_BUILDER` and `REMOTE_BUILDER` were in the evaluator's role lists but had no
+  `roles` config**, so `evaluateHomeRole()` returned null for them every tick. Roles the
+  live colony runs were silently unscoreable — a role in one list and not the other is
+  invisible rather than erroneous, which is why it went unnoticed.
+- **Roles escaping the map.** `DEFENDER` was hardcoded to 0 with a "dynamic based on
+  threats" comment, and `SCOUT` was a 1/0 flag while the live cap was 2. A role whose
+  target is permanently wrong has escaped the map, and every reader then special-cases it
+  — which is how two spawners drift apart again. Both now state their real number.
+
+
 ## Colony Phases
 
 ```

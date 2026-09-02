@@ -28,6 +28,7 @@ import {
 import { WeightTableManager } from "./WeightTable";
 import { EconomyTracker } from "../core/EconomyTracker";
 import { logger } from "../utils/Logger";
+import { getCreepTargets } from "../core/ColonyTargets";
 
 // ============================================================================
 // GLOBAL STATE & CACHES
@@ -467,6 +468,13 @@ function captureColony(room: Room): ColonySnapshot {
     creeps,
     counts,
     dyingSoon,
+    // Targets come from the shared module so both spawners answer "how many of this role
+    // do we want" the same way. Site count is summed from the cached siteCounts rather
+    // than re-running find(), which is why this is cheap enough to do every tick.
+    targets: getCreepTargets(
+      room,
+      Object.keys(siteCounts).reduce((n, k) => n + siteCounts[k], 0)
+    ),
 
     // Infrastructure (minimal - evaluators use counts)
     structures,

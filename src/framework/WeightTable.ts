@@ -156,6 +156,26 @@ export const DEFAULT_WEIGHTS: WeightTable = {
         economyThreshold: 50,
         replacementTTL: 200,
       },
+      // ROAD_BUILDER and REMOTE_BUILDER were listed in the evaluator's role sets but had
+      // no config here, so evaluateHomeRole() returned null for them every tick - roles
+      // the live colony runs were silently unscoreable. A role in one list and not the
+      // other is invisible rather than erroneous, which is why it went unnoticed.
+      ROAD_BUILDER: {
+        minCount: 0,
+        maxCount: 2,
+        minRcl: 4,
+        rclPenalty: 0.1,
+        economyThreshold: 0,
+        replacementTTL: 100,
+      },
+      REMOTE_BUILDER: {
+        minCount: 0,
+        maxCount: 2,
+        minRcl: 4,
+        rclPenalty: 0.1,
+        economyThreshold: 0,
+        replacementTTL: 100,
+      },
       SCOUT: {
         minCount: 0,
         maxCount: 1,

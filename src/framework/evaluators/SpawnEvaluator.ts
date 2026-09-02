@@ -167,13 +167,21 @@ export class SpawnEvaluator extends BaseEvaluator<SpawnAction> {
     score *= roleMultiplier;
 
     // === FLOOR: minCount guarantee ===
+    // minCount stays: it is a floor expressed as a boost, not a competing target.
     if (current < roleConfig.minCount) {
       score = Math.max(score, basePriority * 0.8);
       this.addFactor(factors, "minCountBoost", roleConfig.minCount - current, 1.0, 0.5);
     }
 
-    // === EXCLUSION: at maximum ===
-    if (current >= roleConfig.maxCount) return null;
+    // maxCount deliberately does NOT gate here.
+    //
+    // It was a second target table. `targets` already says how many of a role the colony
+    // wants, and the saturation factor above already scores down past it - so maxCount
+    // answering the same question with a different number just meant the two disagreed.
+    // Concretely: SCOUT.maxCount was 1 while E46N37 ran 2 scouts, so the evaluator
+    // excluded SCOUT entirely and proposed nothing on the ticks the live system spawned
+    // one. Targets are the single authority; a role's ceiling belongs in
+    // core/ColonyTargets where its target is computed, not in a parallel table.
 
     if (score <= 1) return null;
 
@@ -360,210 +368,29 @@ export class SpawnEvaluator extends BaseEvaluator<SpawnAction> {
   // TARGET COMPUTATION
   // ==========================================================================
 
-  private computeTarget(role: string, colony: ColonySnapshot, state: WorldState): number {
-    const rcl = colony.rcl;
-    const m = colony.milestones;
-
-    switch (role) {
-      case "PIONEER":
-        return this.isPioneerPhase(colony) ? colony.sourceCount + 1 : 0;
-
-      case "HARVESTER":
-        // 1 per source, but 0 during pioneer phase
-        return this.isPioneerPhase(colony) ? 0 : colony.sourceCount;
-
-      case "HAULER":
-        return this.computeHaulerTarget(colony);
-
-      case "FILLER":
-        return this.computeFillerTarget(colony);
-
-      case "UPGRADER":
-        return this.computeUpgraderTarget(colony);
-
-      case "BUILDER":
-        return this.computeBuilderTarget(colony);
-
-      case "DEFENDER":
-        // Dynamic based on threats - capped by RCL
-        if (colony.hostileCount === 0) return 0;
-        const maxDefenders = rcl <= 3 ? 1 : rcl <= 5 ? 2 : 3;
-        return Math.min(colony.hostileCount, maxDefenders);
-
-      case "REMOTE_MINER":
-        return colony.remotes
-          .filter((r) => r.active && !r.paused)
-          .reduce((sum, r) => sum + r.sources, 0);
-
-      case "REMOTE_HAULER":
-        return this.computeRemoteHaulerTarget(colony);
-
-      case "REMOTE_BUILDER":
-        return this.computeRemoteBuilderTarget(colony);
-
-      case "REMOTE_DEFENDER":
-        // 1 per remote with hostiles
-        return colony.remotes.filter((r) => r.active && r.hostilePresent).length;
-
-      case "RESERVER":
-        // 1 per active remote
-        return colony.remotes.filter((r) => r.active && !r.paused).length;
-
-      case "SCOUT":
-        // 1 if we need intel
-        return this.needsScout(colony, state) ? 1 : 0;
-
-      case "LINK_FILLER":
-        // 1 if we have storage link and energy
-        return m.hasStorageLink && colony.energyStored > 10000 ? 1 : 0;
-
-      case "MINERAL_HARVESTER":
-        // Check for extractor and mineral amount
-        if (rcl < 6) return 0;
-        // Would need to check mineral - for now return 0 if no storage
-        return colony.hasStorage ? 1 : 0;
-
-      case "ROAD_BUILDER":
-        // 1 if road sites exist and has storage
-        if (!colony.hasStorage) return 0;
-        const roadSites = colony.siteCounts[STRUCTURE_ROAD] || 0;
-        return roadSites > 0 ? 1 : 0;
-
-      case "CLAIMER":
-        // Expansion system handles this
-        return 0;
-
-      default:
-        return 0;
-    }
+  /**
+   * How many of this role the colony wants.
+   *
+   * This used to be a switch of the evaluator's own devising, parallel to
+   * utilitySpawning's getCreepTargets(). The two disagreed: over 20,265 ticks of shadow
+   * comparison the evaluator proposed nothing on 870 of the ticks where a spawn actually
+   * happened - 62% - because its target came back 0 where the live system wanted a creep.
+   * E46N37's SCOUT was the clearest case. That made the comparison measure schema drift
+   * rather than judgement.
+   *
+   * A target is a fact about the colony, not a policy of whichever module asks, so both
+   * spawners now read the one answer from core/ColonyTargets via the snapshot.
+   */
+  private computeTarget(role: string, colony: ColonySnapshot, _state: WorldState): number {
+    return colony.targets[role] || 0;
   }
 
-  private computeHaulerTarget(colony: ColonySnapshot): number {
-    const m = colony.milestones;
 
-    // No containers = haulers have nothing to pick up
-    if (!m.hasSourceContainers) return 0;
 
-    // Pioneer phase = no specialist haulers
-    if (this.isPioneerPhase(colony)) return 0;
 
-    // Throughput-based calculation
-    const estimatedCarry = Math.min(colony.energyCapacity / 75, 32) * 50; // ~hauler carry capacity
-    const avgDistance = 20; // Conservative default
-    const roundTrip = avgDistance * 2 + 4;
-    const throughput = estimatedCarry / roundTrip;
 
-    // Total income to haul
-    const totalIncome = colony.harvestIncome;
 
-    let target = Math.max(1, Math.ceil(totalIncome / Math.max(throughput, 1)));
 
-    // Minimum 2 for mature colonies (single point of failure protection)
-    if (colony.hasStorage || colony.linkCount > 0) {
-      target = Math.max(target, 2);
-    }
-
-    return target;
-  }
-
-  private computeFillerTarget(colony: ColonySnapshot): number {
-    if (colony.rcl < 4) return 0;
-    if (!colony.hasStorage) return 0;
-    if (colony.energyStored < 5000) return 0;
-
-    // 1 filler, 2 at RCL 7+ with many extensions
-    if (colony.rcl >= 7 && colony.extensionCount >= 50) {
-      return 2;
-    }
-    return 1;
-  }
-
-  private computeUpgraderTarget(colony: ColonySnapshot): number {
-    const rcl = colony.rcl;
-    const hasStorage = colony.hasStorage;
-
-    // Early colonies: always at least 1 upgrader
-    if (rcl <= 3 && !hasStorage) {
-      // Infrastructure complete? Push RCL harder
-      if (colony.milestones.hasFullExtensions) {
-        return Math.min(rcl, 3);
-      }
-      return 1;
-    }
-
-    // RCL 8: cap at 1 (15/tick limit)
-    if (rcl >= 8) return 1;
-
-    // Scale with RCL
-    return Math.min(rcl, 3);
-  }
-
-  private computeBuilderTarget(colony: ColonySnapshot): number {
-    const totalSites = colony.constructionSites.length;
-    if (totalSites === 0) return 0;
-
-    // Pioneer phase: pioneers build
-    if (this.isPioneerPhase(colony)) return 0;
-
-    const rcl = colony.rcl;
-    const hasStorage = colony.hasStorage;
-
-    if (rcl <= 3 && !hasStorage) {
-      // Early colony: 1-2 builders based on income
-      const estimatedIncome = colony.sourceCount * 6;
-      const maxBuildersForIncome = Math.floor((estimatedIncome * 0.5) / 2.5);
-      return Math.min(2, Math.max(1, maxBuildersForIncome));
-    }
-
-    // RCL 4+: scale by site count
-    const maxBuildersByEconomy = Math.min(rcl, 4);
-    return Math.min(Math.ceil(totalSites / 10), maxBuildersByEconomy);
-  }
-
-  private computeRemoteHaulerTarget(colony: ColonySnapshot): number {
-    let total = 0;
-    for (const remote of colony.remotes) {
-      if (!remote.active || remote.paused) continue;
-      // Distance-aware: more haulers for farther rooms
-      total += remote.distance >= 2 ? 3 : 2;
-    }
-    return total;
-  }
-
-  private computeRemoteBuilderTarget(colony: ColonySnapshot): number {
-    // Only if remotes need containers
-    let needsBuilder = false;
-    for (const remote of colony.remotes) {
-      if (remote.active && !remote.hasContainers) {
-        needsBuilder = true;
-        break;
-      }
-    }
-    return needsBuilder ? 1 : 0;
-  }
-
-  private needsScout(colony: ColonySnapshot, state: WorldState): boolean {
-    if (colony.rcl < 3) return false;
-
-    // Check adjacent rooms for stale or missing intel
-    const room = Game.rooms[colony.roomName];
-    if (!room) return false;
-
-    const exits = Game.map.describeExits(colony.roomName);
-    if (!exits) return false;
-
-    for (const dir in exits) {
-      const adjRoom = exits[dir as ExitKey];
-      if (!adjRoom) continue;
-
-      const intel = state.intel.get(adjRoom);
-      if (!intel || Game.time - intel.lastScanned > 5000) {
-        return true;
-      }
-    }
-
-    return false;
-  }
 
   // ==========================================================================
   // FACTOR COMPUTATION
