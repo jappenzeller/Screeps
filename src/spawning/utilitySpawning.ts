@@ -20,6 +20,7 @@ import { ThresholdMonitor } from "../utils/ThresholdMonitor";
 import { combineUtilities } from "../utils/smoothing";
 import { basePriority } from "../framework/WeightTable";
 import { countRoomsNeedingScan, getCreepTargets, isPioneerPhase, needsScout } from "../core/ColonyTargets";
+import { getEffectiveCounts } from "../core/ColonyPopulation";
 import {
   getEnergyState,
   storageUtility,
@@ -454,87 +455,8 @@ export function getSpawnCandidate(room: Room): SpawnCandidate | null {
   return null;
 }
 
-/**
- * Count creeps that can actually perform their role.
- * Uses fractional counting based on damage - a hauler with 8/16 CARRY counts as 0.5.
- * This prevents the spawner from thinking "we have 1 hauler" when that hauler is damaged.
- */
-function getEffectiveCounts(creeps: Creep[], room: Room): Record<string, number> {
-  var counts: Record<string, number> = {};
-
-  // Check if source containers exist (harvesters without CARRY are OK if containers catch energy)
-  var sourceContainers = room.find(FIND_STRUCTURES, {
-    filter: function(s) {
-      return s.structureType === STRUCTURE_CONTAINER &&
-        s.pos.findInRange(FIND_SOURCES, 1).length > 0;
-    }
-  });
-  var hasSourceContainers = sourceContainers.length > 0;
-
-  for (var i = 0; i < creeps.length; i++) {
-    var c = creeps[i];
-    var role = c.memory.role;
-    var functional = true;
-
-    // First check if creep is completely non-functional (0 key parts)
-    switch (role) {
-      case "HARVESTER":
-        // Must have WORK parts to harvest
-        if (c.getActiveBodyparts(WORK) === 0) { functional = false; break; }
-        // Must have CARRY OR source containers must exist to catch dropped energy
-        if (c.getActiveBodyparts(CARRY) === 0 && !hasSourceContainers) { functional = false; }
-        break;
-
-      case "HAULER":
-      case "REMOTE_HAULER":
-        // Must have CARRY to transport anything
-        if (c.getActiveBodyparts(CARRY) === 0) functional = false;
-        break;
-
-      case "UPGRADER":
-      case "BUILDER":
-        // Must have WORK to do anything useful
-        if (c.getActiveBodyparts(WORK) === 0) functional = false;
-        break;
-
-      case "PIONEER":
-        // Must have WORK to harvest/build/upgrade AND CARRY to deliver
-        if (c.getActiveBodyparts(WORK) === 0) { functional = false; break; }
-        if (c.getActiveBodyparts(CARRY) === 0) functional = false;
-        break;
-
-      case "REMOTE_MINER":
-        // Must have WORK to harvest
-        if (c.getActiveBodyparts(WORK) === 0) functional = false;
-        break;
-
-      case "REMOTE_DEFENDER":
-      case "DEFENDER":
-        // Must have at least one attack-type part
-        if (c.getActiveBodyparts(ATTACK) === 0 &&
-            c.getActiveBodyparts(RANGED_ATTACK) === 0) functional = false;
-        break;
-
-      case "RESERVER":
-      case "CLAIMER":
-        // Must have CLAIM
-        if (c.getActiveBodyparts(CLAIM) === 0) functional = false;
-        break;
-
-      // SCOUT, LINK_FILLER, MINERAL_HARVESTER: just needs to be alive
-      default:
-        break;
-    }
-
-    if (functional) {
-      // Count as fractional based on damage to key body parts
-      var effectiveness = getCreepEffectiveness(c);
-      counts[role] = (counts[role] || 0) + effectiveness;
-    }
-  }
-
-  return counts;
-}
+// getEffectiveCounts moved to core/ColonyPopulation - what counts as a working creep
+// is a fact about the colony, and both spawners must agree on it.
 
 /**
  * Gather all metrics needed for utility calculations

@@ -29,6 +29,7 @@ import { WeightTableManager } from "./WeightTable";
 import { EconomyTracker } from "../core/EconomyTracker";
 import { logger } from "../utils/Logger";
 import { getCreepTargets } from "../core/ColonyTargets";
+import { getEffectiveCounts } from "../core/ColonyPopulation";
 
 // ============================================================================
 // GLOBAL STATE & CACHES
@@ -361,14 +362,19 @@ function captureColony(room: Room): ColonySnapshot {
 
   // Get creeps from index (no Object.values iteration)
   const roomCreeps = getCreepsForRoom(room.name);
-  const counts: Record<string, number> = {};
+
+  // Effective counts, not raw role counts. A hauler with zero CARRY is alive and useless;
+  // counting it as present means the colony never replaces it and the role silently goes
+  // unfilled while every count says it is staffed. utilitySpawning has always counted
+  // this way, so counting raw here meant the two spawners disagreed about the most basic
+  // input to a spawn decision - how many of this role do we have.
+  const counts = getEffectiveCounts(roomCreeps, room);
   const dyingSoon: Record<string, number> = {};
 
-  // Build creep counts and snapshots
+  // Build creep snapshots
   const creeps: CreepSnapshot[] = [];
   for (const creep of roomCreeps) {
     const role = creep.memory.role;
-    counts[role] = (counts[role] || 0) + 1;
 
     if (creep.ticksToLive && creep.ticksToLive < 100) {
       dyingSoon[role] = (dyingSoon[role] || 0) + 1;

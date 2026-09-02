@@ -393,6 +393,20 @@ A target is a fact about the colony, not a policy of whichever module asks.
 `ColonySnapshot.targets`, and is read by both spawners. The evaluator's parallel switch
 and its six helper functions (197 lines) are deleted.
 
+### One definition of a working creep (`src/core/ColonyPopulation.ts`)
+
+The captures disagreed on semantics, not just shape. `utilitySpawning` counted *effective*
+creeps — a hauler with zero CARRY transports nothing, so it does not count — while the
+framework's snapshot counted raw roles. That is a disagreement about the most basic input
+to a spawn decision: how many of this role do we have. Counting a broken creep as present
+means the colony never replaces it, and the role silently goes unfilled while every count
+says it is staffed.
+
+`getEffectiveCounts()` now lives in `core/ColonyPopulation` and both captures use it.
+
+**Result: shadow agreement moved from 6% to 50%.** Most of what looked like judgement
+disagreement was the two systems reading different worlds.
+
 Three follow-on defects surfaced from having one table to look at:
 
 - **`maxCount` was a second target table.** `SCOUT.maxCount` was 1 while the live system
