@@ -1,3 +1,4 @@
+import { getCreepTargets } from "../core/ColonyTargets";
 /**
  * Opportunistic Creep Renewal Manager
  *
@@ -94,6 +95,33 @@ export class RenewalManager {
   private getRenewalScore(creep: Creep): number {
     const ttl = creep.ticksToLive;
     if (!ttl) return 0;
+
+    // Never renew a role the colony already has too many of. Renewing one is spending
+    // energy to PROLONG a surplus, and it defeats the only mechanism that sheds it -
+    // waiting for the creep to age out.
+    //
+    // E46N37 was the case: income 20/tick against 66/tick of upgrader burn, three large
+    // upgraders it could not feed, and each of them being renewed at the spawn because
+    // the extensions looked full. The room's own target said 2. A creep at 1752 ticks of
+    // age in a 1500-tick lifespan is the signature.
+    //
+    // Extension fill, which the outer guard uses, measures whether hauling works - not
+    // whether the room can afford what it is keeping alive.
+    const role = creep.memory.role;
+    if (role) {
+      const targets = getCreepTargets(
+        this.room,
+        this.room.find(FIND_CONSTRUCTION_SITES).length
+      );
+      if (Object.prototype.hasOwnProperty.call(targets, role)) {
+        let count = 0;
+        for (const name in Game.creeps) {
+          const c = Game.creeps[name];
+          if (c.memory.room === this.room.name && c.memory.role === role) count++;
+        }
+        if (count > (targets[role] || 0)) return 0;
+      }
+    }
 
     // Don't renew if already near max (leave some buffer)
     if (ttl >= 1400) return 0;
