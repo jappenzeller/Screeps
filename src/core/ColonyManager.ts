@@ -4,6 +4,7 @@
  */
 
 import { ColonyStateManager, CachedColonyState } from "./ColonyState";
+import * as Liveness from "./Liveness";
 import { DecisionLogger } from "../logging/DecisionLogger";
 
 /**
@@ -845,6 +846,7 @@ export class ColonyManager {
     if (!mem.remotes) mem.remotes = {};
 
     // Update sync timestamp FIRST (proves the function ran)
+    Liveness.ran("syncRemoteRooms");
     mem.remoteRoomsLastSync = Game.time;
     console.log("[remotes] " + this.roomName + ": sync started at tick " + Game.time + " (bucket: " + Game.cpu.bucket + ")");
 

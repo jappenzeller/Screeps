@@ -353,6 +353,28 @@ Clear memory at path.
 clearMemory("rooms.W1N1.tasks")
 ```
 
+## Liveness
+
+### `liveness()`
+
+Systems that are not running, or run without ever doing anything.
+
+```
+=== Liveness ===
+  ColonyManager.run  ran:4210 (0t ago)  acted:0 (never)  every 1t
+  cleanupMemory      ran:4210 (0t ago)  acted:12 (31t ago)  every 1t
+  syncRemoteRooms    ran:4 (188t ago)  acted:4 (188t ago)  every 1000t
+  FINDINGS:
+    ALWAYS_NOOP ColonyManager.run - ran 4210 times, never did anything
+```
+
+- **NEVER_RAN** - declared in `main.ts`'s `declareSystems()` but never observed. This is
+  what catches dead code like the cleanup nothing called.
+- **STOPPED** - silent for more than 3x its declared cadence.
+- **ALWAYS_NOOP** - ran, never acted. A fact, not a verdict.
+
+Findings also ride to the AWS advisor in segment 90.
+
 ## Framework Migration Commands
 
 The declarative framework is being migrated in one domain at a time. A domain in *shadow*

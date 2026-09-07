@@ -1,3 +1,4 @@
+import * as Liveness from "../core/Liveness";
 /**
  * StatsCollector: Collects colony metrics for external analysis.
  * Stores stats in Memory.stats for AWS Lambda to pull via Screeps API.
@@ -340,6 +341,7 @@ export class StatsCollector {
 
     // Take snapshot periodically
     if (Game.time - Memory.stats!.lastSnapshotTick >= this.SNAPSHOT_INTERVAL) {
+      Liveness.ran("StatsCollector.snapshot");
       this.takeSnapshots();
       Memory.stats!.lastSnapshotTick = Game.time;
     }

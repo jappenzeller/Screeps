@@ -44,6 +44,7 @@ import { runFullRecovery } from "./military/CampaignRecovery";
 // Declarative Framework (Phase 1)
 import { initializeFramework, runFramework } from "./framework";
 import { recordCreepDeath } from "./core/ColonyPopulation";
+import * as Liveness from "./core/Liveness";
 
 // CPU caching utilities
 import { shouldSkipNonEssential, shouldSkipExpensiveEvaluations } from "./utils/cpuCache";
@@ -89,6 +90,11 @@ export function loop(): void {
   // Process any pending commands FIRST (before other logic)
   CommandExecutor.run();
 
+  // Declare what is supposed to run. This is the half that catches dead code, so it
+  // lives here at the wiring point rather than inside each system - a declaration inside
+  // a function nothing calls is exactly as silent as the function.
+  declareSystems();
+
   // Process AWS directives (if enabled)
   DirectiveReader.run();
 
@@ -96,6 +102,7 @@ export function loop(): void {
   StatsCollector.startTick();
 
   // Clean up dead creep memory
+  Liveness.ran("cleanupMemory");
   cleanupMemory();
 
   // Initialize empire memory structures
@@ -103,6 +110,7 @@ export function loop(): void {
 
   // Run declarative framework (skip when CPU bucket is critically low)
   if (!shouldSkipExpensiveEvaluations()) {
+    Liveness.ran("framework");
     runFramework();
   }
 
@@ -186,6 +194,7 @@ export function loop(): void {
 
   // End stats tracking for this tick
   StatsCollector.endTick();
+  Liveness.maybeFlush();
 }
 
 function runRoom(room: Room): void {
@@ -201,6 +210,7 @@ function runRoom(room: Room): void {
 
   // 1. Run ColonyManager to generate/refresh tasks
   const manager = ColonyManager.getInstance(room.name);
+  Liveness.ran("ColonyManager.run");
   manager.run();
 
   // 1b. Log milestone status for early colonies (every 50 ticks)
@@ -241,6 +251,7 @@ function runRoom(room: Room): void {
   }
 
   // 3. Place remaining structures (towers, storage, links, roads, etc.)
+  Liveness.ran("placeStructures");
   placeStructures(room);
 
   // 3. Opportunistic creep renewal (before spawn decisions)
@@ -249,6 +260,7 @@ function runRoom(room: Room): void {
 
   // 4. Spawn creeps (skip if actively renewing)
   if (!isRenewing) {
+    Liveness.ran("spawnCreeps");
     spawnCreeps(room);
   }
 
@@ -341,6 +353,23 @@ function runCreeps(): void {
       });
     }
   }
+}
+
+/**
+ * The systems the main loop is responsible for running, and how often.
+ *
+ * Adding a system here without wiring a Liveness.ran() call makes it report NEVER_RAN,
+ * which is the intended failure mode: the registry should complain about a system that
+ * exists on paper and not in the tick.
+ */
+function declareSystems(): void {
+  Liveness.expect("cleanupMemory", 1);
+  Liveness.expect("framework", 1);
+  Liveness.expect("ColonyManager.run", 1);
+  Liveness.expect("placeStructures", 1);
+  Liveness.expect("spawnCreeps", 1);
+  Liveness.expect("StatsCollector.snapshot", 100);
+  Liveness.expect("syncRemoteRooms", 1000);
 }
 
 function cleanupMemory(): void {

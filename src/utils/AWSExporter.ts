@@ -11,6 +11,8 @@ import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/E
 import { getCreepsByRoom, getHostileCreeps, shouldSkipExport } from "./cpuCache";
 import { DirectiveReader, DirectiveAck } from "../core/DirectiveReader";
 import { AnomalyDetector, Anomaly } from "./AnomalyDetector";
+import * as Liveness from "../core/Liveness";
+import type { LivenessFinding } from "../core/Liveness";
 import { ThresholdMonitor, ThresholdReport } from "./ThresholdMonitor";
 import { getStructureCache, getCreepsForRoom } from "../framework/WorldState";
 
@@ -284,6 +286,10 @@ interface ColonyExport {
   // per-colony rather than at payload top level so it flows through the existing
   // /colonies/{room} API the advisor already reads.
   anomalies: Anomaly[];
+  // Systems that are not running, or run without ever doing anything. Empire-wide rather
+  // than per-colony, but carried here because this is the payload the advisor reads.
+  // Every expensive defect in this codebase was silent; this is what makes silence loud.
+  liveness: LivenessFinding[];
 }
 
 interface DefenseExport {
@@ -1175,6 +1181,7 @@ export class AWSExporter {
           var c = Game.creeps[a.creep];
           return c ? c.memory.room === roomName : a.room === roomName;
         }),
+        liveness: Liveness.report(),
       });
     }
 

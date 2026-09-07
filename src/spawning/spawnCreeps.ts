@@ -12,6 +12,7 @@
 import { getSpawnCandidate } from "./utilitySpawning";
 import { StatsCollector } from "../utils/StatsCollector";
 import { recordActualSpawn } from "../framework/ShadowSpawn";
+import * as Liveness from "../core/Liveness";
 import * as DuoManager from "../combat/DuoManager";
 import * as MilitaryManager from "../military/MilitaryManager";
 import * as WaveCoordinator from "../military/WaveCoordinator";
@@ -49,6 +50,7 @@ export function spawnCreeps(room: Room): void {
   }
 
   if (result === OK) {
+    Liveness.acted("spawnCreeps");
     // Compare the incumbent's choice with the framework SpawnEvaluator's shadow proposal.
     recordActualSpawn(room.name, candidate.role);
 

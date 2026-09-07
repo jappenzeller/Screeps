@@ -423,6 +423,41 @@ Three follow-on defects surfaced from having one table to look at:
   — which is how two spawners drift apart again. Both now state their real number.
 
 
+## Liveness (`src/core/Liveness.ts`)
+
+Reports systems that are not running, or that run without ever doing anything.
+
+Every expensive defect this codebase has produced was **silent** - none threw, appeared in
+a log, or stopped the colony:
+
+| Defect | How long it was invisible |
+|---|---|
+| `MemoryManager.cleanup()` never called by anything | unknown; it held the stale-colony purge *and* the scout mortality tracking, so both silently never ran |
+| Framework spawn arm failing 191 times out of 191 | until someone counted |
+| Remote evaluator proposing an unactivatable room | 75,429 times, then 12,275 more after the first fix |
+| Advisor billing $351/month | no token usage was recorded anywhere |
+
+Each was found by a person going to look, days or weeks late. **The discovery rate for
+every other class of bug is set by this one.**
+
+Two questions, and an uncalled function cannot answer the first about itself:
+
+1. *Did this run at all?* - requires a **declared** expectation
+2. *Did running accomplish anything?* - `ran()` vs `acted()`
+
+Declarations live in `main.ts`'s `declareSystems()`, at the wiring point. A declaration
+inside the system would be exactly as silent as the system. Adding a name there without a
+matching `ran()` call makes it report `NEVER_RAN` - the intended failure mode.
+
+Findings are `NEVER_RAN`, `STOPPED` (silent for 3x its declared cadence), and
+`ALWAYS_NOOP` (ran, never acted). They ride to the AWS advisor in segment 90 alongside
+anomalies, and `liveness()` prints them in the console.
+
+`ALWAYS_NOOP` is a fact, not a verdict - a defender evaluator in a quiet week correctly
+does nothing. The report states what happened and leaves judgement to the reader, because
+the alternative is a threshold that silences real findings.
+
+
 ## Colony Phases
 
 ```

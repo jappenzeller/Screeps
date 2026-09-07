@@ -10,6 +10,7 @@ import { RampartPlanner } from "../structures/RampartPlanner";
 import { AnomalyDetector } from "./AnomalyDetector";
 import { ThresholdMonitor } from "./ThresholdMonitor";
 import { getShadow, resetShadow } from "../framework/ShadowSpawn";
+import * as Liveness from "../core/Liveness";
 import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
@@ -2689,5 +2690,42 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
   global.clearUnreachable = () => {
     delete (Memory as any)._unreachable;
     return "Cleared - remotes will be retried";
+  };
+
+  /**
+   * Systems that are not running, or run without ever doing anything.
+   *
+   * The question this answers - "is anything silently dead?" - had no answer before, and
+   * every expensive defect in this codebase was silent rather than loud.
+   */
+  global.liveness = () => {
+    const snap = Liveness.snapshot();
+    const findings = Liveness.report();
+
+    console.log("=== Liveness ===");
+    const names = Object.keys(snap).sort();
+    if (names.length === 0) {
+      console.log("  No systems declared (Liveness.expect is called from main's declareSystems)");
+      return "OK";
+    }
+
+    for (const n of names) {
+      const s = snap[n];
+      const ranAgo = s.lastRan ? Game.time - s.lastRan + "t ago" : "NEVER";
+      const actedAgo = s.lastActed ? Game.time - s.lastActed + "t ago" : "never";
+      console.log(
+        "  " + n + "  ran:" + s.ran + " (" + ranAgo + ")" +
+        "  acted:" + s.acted + " (" + actedAgo + ")" +
+        "  every " + s.everyTicks + "t"
+      );
+    }
+
+    if (findings.length === 0) {
+      console.log("  no findings");
+    } else {
+      console.log("  FINDINGS:");
+      for (const f of findings) console.log("    " + f.type + " " + f.system + " - " + f.detail);
+    }
+    return "OK";
   };
 }
