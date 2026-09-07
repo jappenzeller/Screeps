@@ -155,8 +155,20 @@ export class SpawnEvaluator extends BaseEvaluator<SpawnAction> {
     if (target === 0) return null;
 
     // === FACTOR: Saturation ===
-    if (current > 0 && target > 0) {
-      const satRatio = current / target;
+    //
+    // Measured against the population that will still be alive when the new creep
+    // arrives, not the raw head count. A creep with 40 ticks left is not staffing the
+    // role across a spawn plus the walk to work.
+    //
+    // Using raw `current` made this factor fight the deficit factor above it: a room
+    // exactly at target with one creep dying scores effectiveDeficit 1 there, and
+    // satRatio 1.0 here, which multiplied the whole option by 0.1 and dropped it under
+    // the `score <= 1` floor. Replacement is the most common spawn event in a steady
+    // colony, so the evaluator proposed nothing on most of the ticks the live spawner
+    // acted - 4,204 of 5,489 shadow events were "framework proposed nothing".
+    const effectiveCurrent = Math.max(0, current - dyingSoon);
+    if (effectiveCurrent > 0 && target > 0) {
+      const satRatio = effectiveCurrent / target;
       const satFactor = satRatio >= 1.0 ? 0.1 : 1 - satRatio * w.factors.saturation;
       this.addFactor(factors, "saturation", satRatio, w.factors.saturation, satFactor - 1);
       score *= Math.max(0.05, satFactor);
