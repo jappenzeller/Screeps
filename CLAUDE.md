@@ -499,9 +499,31 @@ aws lambda update-function-code --function-name screeps-advisor-api --zip-file f
 aws cloudformation deploy --template-file aws/cloudformation/template.yaml --stack-name screeps-advisor-prod --capabilities CAPABILITY_IAM
 ```
 
-### Estimated Cost
+### Cost
 
-~$25/month (DynamoDB, Lambda, API Gateway, Secrets Manager)
+**Infrastructure:** ~$25/month (DynamoDB, Lambda, API Gateway, Secrets Manager).
+
+**Anthropic API:** measured, not estimated - every call logs a `USAGE` line to
+CloudWatch with the four token meters and a computed cost. Read it with:
+
+```bash
+aws logs filter-log-events --log-group-name "/aws/lambda/screeps-analysis-engine-prod"   --filter-pattern "USAGE" --start-time $(( ($(date +%s) - 86400) * 1000 ))
+```
+
+The advisor makes **one call per room per run**, so cost scales with room count.
+
+| | Per run (3 rooms) | Per month |
+|---|---|---|
+| Hourly, effort medium, pretty-printed JSON | $0.4881 | ~$351 |
+| Every 6h, effort low, compact JSON | $0.2693 | **~$32** |
+
+What moved: compact JSON took ~19% off input; effort `low` took ~58% off output
+(under adaptive thinking most output is reasoning, not the stored JSON); the
+6-hour cadence cut run count 6x. Model stays `claude-opus-5`.
+
+**No eval covers this workload**, so the effort setting is unvalidated - if
+observations get shallower, raise it back to `medium` in `analyzeWithClaude()`
+and watch the `USAGE` line for what that costs.
 
 ---
 
