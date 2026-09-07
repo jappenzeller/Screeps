@@ -154,6 +154,27 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
     }
   }
 
+  // Poverty scales the target DOWN, the mirror of the surplus rule above.
+  //
+  // The target scaled up with wealth and never down with need: at RCL 7 it was an
+  // unconditional 3 regardless of whether the room had anything to feed them. E46N37 and
+  // E47N41 both ran three upgraders on zero storage with their extensions two-thirds
+  // empty, burning the energy that should have been refilling the spawn - and, in a
+  // cramped base, those parked upgraders were the creeps physically boxing the haulers in.
+  //
+  // Releases on its own as the room recovers, and yields to a controller actually at risk
+  // of downgrading, which is the one case where upgrading outranks the economy.
+  const buffered = !!room.storage && room.storage.store[RESOURCE_ENERGY] > 10000;
+  const fillRatio =
+    room.energyCapacityAvailable > 0 ? room.energyAvailable / room.energyCapacityAvailable : 1;
+  const downgradeMax = room.controller ? CONTROLLER_DOWNGRADE[room.controller.level] || 0 : 0;
+  const downgradeRisk =
+    !!room.controller && downgradeMax > 0 && room.controller.ticksToDowngrade < downgradeMax * 0.5;
+
+  if (!buffered && fillRatio < 0.5 && !downgradeRisk && upgraderTarget > 1) {
+    upgraderTarget = 1;
+  }
+
   // FLOOR: RCL 1-3 without storage MUST have upgrader target >= 1
   // This is non-negotiable — without upgrading, colony can never progress.
   // Safety net in case any conditional logic above failed.
