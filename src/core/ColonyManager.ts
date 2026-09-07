@@ -907,6 +907,7 @@ export class ColonyManager {
       var removeReason = this.getRemoteInvalidReason(remoteName, config, empireAssignments, myUsername, intel);
       if (removeReason) {
         console.log("[remotes] " + this.roomName + ": removed " + remoteName + " (" + removeReason + ")");
+        Liveness.acted("syncRemoteRooms");
         delete mem.remotes[remoteName];
         removed.push(remoteName);
       }
@@ -1019,6 +1020,8 @@ export class ColonyManager {
         miners: [],
         haulers: [],
       };
+
+      Liveness.acted("syncRemoteRooms");
 
       // Update empire assignments
       empireAssignments[candidate.roomName] = this.roomName;

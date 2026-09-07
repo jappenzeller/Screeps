@@ -41,6 +41,14 @@ interface LivenessStat {
   lastActed: number;
   /** How often it is expected to run, in ticks. Used to judge "stopped". */
   everyTicks: number;
+  /**
+   * Whether this system reports its productive work via acted().
+   *
+   * Without it, ALWAYS_NOOP cannot be distinguished from "nobody instrumented this", and
+   * a registry that emits findings it cannot substantiate teaches you to ignore it - the
+   * exact failure it exists to prevent.
+   */
+  tracksActs: boolean;
 }
 
 const stats: Record<string, LivenessStat> = {};
@@ -80,13 +88,15 @@ export interface LivenessFinding {
  * as silent as the function.
  *
  * @param everyTicks how often it should run; 1 for every-tick systems.
+ * @param tracksActs whether the system calls acted(). Only these can report ALWAYS_NOOP.
  */
-export function expect(name: string, everyTicks = 1): void {
+export function expect(name: string, everyTicks = 1, tracksActs = false): void {
   if (!bootTick) bootTick = Game.time;
   if (!stats[name]) {
-    stats[name] = { ran: 0, acted: 0, lastRan: 0, lastActed: 0, everyTicks };
+    stats[name] = { ran: 0, acted: 0, lastRan: 0, lastActed: 0, everyTicks, tracksActs };
   } else {
     stats[name].everyTicks = everyTicks;
+    stats[name].tracksActs = tracksActs;
   }
 }
 
@@ -144,7 +154,9 @@ export function report(): LivenessFinding[] {
       continue;
     }
 
-    if (s.acted === 0) {
+    // Only claim a no-op for systems that actually report their work. Silence from an
+    // uninstrumented system is absence of evidence, not evidence of absence.
+    if (s.tracksActs && s.acted === 0) {
       findings.push({
         system: name,
         type: "ALWAYS_NOOP",

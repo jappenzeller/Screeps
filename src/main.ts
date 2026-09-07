@@ -363,13 +363,17 @@ function runCreeps(): void {
  * exists on paper and not in the tick.
  */
 function declareSystems(): void {
-  Liveness.expect("cleanupMemory", 1);
+  // Third argument declares that the system reports its productive work via acted().
+  // Only those can be judged ALWAYS_NOOP - claiming a no-op for a system nobody
+  // instrumented would be a finding the registry cannot substantiate, and a registry that
+  // cries wolf gets ignored, which is the failure it exists to prevent.
+  Liveness.expect("cleanupMemory", 1, true);
   Liveness.expect("framework", 1);
   Liveness.expect("ColonyManager.run", 1);
-  Liveness.expect("placeStructures", 1);
-  Liveness.expect("spawnCreeps", 1);
+  Liveness.expect("placeStructures", 1, true);
+  Liveness.expect("spawnCreeps", 1, true);
   Liveness.expect("StatsCollector.snapshot", 100);
-  Liveness.expect("syncRemoteRooms", 1000);
+  Liveness.expect("syncRemoteRooms", 1000, true);
 }
 
 function cleanupMemory(): void {
@@ -388,6 +392,7 @@ function cleanupMemory(): void {
       // mortality feedback added to break E46N37's replace-a-dying-scout loop was dead
       // code from the day it shipped, and _scoutLoss stayed empty in every room.
       recordCreepDeath(deadCreepMem);
+      Liveness.acted("cleanupMemory");
 
       delete Memory.creeps[name];
     }

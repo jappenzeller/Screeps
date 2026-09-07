@@ -1,3 +1,4 @@
+import * as Liveness from "../core/Liveness";
 /**
  * Simple structure placement - one file, one function, no classes.
  * Places structures in priority order, one per tick to avoid CPU spikes.
@@ -104,6 +105,7 @@ function placeOne(room: Room, near: RoomPosition, type: BuildableStructureConsta
   const pos = findBuildPosition(room, near, type);
   if (pos) {
     const result = room.createConstructionSite(pos.x, pos.y, type);
+    if (result === OK) Liveness.acted("placeStructures");
     return result === OK;
   }
   return false;
