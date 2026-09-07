@@ -561,13 +561,13 @@ ${hasCodeContext ? "You have access to the actual game code below. Reference spe
   let userPrompt = `Observe this Screeps colony and record what you notice:
 
 ## Current Colony State
-${JSON.stringify(dataSummary, null, 2)}
+${JSON.stringify(dataSummary)}
 
 ${signalSummary ? `## Signal Data (metrics & events)
-${JSON.stringify(signalSummary, null, 2)}` : ""}
+${JSON.stringify(signalSummary)}` : ""}
 
 ${observationHistory ? `## Your Previous Observations
-${JSON.stringify(observationHistory, null, 2)}` : ""}
+${JSON.stringify(observationHistory)}` : ""}
 `;
 
   // Add code context if available
@@ -619,6 +619,8 @@ Respond ONLY with valid JSON in this exact format:
     ],
   });
 
+  logUsage(roomName, response);
+
   // content is a discriminated union - with thinking enabled the first block is a
   // thinking block, so pick the text block explicitly rather than indexing [0].
   const textBlock = response.content.find((b) => b.type === "text");
@@ -644,6 +646,56 @@ Respond ONLY with valid JSON in this exact format:
   } catch (e) {
     console.error("Failed to parse Claude response:", content);
     throw new Error("Failed to parse Claude response as JSON");
+  }
+}
+
+
+// ==================== Usage accounting ====================
+
+/**
+ * Per-1M-token rates for the model we call. Update alongside MODEL_ID.
+ * Cache writes bill at 1.25x input for the 5-minute TTL, 2x for the 1-hour TTL;
+ * cache reads bill at 0.1x input.
+ */
+const RATES = {
+  "claude-opus-5": { input: 5.0, output: 25.0 },
+  "claude-sonnet-5": { input: 2.0, output: 10.0 },
+  "claude-haiku-4-5": { input: 1.0, output: 5.0 },
+};
+
+/**
+ * Log what a call actually cost.
+ *
+ * Nothing recorded token usage before this, so the only visible signal that the hourly
+ * analysis was expensive was the Lambda's duration - and duration cannot distinguish
+ * "large prompt" from "long reasoning", which are different problems with different
+ * fixes. Thinking tokens bill as output, so on an adaptive-thinking call the output
+ * meter is usually the whole story.
+ */
+function logUsage(roomName, response) {
+  try {
+    const u = response.usage || {};
+    const rate = RATES[MODEL_ID] || RATES["claude-opus-5"];
+
+    const uncachedIn = u.input_tokens || 0;
+    const cacheRead = u.cache_read_input_tokens || 0;
+    const cacheWrite = u.cache_creation_input_tokens || 0;
+    const out = u.output_tokens || 0;
+
+    const cost =
+      (uncachedIn * rate.input +
+        cacheWrite * rate.input * 1.25 +
+        cacheRead * rate.input * 0.1 +
+        out * rate.output) /
+      1e6;
+
+    console.log(
+      `USAGE ${roomName} model=${MODEL_ID} in=${uncachedIn} cache_read=${cacheRead} ` +
+        `cache_write=${cacheWrite} out=${out} stop=${response.stop_reason} ` +
+        `cost=$${cost.toFixed(4)}`
+    );
+  } catch (e) {
+    console.error("Failed to log usage:", e);
   }
 }
 
