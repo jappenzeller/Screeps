@@ -72,7 +72,10 @@ export class RemoteMiningEvaluator extends BaseEvaluator<RemoteAction> {
     for (const remote of colony.remotes) {
       if (remote.active) continue;
       // A deliberate pause with no expiry is a human/advisor decision - respect it.
-      if (remote.pauseReason && remote.paused) continue;
+      // Same predicate the executor uses. It checked `paused`, which means "the pause
+      // timer is still running" - false on an indefinitely paused remote - so every tick
+      // it proposed reactivating one the executor then refused as deliberately paused.
+      if (remote.pauseReason && !remote.pausedUntil) continue;
       if (remote.hostilePresent) continue;
 
       const activateOption = this.evaluateActivate(remote, colony, state, economyHealth, w);

@@ -641,6 +641,7 @@ function captureRemotes(colonyName: string): RemoteSnapshot[] {
       sources,
       active: config.active,
       paused: !!config.pausedUntil && Game.time < config.pausedUntil,
+      pausedUntil: config.pausedUntil,
       pauseReason: config.pauseReason,
       minerCount,
       haulerCount,

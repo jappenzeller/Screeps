@@ -164,6 +164,14 @@ export interface RemoteSnapshot {
   sources: number;
   active: boolean;
   paused: boolean;
+  /**
+   * Tick the pause expires, if it is a timed one. Absent with a `pauseReason` set means
+   * an indefinite, deliberate pause. The evaluator needs this to apply the same rule the
+   * executor does - without it, `paused` (which means "timer still running") reads false
+   * on a deliberately paused remote, so the evaluator proposed reactivating it and the
+   * executor refused, every tick, 12,275 times.
+   */
+  pausedUntil?: number;
   pauseReason?: string;
   minerCount: number;
   haulerCount: number;
