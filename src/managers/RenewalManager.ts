@@ -1,4 +1,5 @@
 import { getCreepTargets } from "../core/ColonyTargets";
+import { canAffordDiscretionary } from "../core/EconomyTracker";
 /**
  * Opportunistic Creep Renewal Manager
  *
@@ -42,6 +43,12 @@ export class RenewalManager {
     // energy needed to refill extensions AND blocks the replacements that would end
     // the shortage - the amplifier that turns a dip into a death spiral.
     if (this.room.energyAvailable < this.room.energyCapacityAvailable * 0.5) return false;
+
+    // Extension fill alone is not solvency. It measures whether hauling works: E46N37
+    // held its extensions at 65% out of a 20/tick trickle while running at -46/tick, and
+    // renewed a 33-WORK upgrader past 1752 ticks of age on the strength of that. Renewal
+    // is discretionary spending, so it answers to the colony's economy.
+    if (!canAffordDiscretionary(this.room)) return false;
 
     // Find best candidate near spawn
     const candidate = this.findBestCandidateNearSpawn();

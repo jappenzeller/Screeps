@@ -340,3 +340,47 @@ export class EconomyTracker {
     return Memory.economy[this.room.name];
   }
 }
+
+// ============================================================================
+// SHARED ACCESSOR
+// ============================================================================
+
+const metricsCache: Record<string, { tick: number; metrics: ColonyEconomyMetrics }> = {};
+
+/**
+ * The colony's economy, computed once per room per tick.
+ *
+ * This is the single answer to "can the room afford this". It had four, all different:
+ * RenewalManager tested extension fill, the upgrader target tested extension fill and
+ * later walked creeps by hand, and only the framework's evaluator read these metrics.
+ * Extension fill is a hauling indicator - E46N37 held its extensions at 65% out of a
+ * 20/tick trickle while running at -46/tick - and the hand-rolled creep walk missed
+ * remote income entirely.
+ *
+ * Cached because wiring more consumers to the right number should not cost more CPU than
+ * leaving them on their own wrong ones.
+ */
+export function getColonyEconomy(room: Room): ColonyEconomyMetrics {
+  const hit = metricsCache[room.name];
+  if (hit && hit.tick === Game.time) return hit.metrics;
+
+  const metrics = new EconomyTracker(room).getMetrics();
+  metricsCache[room.name] = { tick: Game.time, metrics };
+  return metrics;
+}
+
+/**
+ * True when the room has surplus to spend on discretionary work - upgrading beyond the
+ * minimum, renewing a creep it already has enough of.
+ *
+ * A storage buffer counts as afforded even at negative flow: that is what a buffer is
+ * for. Without one, the room has to be at least breaking even.
+ */
+export function canAffordDiscretionary(room: Room): boolean {
+  const e = getColonyEconomy(room);
+  if (e.stored > DISCRETIONARY_BUFFER) return true;
+  return e.netFlow >= 0;
+}
+
+/** Stored energy above which a room may spend freely regardless of instantaneous flow. */
+const DISCRETIONARY_BUFFER = 10000;

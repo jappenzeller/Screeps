@@ -19,6 +19,7 @@
 import { ColonyManager } from "./ColonyManager";
 import { getMilestones } from "./ColonyMilestones";
 import { scoutingViable } from "./ColonyPopulation";
+import { canAffordDiscretionary, getColonyEconomy } from "./EconomyTracker";
 import { LinkManager } from "../structures/LinkManager";
 import { CONFIG } from "../config";
 
@@ -172,39 +173,35 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
   //
   // Releases on its own as the room recovers, and yields to a controller actually at risk
   // of downgrading, which is the one case where upgrading outranks the economy.
-  const buffered = !!room.storage && room.storage.store[RESOURCE_ENERGY] > 10000;
   const downgradeMax = room.controller ? CONTROLLER_DOWNGRADE[room.controller.level] || 0 : 0;
   const downgradeRisk =
     !!room.controller && downgradeMax > 0 && room.controller.ticksToDowngrade < downgradeMax * 0.5;
 
-  // Measure whether the room can actually feed its upgraders, rather than guessing from
-  // how full the extensions look.
+  // Poverty scales the target DOWN, the mirror of the surplus rule above. The target used
+  // to scale up with wealth and never down with need: at RCL 7 it was an unconditional 3
+  // regardless of whether the room had anything to feed them. E46N37 and E47N41 both ran
+  // three upgraders while running at -46 and -28 energy per tick.
   //
-  // The first version of this cap used extension fill, and it would not have fired on
-  // E46N37: its haulers keep the extensions at 65% out of a 20/tick trickle, so the room
-  // looked healthy while running at -99 energy/tick. Extension fill measures whether
-  // hauling works, not whether the room is solvent.
+  // Solvency comes from EconomyTracker, which is the colony's one answer to "can we
+  // afford this" - it counts remote income and every category of burn. Two earlier
+  // versions of this cap got it wrong independently: one tested extension fill, which
+  // measures whether hauling works rather than whether the room is solvent, and one
+  // walked the room's creeps by hand and missed remote income entirely.
   //
-  // Income and burn are both directly countable. Upgrading is the discretionary sink, so
-  // it gets a share of income and the rest stays available for spawning, repair and
-  // building a buffer. Shedding one upgrader per death converges downward instead of
-  // lurching, and reverses on its own when income recovers.
-  if (!buffered && !downgradeRisk && upgraderTarget > 1) {
-    let income = 0;
-    let upgradeBurn = 0;
+  // Shedding one upgrader per death converges downward instead of lurching, and reverses
+  // on its own when income recovers. A controller actually near downgrade outranks the
+  // economy - that is the one case where upgrading is not discretionary.
+  if (!downgradeRisk && upgraderTarget > 1 && !canAffordDiscretionary(room)) {
+    const economy = getColonyEconomy(room);
     let upgraders = 0;
     for (const name in Game.creeps) {
       const c = Game.creeps[name];
-      if (c.memory.room !== room.name) continue;
-      if (c.memory.role === "HARVESTER" || c.memory.role === "REMOTE_MINER") {
-        income += c.getActiveBodyparts(WORK) * 2;
-      } else if (c.memory.role === "UPGRADER") {
-        upgraders++;
-        upgradeBurn += c.getActiveBodyparts(WORK);
-      }
+      if (c.memory.room === room.name && c.memory.role === "UPGRADER") upgraders++;
     }
 
-    if (upgraders > 1 && upgradeBurn > income * UPGRADE_INCOME_SHARE) {
+    // Only shed while upgrading is actually a meaningful share of the shortfall - if the
+    // room is losing energy for some other reason, cutting upgraders will not fix it.
+    if (upgraders > 1 && economy.upgradeBurn > economy.totalIncome * UPGRADE_INCOME_SHARE) {
       upgraderTarget = Math.max(1, upgraders - 1);
     }
   }
