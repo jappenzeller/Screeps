@@ -201,8 +201,15 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
 
     // Only shed while upgrading is actually a meaningful share of the shortfall - if the
     // room is losing energy for some other reason, cutting upgraders will not fix it.
-    if (upgraders > 1 && economy.upgradeBurn > economy.totalIncome * UPGRADE_INCOME_SHARE) {
-      upgraderTarget = Math.max(1, upgraders - 1);
+    //
+    // No `upgraders > 1` guard here, deliberately. An earlier version had one and it made
+    // the cap oscillate rather than converge: E46N37 shed to a single upgrader, the guard
+    // then switched the cap off, the target reverted to 3, and it immediately spawned a
+    // 54-WORK replacement into a room earning 20/tick. The arithmetic already holds the
+    // floor at one - min(target, upgraders - 1) is 0 when a lone upgrader remains, and
+    // max(1, ...) lifts it back - so the count needs no separate guard.
+    if (economy.upgradeBurn > economy.totalIncome * UPGRADE_INCOME_SHARE) {
+      upgraderTarget = Math.max(1, Math.min(upgraderTarget, upgraders - 1));
     }
   }
 
