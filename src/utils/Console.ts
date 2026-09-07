@@ -2726,6 +2726,22 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       console.log("  FINDINGS:");
       for (const f of findings) console.log("    " + f.type + " " + f.system + " - " + f.detail);
     }
+
+    // Mirror to Memory as well. Console output needs a websocket, so a command that only
+    // logs cannot be read by the API tooling this project actually diagnoses with.
+    (Memory as any)._livenessReport = {
+      tick: Game.time,
+      systems: names.map((n) => {
+        const s = snap[n];
+        return (
+          n + " ran:" + s.ran + " acted:" + s.acted +
+          " lastRan:" + (s.lastRan ? Game.time - s.lastRan : "NEVER") +
+          " every:" + s.everyTicks
+        );
+      }),
+      findings: findings.map((f) => f.type + " " + f.system + " - " + f.detail),
+    };
+
     return "OK";
   };
 }
