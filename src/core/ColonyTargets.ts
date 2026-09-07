@@ -28,6 +28,14 @@ import { CONFIG } from "../config";
  */
 const MAX_SURPLUS_UPGRADERS = 4;
 
+/**
+ * Share of a room's harvest income that upgrading may consume when there is no storage
+ * buffer. The remainder has to cover spawning, repair, and rebuilding the buffer - a room
+ * that spends everything on the controller never accumulates the storage that would let
+ * it spend more.
+ */
+const UPGRADE_INCOME_SHARE = 0.5;
+
 export function getCreepTargets(room: Room, totalSites: number): Record<string, number> {
   const rcl = room.controller?.level || 0;
   const sources = room.find(FIND_SOURCES).length;
@@ -165,14 +173,40 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
   // Releases on its own as the room recovers, and yields to a controller actually at risk
   // of downgrading, which is the one case where upgrading outranks the economy.
   const buffered = !!room.storage && room.storage.store[RESOURCE_ENERGY] > 10000;
-  const fillRatio =
-    room.energyCapacityAvailable > 0 ? room.energyAvailable / room.energyCapacityAvailable : 1;
   const downgradeMax = room.controller ? CONTROLLER_DOWNGRADE[room.controller.level] || 0 : 0;
   const downgradeRisk =
     !!room.controller && downgradeMax > 0 && room.controller.ticksToDowngrade < downgradeMax * 0.5;
 
-  if (!buffered && fillRatio < 0.5 && !downgradeRisk && upgraderTarget > 1) {
-    upgraderTarget = 1;
+  // Measure whether the room can actually feed its upgraders, rather than guessing from
+  // how full the extensions look.
+  //
+  // The first version of this cap used extension fill, and it would not have fired on
+  // E46N37: its haulers keep the extensions at 65% out of a 20/tick trickle, so the room
+  // looked healthy while running at -99 energy/tick. Extension fill measures whether
+  // hauling works, not whether the room is solvent.
+  //
+  // Income and burn are both directly countable. Upgrading is the discretionary sink, so
+  // it gets a share of income and the rest stays available for spawning, repair and
+  // building a buffer. Shedding one upgrader per death converges downward instead of
+  // lurching, and reverses on its own when income recovers.
+  if (!buffered && !downgradeRisk && upgraderTarget > 1) {
+    let income = 0;
+    let upgradeBurn = 0;
+    let upgraders = 0;
+    for (const name in Game.creeps) {
+      const c = Game.creeps[name];
+      if (c.memory.room !== room.name) continue;
+      if (c.memory.role === "HARVESTER" || c.memory.role === "REMOTE_MINER") {
+        income += c.getActiveBodyparts(WORK) * 2;
+      } else if (c.memory.role === "UPGRADER") {
+        upgraders++;
+        upgradeBurn += c.getActiveBodyparts(WORK);
+      }
+    }
+
+    if (upgraders > 1 && upgradeBurn > income * UPGRADE_INCOME_SHARE) {
+      upgraderTarget = Math.max(1, upgraders - 1);
+    }
   }
 
   // FLOOR: RCL 1-3 without storage MUST have upgrader target >= 1
