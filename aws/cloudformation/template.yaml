@@ -1761,7 +1761,7 @@ Resources:
     Properties:
       Name: !Sub screeps-run-analysis-${Environment}
       Description: Run Screeps AI analysis every hour
-      ScheduleExpression: rate(1 hour)
+      ScheduleExpression: rate(6 hours)
       State: ENABLED
       Targets:
         - Id: analysis-engine

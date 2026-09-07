@@ -613,7 +613,12 @@ Respond ONLY with valid JSON in this exact format:
     model: MODEL_ID,
     max_tokens: 16000,
     thinking: { type: "adaptive" },
-    output_config: { effort: "medium" },
+    // The task is "read a data summary and report what you notice" - well inside what low
+    // effort handles. Output was two thirds of the bill and, with adaptive thinking, most
+    // of that output was reasoning rather than the JSON that actually gets stored.
+    // Raise this back to medium if the observations get shallower; the USAGE log line
+    // makes the cost of that decision visible either way.
+    output_config: { effort: "low" },
     messages: [
       { role: "user", content: systemPrompt + "\n\n" + userPrompt },
     ],
