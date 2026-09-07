@@ -864,6 +864,44 @@ function findAlternativeExit(creep: Creep, exitDir: ExitConstant): RoomPosition 
   return sorted[1] || sorted[0] || null;
 }
 
+
+/** Ticks of no movement before we start pushing past a friendly creep. */
+const SWAP_AFTER_STUCK = 2;
+
+/**
+ * Trade places with one of our own creeps that is standing on our next step.
+ *
+ * Both creeps move in the same tick, so the exchange is legal. The blocker's own role
+ * logic may issue its own move later in the tick and override this one - that is fine,
+ * because it means the blocker is going somewhere and the jam clears anyway. The case
+ * this actually rescues is the blocker that is stationary by design (an upgrader parked
+ * at the controller, a miner on its container), which never issues a move at all.
+ *
+ * Returns true when a swap was issued.
+ */
+function trySwap(creep: Creep, targetPos: RoomPosition): boolean {
+  // Where would we step next if creeps were not in the way?
+  const path = creep.pos.findPathTo(targetPos, {
+    ignoreCreeps: true,
+    maxRooms: 1,
+    range: 1,
+  });
+  if (path.length === 0) return false;
+
+  const step = path[0];
+  const blockers = creep.room.lookForAt(LOOK_CREEPS, step.x, step.y);
+  if (blockers.length === 0) return false;
+
+  const blocker = blockers[0];
+  if (!blocker.my) return false; // Cannot ask a hostile to move.
+  if (blocker.fatigue > 0) return false; // It could not move even if it wanted to.
+  if (blocker.spawning) return false;
+
+  blocker.move(blocker.pos.getDirectionTo(creep.pos));
+  creep.move(creep.pos.getDirectionTo(blocker.pos));
+  return true;
+}
+
 /**
  * Smart moveTo wrapper with stuck detection and border handling.
  * Uses safe pathfinding for cross-room movement by default.
@@ -893,6 +931,22 @@ export function smartMoveTo(
     creep.memory._lastPos = currentPos;
 
     const stuckCount = creep.memory._stuckCount || 0;
+
+    // Blocked by one of our own creeps: swap with it rather than wait.
+    //
+    // A stationary creep is a wall that pathfinding cannot see. moveTo with ignoreCreeps
+    // returns OK, plans straight through the occupied tile, and the move then fails
+    // silently - no error, no log, nothing to notice. Observed live: a hauler in E47N41
+    // sat at 5,31 for hundreds of ticks with both of its two walkable exits occupied by
+    // upgraders, two tiles from a container holding 1,330 energy, while the room ran its
+    // extensions down to 256 of 4,600 and its storage to zero.
+    //
+    // Swapping works because both creeps move in the same tick. It is tried before the
+    // random shove because a shove into the only other blocked tile achieves nothing.
+    if (stuckCount >= SWAP_AFTER_STUCK && trySwap(creep, targetPos)) {
+      creep.memory._stuckCount = 0;
+      return OK;
+    }
 
     // After 5 ticks stuck: random shove to break deadlock
     if (stuckCount > 5) {

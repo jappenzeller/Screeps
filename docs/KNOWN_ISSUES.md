@@ -1,6 +1,35 @@
 # Known Issues
 
 
+## Haulers boxed in by their own creeps, starving RCL 7 rooms (FIXED)
+
+**Symptom:** E47N41 (RCL 7) sat at 0 storage with 256 of 4,600 extension energy while its
+own containers held 2,960 and a link held 776. Both haulers were in COLLECTING with zero
+energy. E46N37 showed the same shape.
+
+**Cause:** traffic deadlock. The hauler stood at 5,31 in a pocket with exactly two
+walkable exits, and a stationary upgrader occupied each of them. `moveTo` with
+`ignoreCreeps: true` returns **OK** - it plans straight through the occupied tile - and
+the move then fails silently. No error, no log, nothing to notice. The only recovery was a
+random shove every 6 ticks, which cannot help when every exit is blocked.
+
+A stationary creep is a wall that pathfinding cannot see.
+
+**Fix:** `smartMoveTo` now swaps with a friendly creep standing on its next step, after 2
+ticks of no movement. Both creeps move in the same tick so the exchange is legal. If the
+blocker issues its own move later in the tick, the jam is clearing anyway; the case this
+rescues is the blocker that is stationary by design - an upgrader parked at the
+controller, a miner on its container - which never issues a move at all.
+
+**Verified:** the wedged hauler moved 5,31 -> 6,30 within a tick of deploy, a container
+drained 1,710 -> 410, and E47N41's available energy went 256 -> 1,546.
+
+**Worth noting:** `AnomalyDetector` had already flagged all three frozen haulers with the
+correct diagnosis ("energy available and reachable at 7,33 - not collecting it"), and the
+findings had been riding to AWS unread. The detector worked; nobody was reading it. That
+is what `core/Liveness.ts` and the segment 90 export are for.
+
+
 ## Capacity-sized bodies deadlocked a starved room (FIXED)
 
 **Symptom:** E47N41 (RCL 7, `energyCapacityAvailable` 4600) ran on a **single 200-energy
