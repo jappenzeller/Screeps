@@ -57,10 +57,25 @@ export class RemoteMiningEvaluator extends BaseEvaluator<RemoteAction> {
       }
     }
 
-    // Evaluate potential new remotes from intel
-    const potentialRemotes = this.findPotentialRemotes(colony, state);
-    for (const intel of potentialRemotes) {
-      const activateOption = this.evaluateActivate(intel, colony, state, economyHealth, w);
+    // Reactivate remotes the colony already has configured but is not currently running.
+    //
+    // This used to scan intel for BRAND NEW rooms and propose activating them, which is
+    // discovery - a job ColonyManager.syncRemoteRooms() owns, because only it validates
+    // route distance, cap and overlap. The two disagreed about what "distance 2" means
+    // (intel uses linear distance, addRemote measures the actual route), so the evaluator
+    // proposed E45N41 every tick and the executor declined it every tick: 75,429 refused
+    // proposals and climbing, none of which could ever succeed.
+    //
+    // Reactivation is the real value-add here: syncRemoteRooms only clears expired pauses
+    // on its 1000-tick cadence, so a remote whose threat has passed sits idle for up to
+    // 1000 ticks. This notices within one.
+    for (const remote of colony.remotes) {
+      if (remote.active) continue;
+      // A deliberate pause with no expiry is a human/advisor decision - respect it.
+      if (remote.pauseReason && remote.paused) continue;
+      if (remote.hostilePresent) continue;
+
+      const activateOption = this.evaluateActivate(remote, colony, state, economyHealth, w);
       if (activateOption) options.push(activateOption);
     }
 
@@ -177,7 +192,7 @@ export class RemoteMiningEvaluator extends BaseEvaluator<RemoteAction> {
   // ==========================================================================
 
   private evaluateActivate(
-    intel: RoomIntelSnapshot,
+    intel: ColonySnapshot["remotes"][0],
     colony: ColonySnapshot,
     state: WorldState,
     economyHealth: number,
@@ -201,7 +216,7 @@ export class RemoteMiningEvaluator extends BaseEvaluator<RemoteAction> {
     score *= sourceBonus;
 
     // Factor: Distance (closer = better)
-    const distance = intel.distanceFromHome;
+    const distance = intel.distance;
     const distancePenalty = Math.max(0.3, 1 + distance * w.factors.distance * 0.3);
     this.addFactor(factors, "distance", distance, Math.abs(w.factors.distance), distancePenalty - 1);
     score *= distancePenalty;
@@ -216,9 +231,9 @@ export class RemoteMiningEvaluator extends BaseEvaluator<RemoteAction> {
     }
 
     // Factor: Safety (no hostiles = better)
-    if (intel.hostile || intel.invaderCore) {
+    if (intel.hostilePresent) {
       const safetyPenalty = 0.2;
-      this.addFactor(factors, "hostile", intel.hostileCount, w.factors.safety, safetyPenalty - 1);
+      this.addFactor(factors, "hostile", 1, w.factors.safety, safetyPenalty - 1);
       score *= safetyPenalty;
     } else {
       const safetyBonus = 1.2;
@@ -295,49 +310,5 @@ export class RemoteMiningEvaluator extends BaseEvaluator<RemoteAction> {
     if (rcl === 6) return 4;
     if (rcl >= 7) return 5;
     return 0;
-  }
-
-  private findPotentialRemotes(
-    colony: ColonySnapshot,
-    state: WorldState
-  ): RoomIntelSnapshot[] {
-    const potentials: RoomIntelSnapshot[] = [];
-    const existingRemotes = new Set(colony.remotes.map((r) => r.roomName));
-
-    // Check intel for nearby rooms that could be remotes
-    for (const [roomName, intel] of state.intel) {
-      // Skip if already a remote
-      if (existingRemotes.has(roomName)) continue;
-
-      // Skip owned rooms
-      if (intel.owner) continue;
-
-      // Skip source keeper rooms
-      if (intel.roomType === "sourceKeeper") continue;
-
-      // Skip center/highway rooms
-      if (intel.roomType !== "normal") continue;
-
-      // Skip if no sources
-      if (intel.sources === 0) continue;
-
-      // Skip if too far (distance > 2)
-      if (intel.distanceFromHome > 2) continue;
-
-      // Skip if stale intel (older than 10000 ticks)
-      if (Game.time - intel.lastScanned > 10000) continue;
-
-      potentials.push(intel);
-    }
-
-    // Sort by distance, then sources
-    potentials.sort((a, b) => {
-      if (a.distanceFromHome !== b.distanceFromHome) {
-        return a.distanceFromHome - b.distanceFromHome;
-      }
-      return b.sources - a.sources;
-    });
-
-    return potentials;
   }
 }
