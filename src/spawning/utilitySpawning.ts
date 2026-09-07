@@ -604,6 +604,23 @@ function calculateUtility(role: SpawnRole, state: ColonyState): number {
   // Effective deficit includes creeps about to die
   const effectiveDeficit = deficit + dying;
 
+  // A target of zero means the colony does not want this role right now, and that is the
+  // end of it. Most utility functions already respect the target implicitly, because they
+  // multiply by deficit - but the ones with a constant base (SCOUT, RESERVER,
+  // REMOTE_HAULER, REMOTE_DEFENDER, ROAD_BUILDER) never consulted it and could spawn
+  // against an explicit target of zero.
+  //
+  // That was not theoretical: E46N37 loses a scout every ~50 ticks to the hostiles on all
+  // three of its exits, so scoutingViable() sets its SCOUT target to 0 - and the live
+  // spawner kept replacing them anyway, out of the room with the least energy in the
+  // empire. Roles absent from the map (CLAIMER, combat roles) are unaffected.
+  if (
+    Object.prototype.hasOwnProperty.call(state.targets, role) &&
+    (state.targets[role] || 0) === 0
+  ) {
+    return 0;
+  }
+
   switch (role) {
     case "PIONEER":
       return pioneerUtility(state);
