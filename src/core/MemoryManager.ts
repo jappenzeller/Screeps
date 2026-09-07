@@ -1,5 +1,3 @@
-import { CONFIG } from "../config";
-import { recordCreepDeath } from "./ColonyPopulation";
 import { logger } from "../utils/Logger";
 
 declare global {
@@ -34,40 +32,16 @@ export class MemoryManager {
     }
   }
 
-  static cleanup(): void {
-    // Clean up dead creeps every 10 ticks (cheap, prevents accumulation)
-    if (Game.time % 10 === 0) {
-      for (const name in Memory.creeps) {
-        if (!Game.creeps[name]) {
-          // Let the death inform future decisions before the evidence is discarded.
-          recordCreepDeath(Memory.creeps[name]);
-          delete Memory.creeps[name];
-        }
-      }
-    }
-
-    // Clean up stale room data less frequently (more expensive)
-    if (Game.time % CONFIG.MEMORY_CLEANUP_INTERVAL !== 0) return;
-
-    logger.debug("MemoryManager", "Running full memory cleanup");
-
-    // NOTE: Memory.rooms cleanup for non-owned rooms has been removed.
-    // Intel data now lives in Memory.intel (managed by gatherRoomIntel).
-    // Memory.rooms is only used for owned room data (assignments, sourceContainers, etc.)
-
-    // Clean up colony data for rooms we no longer own
-    if (Memory.colonies) {
-      for (var colonyRoom in Memory.colonies) {
-        var room = Game.rooms[colonyRoom];
-        // Only delete if we have visibility AND it's no longer ours
-        // (if no visibility, we can't confirm we lost it)
-        if (room && room.controller && !room.controller.my) {
-          logger.warn("MemoryManager", "Removing colony data for lost room: " + colonyRoom);
-          delete Memory.colonies[colonyRoom];
-        }
-      }
-    }
-  }
+  /**
+   * Removed. This was a second, never-called creep-and-colony cleanup sitting alongside
+   * the live one in main.ts's cleanupMemory(). Nothing referenced it, so everything
+   * written here silently never ran - including the stale-colony purge (Memory.colonies
+   * grew four entries for rooms lost millions of ticks earlier) and, later, the scout
+   * mortality hook that was added to it in good faith.
+   *
+   * Dead code that mirrors a live path is worse than no code: it reads as the place to
+   * make the change. Both behaviours now live in main.ts's cleanupMemory().
+   */
 
   static recordStats(): void {
     // Stats recording is now handled by StatsCollector

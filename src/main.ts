@@ -43,6 +43,7 @@ import { runFullRecovery } from "./military/CampaignRecovery";
 
 // Declarative Framework (Phase 1)
 import { initializeFramework, runFramework } from "./framework";
+import { recordCreepDeath } from "./core/ColonyPopulation";
 
 // CPU caching utilities
 import { shouldSkipNonEssential, shouldSkipExpensiveEvaluations } from "./utils/cpuCache";
@@ -353,7 +354,27 @@ function cleanupMemory(): void {
           !deadCreepMem.attacked) {
         MilitaryManager.reportCreepLost(deadCreepMem.campaignId);
       }
+      // Let the death inform future decisions before the evidence is discarded.
+      // This lived in MemoryManager.cleanup(), which nothing ever called - so the scout
+      // mortality feedback added to break E46N37's replace-a-dying-scout loop was dead
+      // code from the day it shipped, and _scoutLoss stayed empty in every room.
+      recordCreepDeath(deadCreepMem);
+
       delete Memory.creeps[name];
+    }
+  }
+
+  // Colony data for rooms we no longer own. Same story: this was written in
+  // MemoryManager.cleanup() and never ran, which is why Memory.colonies accumulated four
+  // entries for rooms lost 2-4M ticks ago and had to be purged by hand mid-session. Only
+  // delete with visibility - no vision cannot confirm a loss.
+  if (Game.time % 1000 === 0 && Memory.colonies) {
+    for (const colonyRoom in Memory.colonies) {
+      const room = Game.rooms[colonyRoom];
+      if (room && room.controller && !room.controller.my) {
+        console.log(`[cleanup] Removing colony data for lost room: ${colonyRoom}`);
+        delete Memory.colonies[colonyRoom];
+      }
     }
   }
 
