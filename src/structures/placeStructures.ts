@@ -738,10 +738,41 @@ function findTerminalPosition(
 
   var candidates: Array<{ x: number; y: number; score: number }> = [];
 
-  // Terminal must be adjacent to storage (range 1)
-  for (var dx = -1; dx <= 1; dx++) {
-    for (var dy = -1; dy <= 1; dy++) {
-      if (dx === 0 && dy === 0) continue;
+  // Adjacent to storage is PREFERRED, not required.
+  //
+  // This searched only the eight tiles touching storage and returned null when none were
+  // free. In E43N39 all eight are permanently taken - two walls, two extensions, two
+  // tower+rampart pairs and two roads - so the room could never place a terminal at all,
+  // and the liveness registry caught it as "placeStructures ran 77850 times, never did
+  // anything". That silently blocked the whole plan of shipping E43N39's surplus to the
+  // two RCL 7 rooms sitting at zero storage.
+  //
+  // Adjacency saves a few hauler steps; it is not a requirement of the game. Widen until
+  // something is available, and let the distance penalty below keep the preference.
+  var searchRadius = 1;
+  for (; searchRadius <= TERMINAL_MAX_RADIUS; searchRadius++) {
+    collectTerminalCandidates(room, terrain, storage, searchRadius, candidates);
+    if (candidates.length > 0) break;
+  }
+
+  return pickBest(candidates);
+}
+
+/** How far from storage a terminal may be placed before we give up entirely. */
+const TERMINAL_MAX_RADIUS = 4;
+
+/** Score and collect buildable tiles exactly `radius` away from storage. */
+function collectTerminalCandidates(
+  room: Room,
+  terrain: RoomTerrain,
+  storage: StructureStorage,
+  radius: number,
+  candidates: Array<{ x: number; y: number; score: number }>
+): void {
+  for (var dx = -radius; dx <= radius; dx++) {
+    for (var dy = -radius; dy <= radius; dy++) {
+      // Only the ring at this exact radius - inner rings were already tried.
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
 
       var x = storage.pos.x + dx;
       var y = storage.pos.y + dy;
@@ -775,21 +806,29 @@ function findTerminalPosition(
       }
       if (hasRoad) score += 1;
 
+      // Distance from storage is a preference, expressed as a penalty rather than a
+      // filter, so a farther tile still wins over no terminal at all.
+      score -= (radius - 1) * 3;
+
       candidates.push({ x: x, y: y, score: score });
     }
   }
+}
 
-  if (candidates.length === 0) {
-    console.log("[Terminal] No valid positions adjacent to storage in " + room.name);
-    return null;
-  }
+/** Highest-scoring candidate, or null when the search found nothing anywhere. */
+function pickBest(
+  candidates: Array<{ x: number; y: number; score: number }>
+): { x: number; y: number } | null {
+  if (candidates.length === 0) return null;
 
-  // Sort by score descending
-  candidates.sort(function(a, b) { return b.score - a.score; });
+  candidates.sort(function (a, b) {
+    return b.score - a.score;
+  });
 
   var best = candidates[0];
-  console.log("[Terminal] Best position for " + room.name + ": (" + best.x + "," + best.y + ") score=" + best.score);
-
+  console.log(
+    "[Terminal] Best position: (" + best.x + "," + best.y + ") score=" + best.score
+  );
   return best;
 }
 
