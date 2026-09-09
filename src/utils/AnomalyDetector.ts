@@ -162,6 +162,16 @@ export class AnomalyDetector {
     const movingRecently = Game.time - (mem._anMovedAt || 0) < STUCK_TICKS;
     const threshold = movingRecently ? STUCK_TICKS * MOVING_STUCK_MULTIPLIER : STUCK_TICKS;
 
+    // A creep doing its job in place is not stuck.
+    //
+    // A static miner sits on its container, harvests and transfers in the same tick, and
+    // therefore never moves and never changes its carried energy - the exact signature
+    // this detector looks for. All six harvesters in the empire were being reported, and
+    // three of the four most recent findings were these. Noise is not harmless: an
+    // anomaly stream that is mostly false teaches you to skip it, which is how the real
+    // stuck haulers sat unread for as long as they did.
+    if (AnomalyDetector.isWorkingInPlace(creep)) return;
+
     if (energyIdle >= threshold && stateIdle >= threshold) {
       // Pay for the expensive explanation only now, and only once per tick.
       let diagnosis: string | undefined;
@@ -206,6 +216,31 @@ export class AnomalyDetector {
     }
   }
 
+
+
+  /**
+   * True when the creep's role is stationary by design and it is in position to work.
+   *
+   * Deliberately narrow: it requires the creep to actually be able to do the job (WORK
+   * parts) and for there to be work in reach (a source with energy). A harvester with no
+   * WORK parts, or parked away from any source, is still reported - those are real
+   * faults, and they are the reason this is not simply a role exclusion.
+   */
+  private static isWorkingInPlace(creep: Creep): boolean {
+    const role = creep.memory.role;
+    if (role !== "HARVESTER" && role !== "REMOTE_MINER" && role !== "MINERAL_HARVESTER") {
+      return false;
+    }
+    if (creep.getActiveBodyparts(WORK) === 0) return false;
+
+    const source = creep.pos.findInRange(FIND_SOURCES, 1)[0];
+    if (source && source.energy > 0) return true;
+
+    if (role === "MINERAL_HARVESTER" && creep.pos.findInRange(FIND_MINERALS, 1).length > 0) {
+      return true;
+    }
+    return false;
+  }
 
   /** Structure types a creep cannot walk through. */
   private static blocksMovement(s: Structure): boolean {
