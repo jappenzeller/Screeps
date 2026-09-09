@@ -206,6 +206,61 @@ export class AnomalyDetector {
     }
   }
 
+
+  /** Structure types a creep cannot walk through. */
+  private static blocksMovement(s: Structure): boolean {
+    const t = s.structureType;
+    if (t === STRUCTURE_ROAD || t === STRUCTURE_CONTAINER) return false;
+    if (t === STRUCTURE_RAMPART) return !!(s as StructureRampart).my;
+    return true;
+  }
+
+  /** Exit tiles in this direction that nothing is standing on. */
+  private static countOpenExitTiles(room: Room, dir: ExitConstant): number {
+    let open = 0;
+    for (const pos of room.find(dir)) {
+      const here = room.lookForAt(LOOK_STRUCTURES, pos.x, pos.y);
+      let blocked = false;
+      for (const st of here) {
+        if (AnomalyDetector.blocksMovement(st)) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) open++;
+    }
+    return open;
+  }
+
+  /**
+   * Name the structure sitting in the creep's way, when terrain alone would allow it out.
+   *
+   * This is the manual investigation that found E47N41's sealed corridor, written down:
+   * path on terrain only, then walk that path looking for the first structure a creep
+   * cannot pass. Cheap enough because diagnosis is already rate-limited to one per tick.
+   */
+  private static findPathObstruction(creep: Creep, dir: ExitConstant): string | null {
+    const exits = creep.room.find(dir);
+    if (exits.length === 0) return null;
+
+    const result = PathFinder.search(
+      creep.pos,
+      exits.map((p) => ({ pos: p, range: 0 })),
+      { maxRooms: 1 }
+    );
+    if (result.incomplete) return null; // Terrain itself blocks - nothing to name.
+
+    for (const step of result.path) {
+      const here = creep.room.lookForAt(LOOK_STRUCTURES, step.x, step.y);
+      for (const st of here) {
+        if (AnomalyDetector.blocksMovement(st)) {
+          return `${st.structureType} at ${step.x},${step.y}`;
+        }
+      }
+    }
+    return null;
+  }
+
   /**
    * Explain WHY a creep is stuck, using checks too expensive to run continuously.
    *
@@ -231,11 +286,24 @@ export class AnomalyDetector {
 
       const exit = creep.pos.findClosestByPath(route[0].exit, { ignoreCreeps: true });
       if (!exit) {
-        // Separate "this border is sealed" from "this creep is walled into a pocket".
         const spawn = creep.pos.findClosestByPath(FIND_MY_SPAWNS, { ignoreCreeps: true });
-        return spawn
-          ? `map route to ${target} exists but no exit toward it is reachable - border sealed`
-          : `isolated - cannot reach any exit or spawn`;
+        if (!spawn) return `isolated - cannot reach any exit or spawn`;
+
+        // Do not claim the border is sealed without looking at it.
+        //
+        // This used to report "border sealed" whenever the exit was unreachable but the
+        // spawn was reachable. In E47N41 that was false and actively misleading: all 38
+        // northern exit tiles were open and unobstructed, and the real obstruction was a
+        // single extension at 15,18 sitting in the one terrain corridor leading there. A
+        // wrong diagnosis costs more than none, because it sends the reader to the wrong
+        // place - it sent me to the border twice.
+        const open = AnomalyDetector.countOpenExitTiles(creep.room, route[0].exit);
+        if (open === 0) return `every exit toward ${target} is blocked - border sealed`;
+
+        const culprit = AnomalyDetector.findPathObstruction(creep, route[0].exit);
+        return culprit
+          ? `${open} exits toward ${target} are open but unreachable - ${culprit} blocks the route`
+          : `${open} exits toward ${target} are open but unreachable - blocked inside the room`;
       }
       return `exit toward ${target} is reachable - blocked or oscillating en route`;
     }
