@@ -401,7 +401,74 @@ function isValidBuildPos(room: Room, x: number, y: number, terrain: RoomTerrain)
   const sites = room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
   if (sites.length > 0) return false;
 
+  if (isChokepoint(room, x, y, terrain)) return false;
+
   return true;
+}
+
+/**
+ * True when building here would cut the tile's walkable neighbours into separate groups.
+ *
+ * A structure is a wall creeps cannot pass, so placing one in a one-tile corridor severs
+ * whatever is on the far side. E47N41 had an extension at 15,18 sitting in the only
+ * terrain corridor to its northern exits: every remote miner it spawned for E47N42 was
+ * sealed in and idled at home, and the room ran on two local sources while paying for
+ * remote creeps that could never leave. Removing that one extension restores a 19-step
+ * path.
+ *
+ * The test is local and cheap - an articulation check over the eight surrounding tiles.
+ * If the walkable neighbours are still reachable from one another without passing through
+ * the candidate, the tile is not load-bearing and is safe to build on.
+ */
+function isChokepoint(room: Room, x: number, y: number, terrain: RoomTerrain): boolean {
+  const walkable: Array<{ x: number; y: number }> = [];
+
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || nx > 49 || ny < 0 || ny > 49) continue;
+      if (terrain.get(nx, ny) === TERRAIN_MASK_WALL) continue;
+
+      let blocked = false;
+      const here = room.lookForAt(LOOK_STRUCTURES, nx, ny);
+      for (const st of here) {
+        const t = st.structureType;
+        if (t !== STRUCTURE_ROAD && t !== STRUCTURE_CONTAINER && t !== STRUCTURE_RAMPART) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) walkable.push({ x: nx, y: ny });
+    }
+  }
+
+  // Nothing to sever, or a dead end either way.
+  if (walkable.length <= 1) return false;
+
+  // Flood the neighbours among themselves - adjacency here means "reachable without
+  // stepping on the candidate tile", which is exactly what building on it would forbid.
+  const seen: boolean[] = [];
+  for (let i = 0; i < walkable.length; i++) seen.push(false);
+  const queue = [0];
+  seen[0] = true;
+  let reached = 1;
+
+  while (queue.length > 0) {
+    const cur = walkable[queue.pop() as number];
+    for (let i = 0; i < walkable.length; i++) {
+      if (seen[i]) continue;
+      const other = walkable[i];
+      if (Math.abs(other.x - cur.x) <= 1 && Math.abs(other.y - cur.y) <= 1) {
+        seen[i] = true;
+        reached++;
+        queue.push(i);
+      }
+    }
+  }
+
+  return reached < walkable.length;
 }
 
 /**
