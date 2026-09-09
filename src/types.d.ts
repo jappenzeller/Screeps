@@ -89,6 +89,8 @@ interface RoomMemory {
   _spawnStall?: number;
   /** Scouts from this room killed young, with the window they were counted in. */
   _scoutLoss?: { deaths: number; since: number };
+  /** First tick of the current unbroken combat-hostile presence, cleared when they leave. */
+  _threatSince?: number;
   sources?: Id<Source>[];
   containerPlan?: ContainerPlan;
   tasks?: RoomTask[];

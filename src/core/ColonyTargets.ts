@@ -37,6 +37,13 @@ const MAX_SURPLUS_UPGRADERS = 4;
  */
 const UPGRADE_INCOME_SHARE = 0.5;
 
+/**
+ * How long a combat-capable hostile must remain before it counts as a siege worth
+ * spawning defenders for. Towers cover the interval, and most intruders in this
+ * neighbourhood are through the room well inside it.
+ */
+const THREAT_SUSTAINED_TICKS = 50;
+
 export function getCreepTargets(room: Room, totalSites: number): Record<string, number> {
   const rcl = room.controller?.level || 0;
   const sources = room.find(FIND_SOURCES).length;
@@ -226,10 +233,34 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
     pioneerTarget = sources + 1; // 1 per source + 1 extra for overlap
   }
 
-  // Defenders scale with the threat, capped by what the RCL can sustain.
-  const hostileCount = room.find(FIND_HOSTILE_CREEPS).length;
+  // Defenders are for sustained sieges. Towers answer everything else instantly and for
+  // free, which is the documented division of labour - and it was not being honoured.
+  //
+  // Spawning on instantaneous hostile presence meant a HailHydra creep passing through
+  // bought three defenders that then stood in the room for their full 1500 ticks with
+  // nothing to fight: six of them across E43N39 and E46N37, one respawned roughly every
+  // 200 ticks, in rooms with no stored energy. A passing creep is not a siege.
+  //
+  // Two conditions, both learned earlier in this codebase: the hostile must be able to
+  // fight (the remote-pause logic already keys on combat parts rather than presence, for
+  // the same reason), and it must still be here after THREAT_SUSTAINED_TICKS.
+  const hostiles = room.find(FIND_HOSTILE_CREEPS, {
+    filter: (h) =>
+      h.getActiveBodyparts(ATTACK) > 0 ||
+      h.getActiveBodyparts(RANGED_ATTACK) > 0 ||
+      h.getActiveBodyparts(HEAL) > 0,
+  });
   const maxDefenders = rcl <= 3 ? 1 : rcl <= 5 ? 2 : 3;
-  const defenderTarget = hostileCount === 0 ? 0 : Math.min(hostileCount, maxDefenders);
+
+  let defenderTarget = 0;
+  if (hostiles.length === 0) {
+    delete room.memory._threatSince;
+  } else {
+    if (!room.memory._threatSince) room.memory._threatSince = Game.time;
+    if (Game.time - room.memory._threatSince >= THREAT_SUSTAINED_TICKS) {
+      defenderTarget = Math.min(hostiles.length, maxDefenders);
+    }
+  }
 
   const targets: Record<string, number> = {
     PIONEER: pioneerTarget,
