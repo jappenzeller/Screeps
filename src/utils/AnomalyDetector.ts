@@ -28,6 +28,14 @@
 const STUCK_TICKS = 100;
 
 /**
+ * Age after which a finding is dropped even if its creep still looks unchanged.
+ *
+ * Comfortably more than STUCK_TICKS, so a condition that genuinely persists is
+ * re-reported rather than lost, while a resolved one stops crowding the window.
+ */
+const ANOMALY_MAX_AGE = 500;
+
+/**
  * A creep that is still changing position gets this multiple of STUCK_TICKS before it
  * counts as stuck. Slow, fatigue-heavy bodies making a short walk look identical to a
  * stall by displacement alone - a freshly spawned harvester walking two tiles to its
@@ -233,8 +241,12 @@ export class AnomalyDetector {
     }
     if (creep.getActiveBodyparts(WORK) === 0) return false;
 
-    const source = creep.pos.findInRange(FIND_SOURCES, 1)[0];
-    if (source && source.energy > 0) return true;
+    // Deliberately NOT conditioned on the source currently holding energy. Sources
+    // regenerate on a 300-tick cycle and a 5-WORK miner drains one in about that long, so
+    // every source sits empty part of the time - and waiting beside it for the regen is
+    // the job, not a fault. Requiring energy meant the exemption lapsed during each empty
+    // window, the miner got flagged, and the finding then stuck for the rest of its life.
+    if (creep.pos.findInRange(FIND_SOURCES, 1).length > 0) return true;
 
     if (role === "MINERAL_HARVESTER" && creep.pos.findInRange(FIND_MINERALS, 1).length > 0) {
       return true;
@@ -429,8 +441,19 @@ export class AnomalyDetector {
     Memory.stats.anomalies = Memory.stats.anomalies.filter((a) => {
       const creep = Game.creeps[a.creep];
       if (!creep) return false;
+
       // Recovered: it is shifting energy again, so whatever blocked it has cleared.
       if (creep.store[RESOURCE_ENERGY] !== a.energy) return false;
+
+      // ...but that test cannot see recovery in a creep whose healthy steady state is a
+      // constant energy value. A static miner holds exactly 10 forever, so 10 === 10 kept
+      // its finding for the creep's whole life and the twelve-slot window filled with
+      // miners doing their jobs. Re-check the exemption, and expire on age regardless: a
+      // finding is a claim about now, and a condition that still holds gets re-detected
+      // within STUCK_TICKS.
+      if (AnomalyDetector.isWorkingInPlace(creep)) return false;
+      if (Game.time - a.detectedAt > ANOMALY_MAX_AGE) return false;
+
       return true;
     });
   }
