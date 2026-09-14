@@ -272,6 +272,37 @@ test("a poor room with its reserve met does not hoard more", () => {
 });
 
 // ============================================================================
+// Draining - the half that makes a transfer worth anything
+// ============================================================================
+
+test("delivered energy counts against need", () => {
+  // E46N37 took three 10,000 sends, reached 30,000 in its terminal, and still reported a
+  // need of 2.15 because need was measured from storage and extensions alone.
+  const room = mockRoom("E46N37", { storage: 0, terminal: 30000, available: 100, capacity: 5600 });
+  assertEqual(TM.needOf(room), 0, "a full terminal is delivered energy, not an empty room");
+});
+
+test("a recipient drains its terminal to empty", () => {
+  const room = mockRoom("E46N37", { storage: 0, terminal: 30000 });
+  assertTrue(TM.terminalHasSpare(room), "a pure recipient keeps nothing back");
+});
+
+test("a sender keeps its reserve when draining", () => {
+  const room = mockRoom("E43N39", { storage: 46000, terminal: TM.TERMINAL_RESERVE });
+  assertEqual(TM.terminalHasSpare(room), false, "a sender holds its reserve to send with");
+});
+
+test("a sender drains only above its reserve", () => {
+  const room = mockRoom("E43N39", { storage: 46000, terminal: TM.TERMINAL_RESERVE + 1 });
+  assertTrue(TM.terminalHasSpare(room), "surplus above the reserve is spendable");
+});
+
+test("an empty terminal has nothing to drain", () => {
+  const room = mockRoom("E47N41", { storage: 0, terminal: 0 });
+  assertEqual(TM.terminalHasSpare(room), false, "nothing to withdraw");
+});
+
+// ============================================================================
 
 console.log("\n========================================");
 console.log(`Tests: ${passed + failed} total, ${passed} passed, ${failed} failed`);

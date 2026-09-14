@@ -2,7 +2,7 @@ import { ColonyManager } from "../core/ColonyManager";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
 import { DecisionLogger } from "../logging/DecisionLogger";
 import { Chooser, proximityFactor, urgencyFactor } from "../core/Decision";
-import { terminalWantsEnergy } from "../structures/TerminalManager";
+import { terminalHasSpare, terminalWantsEnergy } from "../structures/TerminalManager";
 
 // Extend CreepMemory for renewal wait tracking
 declare global {
@@ -627,6 +627,19 @@ function collect(creep: Creep): void {
       }
       return;
     }
+  }
+
+  // === Tier 4.5: Terminal with delivered energy ===
+  // Ahead of storage, because energy sitting in a terminal is energy the room cannot
+  // otherwise spend - a recipient's terminal filled to 30,000 while its extensions stayed
+  // empty, which turned an inter-colony transfer into moving energy from one unusable
+  // place to another.
+  const terminal = creep.room.terminal;
+  if (terminal && terminalHasSpare(creep.room)) {
+    if (creep.withdraw(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, terminal, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+    }
+    return;
   }
 
   // === Tier 5: Storage (if has excess) ===

@@ -108,7 +108,12 @@ export function surplusOf(room: Room): number {
 export function needOf(room: Room): number {
   if (!room.terminal) return 0;
 
-  const stored = room.storage ? room.storage.store[RESOURCE_ENERGY] : 0;
+  // Count what is already sitting in the terminal as delivered. Without this a recipient
+  // keeps asking while holding a full terminal - E46N37 accumulated 30,000 across three
+  // sends and still reported a need of 2.15, because need was measured from storage and
+  // extensions alone and the delivered energy was invisible to it.
+  const inTerminal = room.terminal.store[RESOURCE_ENERGY];
+  const stored = (room.storage ? room.storage.store[RESOURCE_ENERGY] : 0) + inTerminal;
   if (stored >= RECIPIENT_MAX_STORAGE) return 0;
 
   // An empty spawn network is the urgent case - it is what stops a room replacing its
@@ -269,4 +274,25 @@ function recordTransfer(plan: TransferPlan): void {
 export function history(): TransferRecord[] {
   const mem = Memory as unknown as { _terminal?: TransferRecord[] };
   return mem._terminal || [];
+}
+
+/**
+ * True when this room's haulers should be draining the terminal into the room.
+ *
+ * The other half of a transfer, and the half that makes it worth anything. Energy that
+ * lands in a recipient's terminal and stays there has been moved from one place the room
+ * cannot spend it to another: E46N37 took three deliveries, reached 30,000, and still had
+ * empty extensions.
+ *
+ * A room only holds back what it needs to send with, and a room with no surplus needs
+ * nothing - so a pure recipient drains its terminal to empty.
+ */
+export function terminalHasSpare(room: Room): boolean {
+  if (!room.terminal) return false;
+  const held = room.terminal.store[RESOURCE_ENERGY];
+  if (held === 0) return false;
+
+  // A sender keeps its reserve; a recipient keeps nothing.
+  const keep = surplusOf(room) > 0 ? TERMINAL_RESERVE : 0;
+  return held > keep;
 }
