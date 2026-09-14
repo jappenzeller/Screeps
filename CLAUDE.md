@@ -17,7 +17,7 @@ This is a TypeScript Screeps bot targeting the official MMO server (shard0). The
 - Remote mining with reservers, defenders
 - Expansion system for claiming new rooms
 - AWS monitoring with AI recommendations
-- No terminal/lab/factory management
+- Terminal energy transfer between colonies (no lab/factory/market yet)
 
 ### Documentation
 
@@ -438,7 +438,7 @@ See [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) for detailed issue tracking.
 
 **Limitations:**
 
-- No terminal/lab/factory support (RCL 6-8 features)
+- No lab/factory/market support (terminal energy transfer is implemented)
 - Source keeper rooms not supported (too costly)
 - Limited combat beyond basic defenders
 

@@ -2,6 +2,7 @@ import { ColonyManager } from "../core/ColonyManager";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
 import { DecisionLogger } from "../logging/DecisionLogger";
 import { Chooser, proximityFactor, urgencyFactor } from "../core/Decision";
+import { terminalWantsEnergy } from "../structures/TerminalManager";
 
 // Extend CreepMemory for renewal wait tracking
 declare global {
@@ -745,7 +746,11 @@ function scoreDeliveryTargets(creep: Creep): { target: AnyStoreStructure; score:
         base = 10; // the buffer of last resort, never zero so it is never unreachable
         break;
       case STRUCTURE_TERMINAL:
-        base = 5;
+        // A terminal that cannot send is a structure the colony paid 100,000 energy for
+        // and never uses. Filling it outranks topping up an already-deep storage, but
+        // stays below the spawn network and the controller container - the room's own
+        // creeps come first, and TerminalManager only gives away real surplus anyway.
+        base = terminalWantsEnergy(room) ? 45 : 5;
         break;
       default:
         // Links belong to LINK_FILLER. Expressed by not offering the option rather than

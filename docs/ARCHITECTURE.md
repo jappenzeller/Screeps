@@ -458,6 +458,51 @@ does nothing. The report states what happened and leaves judgement to the reader
 the alternative is a threshold that silences real findings.
 
 
+## Terminal Transfers (`src/structures/TerminalManager.ts`)
+
+Moves surplus energy between colonies. The three rooms are not equally able to feed
+themselves - E43N39 has remotes and banks tens of thousands; E46N37 is boxed in on all
+three exits and can never hold more than its own two sources produce - so terminals are
+the only way surplus reaches the rooms that cannot generate it.
+
+Runs empire-wide every 10 ticks (the terminal cooldown), because a transfer is a decision
+about a **pair** of rooms and a per-room loop would have each pick a partner without
+seeing what the others are doing.
+
+**Thresholds are deliberately not the ones in BUILD_PLANNER_IMPLEMENTATION.md.** That
+spec says deficit below 50K and surplus above 200K, which suits a mature empire; the
+richest room here has peaked at 46K, so those would never once have fired. A threshold
+that is never met is a feature that does not exist.
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `SENDER_MIN_STORAGE` | 20,000 | Keep this much before giving anything away |
+| `RECIPIENT_MAX_STORAGE` | 10,000 | Above this a room waits for its own income |
+| `TERMINAL_RESERVE` | 5,000 | Haulers fill to here even in a poor room |
+| `TERMINAL_MAX` | 25,000 | Stop filling; terminal space is finite |
+| `MIN_SEND` / `MAX_SEND` | 2,000 / 10,000 | Dribbles waste overhead; one send cannot drain the terminal |
+
+Three architectural choices, each one something this codebase already paid to learn:
+
+- **Solvency comes from `EconomyTracker`**, the single owner of "can this room afford it".
+  A room can hold a large bank while bleeding, and giving energy away then would be wrong -
+  `surplusOf()` returns 0 at negative net flow regardless of storage.
+- **The recipient is scored, not branched.** Two rooms at zero storage differ in how badly
+  they need energy; `needOf()` weighs an empty spawn network above an empty bank, because
+  the former is what stops a room replacing its creeps. A branch chain would silently pick
+  the same room every time.
+- **Filling is a hauler preference, not a new task type.** The terminal's delivery base
+  rises from 5 to 45 when `terminalWantsEnergy()`, so it competes in the same currency as
+  every other delivery instead of a parallel queue that could starve.
+
+Transfers are recorded to `Memory._terminal` (last 10) and readable with `terminal()`.
+A feature that moves energy between rooms and leaves no trace would be the next silent
+system.
+
+**Tests:** `npm run test:unit` - 20 cases covering surplus, need, cost, planning and the
+hauler fill gate.
+
+
 ## Colony Phases
 
 ```

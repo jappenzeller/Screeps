@@ -45,6 +45,7 @@ import { runFullRecovery } from "./military/CampaignRecovery";
 import { initializeFramework, runFramework } from "./framework";
 import { recordCreepDeath } from "./core/ColonyPopulation";
 import * as Liveness from "./core/Liveness";
+import * as TerminalManager from "./structures/TerminalManager";
 
 // CPU caching utilities
 import { shouldSkipNonEssential, shouldSkipExpensiveEvaluations } from "./utils/cpuCache";
@@ -193,6 +194,11 @@ export function loop(): void {
   ThresholdMonitor.flush();
 
   // End stats tracking for this tick
+  // Terminals move surplus between colonies. Runs empire-wide rather than per-room
+  // because a transfer is a decision about a PAIR of rooms, and a per-room loop would
+  // make each one pick a partner without seeing what the others are doing.
+  TerminalManager.run();
+
   StatsCollector.endTick();
   Liveness.maybeFlush();
 }
@@ -374,6 +380,7 @@ function declareSystems(): void {
   Liveness.expect("spawnCreeps", 1, true);
   Liveness.expect("StatsCollector.snapshot", 100);
   Liveness.expect("syncRemoteRooms", 1000, true);
+  Liveness.expect("TerminalManager", 10, true);
 }
 
 function cleanupMemory(): void {

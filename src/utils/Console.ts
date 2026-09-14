@@ -11,6 +11,7 @@ import { AnomalyDetector } from "./AnomalyDetector";
 import { ThresholdMonitor } from "./ThresholdMonitor";
 import { getShadow, resetShadow } from "../framework/ShadowSpawn";
 import * as Liveness from "../core/Liveness";
+import * as TerminalManager from "../structures/TerminalManager";
 import { StatsCollector } from "./StatsCollector";
 import { expansion as empireExpansion, ExpansionManager } from "../empire";
 import { analyzeRoute, isSourceKeeperRoom } from "./movement";
@@ -2740,6 +2741,76 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
         );
       }),
       findings: findings.map((f) => f.type + " " + f.system + " - " + f.detail),
+    };
+
+    return "OK";
+  };
+
+  /**
+   * Terminal state across all colonies, and what the transfer planner would do next.
+   *
+   * Shows the decision, not just the state - "nothing to send" is the answer most of the
+   * time, and knowing WHY beats staring at four numbers and guessing.
+   */
+  global.terminal = () => {
+    const rooms: Room[] = [];
+    for (const n in Game.rooms) {
+      const r = Game.rooms[n];
+      if (r.controller && r.controller.my) rooms.push(r);
+    }
+
+    console.log("=== Terminals ===");
+    for (const r of rooms) {
+      if (!r.terminal) {
+        console.log("  " + r.name + "  no terminal");
+        continue;
+      }
+      const held = r.terminal.store[RESOURCE_ENERGY];
+      console.log(
+        "  " + r.name +
+        "  holds:" + held +
+        "  cooldown:" + r.terminal.cooldown +
+        "  surplus:" + TerminalManager.surplusOf(r) +
+        "  need:" + TerminalManager.needOf(r).toFixed(2) +
+        (TerminalManager.terminalWantsEnergy(r) ? "  [filling]" : "")
+      );
+    }
+
+    const plan = TerminalManager.planTransfer(rooms);
+    console.log(
+      plan
+        ? "  next: " + plan.from + " -> " + plan.to + " " + plan.amount +
+          " (cost " + plan.cost + ") - " + plan.reason
+        : "  next: nothing to send"
+    );
+
+    const hist = TerminalManager.history();
+    if (hist.length > 0) {
+      console.log("  recent transfers:");
+      for (const h of hist) {
+        console.log(
+          "    T" + h.tick + "  " + h.from + " -> " + h.to +
+          "  " + h.amount + " (cost " + h.cost + ")"
+        );
+      }
+    } else {
+      console.log("  no transfers yet");
+    }
+
+    // Mirror to Memory - console output needs a websocket, so a log-only command cannot
+    // be read by the API tooling this project actually diagnoses with.
+    (Memory as any)._terminalReport = {
+      tick: Game.time,
+      rooms: rooms.map((r) =>
+        r.terminal
+          ? r.name + " holds:" + r.terminal.store[RESOURCE_ENERGY] +
+            " cd:" + r.terminal.cooldown +
+            " surplus:" + TerminalManager.surplusOf(r) +
+            " need:" + TerminalManager.needOf(r).toFixed(2)
+          : r.name + " no terminal"
+      ),
+      next: plan ? plan.from + "->" + plan.to + " " + plan.amount : "nothing to send",
+      history: hist.map((h) => "T" + h.tick + " " + h.from + "->" + h.to + " " + h.amount),
     };
 
     return "OK";
