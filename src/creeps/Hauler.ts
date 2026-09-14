@@ -92,6 +92,14 @@ const FILLER_BEHIND_FRACTION = 0.5;
 const FILLER_PRESENT_BASE = 12;
 
 /**
+ * Terminal energy above which draining it outranks every other collection source.
+ *
+ * A delivery from another colony arrives all at once and then sits. Below this the
+ * terminal is drained opportunistically; above it, promptly.
+ */
+const TERMINAL_DRAIN_PRIORITY = 2000;
+
+/**
  * Select the best container to collect from based on energy, distance, and competition.
  * Called when transitioning to COLLECTING state.
  */
@@ -573,6 +581,30 @@ export function runHauler(creep: Creep): void {
 }
 
 function collect(creep: Creep): void {
+  // === Tier -1: A terminal holding a real pile of delivered energy ===
+  //
+  // First, above even the already-adjacent shortcut. Twice now this has been placed lower
+  // and never run: below collectFromContainers() it was starved by the target-container
+  // branch, and below Tier 0 it was starved by haulers parked beside a source container
+  // that refills at 10/tick. Both are branches that can always match, which is design
+  // rule 2, and I wrote the same shape into two consecutive fixes for it.
+  //
+  // Gated on a meaningful amount so ordinary operation is untouched. Below the gate the
+  // terminal is drained by the lower tier at leisure; above it, the room has been sent
+  // energy it cannot otherwise spend, and 30,000 sitting in E46N37's terminal while its
+  // extensions ran down is worth more than the source energy foregone while it drains.
+  const terminal = creep.room.terminal;
+  if (
+    terminal &&
+    terminal.store[RESOURCE_ENERGY] > TERMINAL_DRAIN_PRIORITY &&
+    terminalHasSpare(creep.room)
+  ) {
+    if (creep.withdraw(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, terminal, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+    }
+    return;
+  }
+
   // === Tier 0: Already adjacent to assigned container — just withdraw ===
   // Don't reconsider targets, don't search for drops, just take the energy.
   if (creep.memory.targetContainer) {
@@ -605,26 +637,6 @@ function collect(creep: Creep): void {
   if (tombstone) {
     if (creep.withdraw(tombstone, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       smartMoveTo(creep, tombstone, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // === Tier 2.5: Terminal holding delivered energy ===
-  //
-  // Above the container tier, not below it. Placed below, this never ran once:
-  // collectFromContainers() returns true whenever the hauler has a target container with
-  // a miner beside it, which is almost always, so everything after it was dead code -
-  // design rule 2, an early branch that can always match starves everything below it.
-  // Observed exactly that way: E46N37 sat on 30,000 delivered energy with empty
-  // extensions while its haulers queued at source containers.
-  //
-  // Preferring it is also right on the merits. A terminal holding thousands is a larger,
-  // closer, already-mined pile than a source container refilling at 10/tick, and until it
-  // is drained the room cannot spend what another colony paid to send.
-  const terminal = creep.room.terminal;
-  if (terminal && terminalHasSpare(creep.room)) {
-    if (creep.withdraw(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, terminal, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
     }
     return;
   }
