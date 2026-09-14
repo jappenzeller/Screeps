@@ -609,6 +609,26 @@ function collect(creep: Creep): void {
     return;
   }
 
+  // === Tier 2.5: Terminal holding delivered energy ===
+  //
+  // Above the container tier, not below it. Placed below, this never ran once:
+  // collectFromContainers() returns true whenever the hauler has a target container with
+  // a miner beside it, which is almost always, so everything after it was dead code -
+  // design rule 2, an early branch that can always match starves everything below it.
+  // Observed exactly that way: E46N37 sat on 30,000 delivered energy with empty
+  // extensions while its haulers queued at source containers.
+  //
+  // Preferring it is also right on the merits. A terminal holding thousands is a larger,
+  // closer, already-mined pile than a source container refilling at 10/tick, and until it
+  // is drained the room cannot spend what another colony paid to send.
+  const terminal = creep.room.terminal;
+  if (terminal && terminalHasSpare(creep.room)) {
+    if (creep.withdraw(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, terminal, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+    }
+    return;
+  }
+
   // === Tier 3: Smart container collection with affinity ===
   if (collectFromContainers(creep)) {
     return;
@@ -627,19 +647,6 @@ function collect(creep: Creep): void {
       }
       return;
     }
-  }
-
-  // === Tier 4.5: Terminal with delivered energy ===
-  // Ahead of storage, because energy sitting in a terminal is energy the room cannot
-  // otherwise spend - a recipient's terminal filled to 30,000 while its extensions stayed
-  // empty, which turned an inter-colony transfer into moving energy from one unusable
-  // place to another.
-  const terminal = creep.room.terminal;
-  if (terminal && terminalHasSpare(creep.room)) {
-    if (creep.withdraw(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, terminal, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
-    }
-    return;
   }
 
   // === Tier 5: Storage (if has excess) ===
