@@ -1,7 +1,7 @@
 /**
  * Unit tests for terminal transfer planning.
  *
- * Run with: npx ts-node --skipProject tests/unit/terminalTransfer.test.ts
+ * Run with: npm run test:unit
  *
  * These exercise the decision logic with mock rooms - who gives, who receives, how much,
  * and the cases where nothing should happen. The cases worth testing here are the ones
@@ -246,60 +246,78 @@ test("rooms that are not ours are ignored entirely", () => {
 });
 
 // ============================================================================
-// Hauler filling - the gate that decides whether the terminal ever has anything
+// Terminal flow - the one answer hauler collection and delivery both read
 // ============================================================================
 
-test("an empty terminal in a rich room wants filling", () => {
+test("a sender below the cap fills", () => {
   const room = mockRoom("E43N39", { storage: 46000, terminal: 0 });
-  assertTrue(TM.terminalWantsEnergy(room), "a terminal that cannot send is dead weight");
+  assertEqual(TM.terminalFlow(room), "fill", "a terminal that cannot send is dead weight");
 });
 
-test("a full terminal stops wanting energy", () => {
-  const room = mockRoom("E43N39", { storage: 46000, terminal: TM.TERMINAL_MAX });
-  assertEqual(TM.terminalWantsEnergy(room), false, "the cap releases the gate");
+test("a sender at the cap holds, and over it drains only the excess", () => {
+  const atCap = mockRoom("E43N39", { storage: 46000, terminal: TM.TERMINAL_MAX });
+  assertEqual(TM.terminalFlow(atCap), "hold", "the cap releases the fill");
+  const overCap = mockRoom("E43N39", { storage: 46000, terminal: TM.TERMINAL_MAX + 1 });
+  assertEqual(TM.terminalFlow(overCap), "drain", "only what is over the cap is shed");
 });
 
-test("a poor room still stocks a minimum reserve", () => {
-  // Release condition: even a room with no surplus keeps enough to act on later, rather
-  // than a gate that can never open once the room is poor.
-  const room = mockRoom("E47N41", { storage: 0, terminal: 0 });
-  assertTrue(TM.terminalWantsEnergy(room), "below the reserve, fill regardless of surplus");
+test("a sender stops filling once storage is down to its working floor", () => {
+  // Upgraders and builders draw from storage, not the terminal. The room is still a
+  // sender by its whole bank, but pulling more into the terminal would starve them.
+  const room = mockRoom("E43N39", { storage: TM.SENDER_MIN_STORAGE - 1, terminal: 8000 });
+  assertTrue(TM.surplusOf(room) > 0, "precondition: still a sender by its whole bank");
+  assertEqual(TM.terminalFlow(room), "hold", "hold rather than drain storage further");
 });
 
-test("a poor room with its reserve met does not hoard more", () => {
-  const room = mockRoom("E47N41", { storage: 0, terminal: TM.TERMINAL_RESERVE });
-  assertEqual(TM.terminalWantsEnergy(room), false, "no surplus, reserve met, stop");
+test("a recipient drains what it was sent, and never stocks", () => {
+  const sent = mockRoom("E46N37", { storage: 0, terminal: 15000 });
+  assertEqual(TM.terminalFlow(sent), "drain", "spend the delivery");
+  const empty = mockRoom("E47N41", { storage: 0, terminal: 0 });
+  assertEqual(TM.terminalFlow(empty), "hold", "an empty recipient terminal is left alone");
 });
 
-// ============================================================================
-// Draining - the half that makes a transfer worth anything
-// ============================================================================
+test("both old overlap bands now resolve to exactly one direction", () => {
+  // Recipient 0-5,000 and sender 5,000-25,000: in each band both old predicates said
+  // yes, and E46N37's haulers hovered at the terminal carrying nothing, flagged FLAP.
+  const recipient = mockRoom("E46N37", { storage: 0, terminal: 3000 });
+  assertEqual(TM.terminalFlow(recipient), "drain", "recipient band drains, never fills");
+  const sender = mockRoom("E43N39", { storage: 46000, terminal: 12000 });
+  assertEqual(TM.terminalFlow(sender), "fill", "sender band fills, never drains");
+});
+
+test("moving energy between storage and terminal does not flip a sender's role", () => {
+  // The same 30,000 bank split two ways. Counting storage alone, the second split would
+  // demote the room and its terminal would drain straight back into storage.
+  const before = mockRoom("E43N39", { storage: 26000, terminal: 4000 });
+  const after = mockRoom("E43N39", { storage: 19000, terminal: 11000 });
+  assertEqual(TM.surplusOf(before), TM.surplusOf(after), "surplus is the whole bank");
+  assertTrue(TM.surplusOf(after) > 0, "still a sender after filling its terminal");
+});
+
+test("a room that just received a transfer does not pass it straight on", () => {
+  g.Memory._terminal = [
+    { tick: g.Game.time - 100, from: "E43N39", to: "E46N37", amount: 10000, cost: 952 },
+  ];
+  const room = mockRoom("E46N37", { storage: 0, terminal: 30000 });
+  assertEqual(TM.surplusOf(room), 0, "no surplus inside the holdoff");
+  assertEqual(TM.terminalFlow(room), "drain", "it spends the delivery instead");
+  g.Memory._terminal = [];
+});
+
+test("the receive holdoff expires", () => {
+  g.Memory._terminal = [
+    { tick: g.Game.time - TM.RECEIVE_HOLDOFF - 1, from: "E43N39", to: "E46N37", amount: 10000, cost: 952 },
+  ];
+  const room = mockRoom("E46N37", { storage: 0, terminal: 30000 });
+  assertTrue(TM.surplusOf(room) > 0, "a release condition, not a permanent ban");
+  g.Memory._terminal = [];
+});
 
 test("delivered energy counts against need", () => {
   // E46N37 took three 10,000 sends, reached 30,000 in its terminal, and still reported a
   // need of 2.15 because need was measured from storage and extensions alone.
   const room = mockRoom("E46N37", { storage: 0, terminal: 30000, available: 100, capacity: 5600 });
   assertEqual(TM.needOf(room), 0, "a full terminal is delivered energy, not an empty room");
-});
-
-test("a recipient drains its terminal to empty", () => {
-  const room = mockRoom("E46N37", { storage: 0, terminal: 30000 });
-  assertTrue(TM.terminalHasSpare(room), "a pure recipient keeps nothing back");
-});
-
-test("a sender keeps its reserve when draining", () => {
-  const room = mockRoom("E43N39", { storage: 46000, terminal: TM.TERMINAL_RESERVE });
-  assertEqual(TM.terminalHasSpare(room), false, "a sender holds its reserve to send with");
-});
-
-test("a sender drains only above its reserve", () => {
-  const room = mockRoom("E43N39", { storage: 46000, terminal: TM.TERMINAL_RESERVE + 1 });
-  assertTrue(TM.terminalHasSpare(room), "surplus above the reserve is spendable");
-});
-
-test("an empty terminal has nothing to drain", () => {
-  const room = mockRoom("E47N41", { storage: 0, terminal: 0 });
-  assertEqual(TM.terminalHasSpare(room), false, "nothing to withdraw");
 });
 
 // ============================================================================

@@ -2,7 +2,13 @@ import { ColonyManager } from "../core/ColonyManager";
 import { moveToRoom, smartMoveTo } from "../utils/movement";
 import { DecisionLogger } from "../logging/DecisionLogger";
 import { Chooser, proximityFactor, urgencyFactor } from "../core/Decision";
-import { terminalHasSpare, terminalWantsEnergy } from "../structures/TerminalManager";
+import { terminalFlow } from "../structures/TerminalManager";
+import {
+  CollectTarget,
+  kindOf,
+  scoreCollectionSources,
+  stillCollectable,
+} from "./haulerCollection";
 
 // Extend CreepMemory for renewal wait tracking
 declare global {
@@ -79,6 +85,12 @@ const DISTANCE_HALF_LIFE = 25;
 const DELIVER_LEASE_TICKS = 50;
 
 /**
+ * Ticks a hauler holds its chosen collection target before re-scoring. Scoring alone
+ * flips between near-equal containers tick to tick; the delivery side learned that first.
+ */
+const COLLECT_LEASE_TICKS = 25;
+
+/**
  * Spawn+extension fill below this fraction of capacity means the filler is not coping,
  * whatever its intentions, and haulers resume filling at full priority.
  */
@@ -90,14 +102,6 @@ const FILLER_BEHIND_FRACTION = 0.5;
  * amount of urgency.
  */
 const FILLER_PRESENT_BASE = 12;
-
-/**
- * Terminal energy above which draining it outranks every other collection source.
- *
- * A delivery from another colony arrives all at once and then sits. Below this the
- * terminal is drained opportunistically; above it, promptly.
- */
-const TERMINAL_DRAIN_PRIORITY = 2000;
 
 /**
  * Select the best container to collect from based on energy, distance, and competition.
@@ -408,64 +412,6 @@ function moveOffRoad(creep: Creep): void {
   }
 }
 
-
-/**
- * Collect from target container (selected at state transition)
- * Returns true if handled, false if should fallback
- */
-function collectFromContainers(creep: Creep): boolean {
-  const targetId = creep.memory.targetContainer as Id<StructureContainer> | undefined;
-  if (!targetId) return false;
-
-  const container = Game.getObjectById(targetId);
-  if (!container) {
-    delete creep.memory.targetContainer;
-    return false;
-  }
-
-  const hasEnergy = container.store[RESOURCE_ENERGY] > 0;
-  const isNearby = creep.pos.isNearTo(container);
-
-  // Check for nearby miner (energy coming soon)
-  const minerNearby = container.pos.findInRange(FIND_MY_CREEPS, 1, {
-    filter: (c) => c.memory.role === "HARVESTER",
-  }).length > 0;
-
-  // If at container with miner but no energy, wait
-  if (isNearby && minerNearby && !hasEnergy) {
-    creep.say("WAIT");
-    return true;
-  }
-
-  // If has energy, collect
-  if (hasEnergy) {
-    if (isNearby) {
-      creep.withdraw(container, RESOURCE_ENERGY);
-    } else {
-      smartMoveTo(creep, container, {
-        visualizePathStyle: { stroke: "#ffff00" },
-        reusePath: 5,
-      });
-    }
-    return true;
-  }
-
-  // No energy but miner present - go there and wait
-  if (minerNearby) {
-    if (!isNearby) {
-      smartMoveTo(creep, container, {
-        visualizePathStyle: { stroke: "#ffff00" },
-        reusePath: 5,
-      });
-    }
-    return true;
-  }
-
-  // No energy and no miner - clear target and fallback
-  delete creep.memory.targetContainer;
-  return false;
-}
-
 export function runHauler(creep: Creep): void {
   // Priority 0: If not in home room, go back!
   // findClosestByPath can return objects in adjacent rooms, causing haulers to wander
@@ -580,97 +526,38 @@ export function runHauler(creep: Creep): void {
   }
 }
 
+/**
+ * Collect energy. The decision lives in haulerCollection.ts; this only honours the lease,
+ * executes the choice, and positions the creep when there is genuinely nothing to take.
+ *
+ * It used to be a seven-tier priority chain, and in one feature two of those tiers were
+ * branches that could always match - collectFromContainers() whenever a hauler had a
+ * target container with a miner beside it, and the adjacent-container shortcut whenever
+ * it was parked next to one refilling at 10/tick. Each silently starved the terminal drain
+ * below it. A scored choice has no tier below that never runs.
+ */
 function collect(creep: Creep): void {
-  // === Tier -1: A terminal holding a real pile of delivered energy ===
-  //
-  // First, above even the already-adjacent shortcut. Twice now this has been placed lower
-  // and never run: below collectFromContainers() it was starved by the target-container
-  // branch, and below Tier 0 it was starved by haulers parked beside a source container
-  // that refills at 10/tick. Both are branches that can always match, which is design
-  // rule 2, and I wrote the same shape into two consecutive fixes for it.
-  //
-  // Gated on a meaningful amount so ordinary operation is untouched. Below the gate the
-  // terminal is drained by the lower tier at leisure; above it, the room has been sent
-  // energy it cannot otherwise spend, and 30,000 sitting in E46N37's terminal while its
-  // extensions ran down is worth more than the source energy foregone while it drains.
-  const terminal = creep.room.terminal;
-  if (
-    terminal &&
-    terminal.store[RESOURCE_ENERGY] > TERMINAL_DRAIN_PRIORITY &&
-    terminalHasSpare(creep.room)
-  ) {
-    if (creep.withdraw(terminal, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, terminal, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // === Tier 0: Already adjacent to assigned container — just withdraw ===
-  // Don't reconsider targets, don't search for drops, just take the energy.
-  if (creep.memory.targetContainer) {
-    const target = Game.getObjectById(creep.memory.targetContainer as Id<StructureContainer>);
-    if (target && creep.pos.isNearTo(target) && target.store[RESOURCE_ENERGY] > 0) {
-      creep.withdraw(target, RESOURCE_ENERGY);
+  const leasedId = creep.memory._collectTarget;
+  if (leasedId && Game.time - (creep.memory._collectLeaseAt || 0) < COLLECT_LEASE_TICKS) {
+    const leased = Game.getObjectById(leasedId) as CollectTarget | null;
+    if (leased && stillCollectable(creep.room, leased)) {
+      takeEnergy(creep, leased);
       return;
     }
   }
+  delete creep.memory._collectTarget;
+  delete creep.memory._collectLeaseAt;
 
-  // === Tier 1: Nearby dropped energy (range ≤ 3) — opportunistic grab ===
-  // Only pick up drops we're practically on top of. Prevents decay waste
-  // without causing cross-room chasing.
-  const nearbyDrop = creep.pos.findInRange(FIND_DROPPED_RESOURCES, 3, {
-    filter: (r: Resource) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
-  })[0];
-
-  if (nearbyDrop) {
-    if (creep.pickup(nearbyDrop) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, nearbyDrop, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 3 });
-    }
+  const choice = scoreCollectionSources(creep);
+  if (choice) {
+    creep.memory._collectTarget = choice.target.id as Id<CollectTarget>;
+    creep.memory._collectLeaseAt = Game.time;
+    takeEnergy(creep, choice.target);
     return;
   }
 
-  // === Tier 2: Tombstones (temporary, high value) ===
-  const tombstone = creep.pos.findClosestByPath(FIND_TOMBSTONES, {
-    filter: (t: Tombstone) => t.store[RESOURCE_ENERGY] >= 50,
-  });
-
-  if (tombstone) {
-    if (creep.withdraw(tombstone, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, tombstone, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // === Tier 3: Smart container collection with affinity ===
-  if (collectFromContainers(creep)) {
-    return;
-  }
-
-  // === Tier 4: Room-wide drops — fallback for pre-container rooms ===
-  // Only search room-wide when no container target exists.
-  if (!creep.memory.targetContainer) {
-    const farDrop = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-      filter: (r: Resource) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
-    });
-
-    if (farDrop) {
-      if (creep.pickup(farDrop) === ERR_NOT_IN_RANGE) {
-        smartMoveTo(creep, farDrop, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
-      }
-      return;
-    }
-  }
-
-  // === Tier 5: Storage (if has excess) ===
-  const storage = creep.room.storage;
-  if (storage && storage.store[RESOURCE_ENERGY] > 10000) {
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Nothing to collect - wait near target container or source
+  // Nothing in the room holds energy worth taking. Wait where the next energy will
+  // appear - positioning, not a gate: the moment a container fills, the next score takes it.
   const targetContainer = creep.memory.targetContainer
     ? Game.getObjectById(creep.memory.targetContainer as Id<StructureContainer>)
     : null;
@@ -685,6 +572,21 @@ function collect(creep: Creep): void {
   const source = creep.pos.findClosestByPath(FIND_SOURCES);
   if (source && creep.pos.getRangeTo(source) > 3) {
     smartMoveTo(creep, source, { visualizePathStyle: { stroke: "#888888" }, reusePath: 10 });
+  }
+}
+
+/** Withdraw or pick up, walking there if needed; drop the lease if the action fails. */
+function takeEnergy(creep: Creep, target: CollectTarget): void {
+  const result =
+    kindOf(target) === "pickup"
+      ? creep.pickup(target as Resource)
+      : creep.withdraw(target as AnyStoreStructure | Tombstone, RESOURCE_ENERGY);
+
+  if (result === ERR_NOT_IN_RANGE) {
+    smartMoveTo(creep, target, { visualizePathStyle: { stroke: "#ffff00" }, reusePath: 5 });
+  } else if (result !== OK) {
+    delete creep.memory._collectTarget;
+    delete creep.memory._collectLeaseAt;
   }
 }
 
@@ -782,7 +684,13 @@ function scoreDeliveryTargets(creep: Creep): { target: AnyStoreStructure; score:
         // and never uses. Filling it outranks topping up an already-deep storage, but
         // stays below the spawn network and the controller container - the room's own
         // creeps come first, and TerminalManager only gives away real surplus anyway.
-        base = terminalWantsEnergy(room) ? 45 : 5;
+        // Same owner as collection. A draining terminal is not offered at all (base 0) -
+        // at base 5 a terminal one tile away could still out-score a distant storage on
+        // proximity, and the hauler would put back what collection just took out.
+        {
+          const flow = terminalFlow(room);
+          base = flow === "fill" ? 45 : flow === "hold" ? 5 : 0;
+        }
         break;
       default:
         // Links belong to LINK_FILLER. Expressed by not offering the option rather than

@@ -1,6 +1,39 @@
 # Known Issues
 
 
+## Haulers filled and drained the same terminal; collection was a branch chain (FIXED)
+
+**Symptom:** two FLAP anomalies in E46N37, both haulers hovering at range 1-2 of the
+terminal in COLLECTING with nothing carried. Earlier in the same feature, E46N37 held
+exactly 30,000 delivered energy across every sample while its extensions ran down.
+
+**Cause, part one - duplicated authority.** Two predicates answered one question: which
+way should energy move through this terminal. `terminalWantsEnergy()` (delivery) and
+`terminalHasSpare()` (collection) overlapped. A recipient wanted energy below 5,000 and had
+spare above 0; a sender wanted it below 25,000 and had spare above 5,000. Inside either band
+a hauler filled and drained the same structure.
+
+**Cause, part two - an always-matching branch.** `collect()` was a seven-tier priority
+chain, and the terminal drain was placed below branches that could always match - twice.
+First below `collectFromContainers()`, which returns true whenever a hauler has a target
+container with a miner beside it; then below the adjacent-container shortcut, which fires
+for any hauler parked beside a source container refilling at 10/tick. Design rule 2,
+written into two consecutive fixes for it.
+
+**Fix:**
+- `terminalFlow()` returns exactly one of fill / drain / hold, and both collection and
+  delivery read it. Delivery does not offer a draining terminal at all; collection offers
+  only a draining one.
+- `surplusOf()` counts storage plus terminal, so moving energy between them cannot flip a
+  room's sender role. A room that received a transfer within `RECEIVE_HOLDOFF` (3,000
+  ticks) cannot send, so a delivery is not passed straight on.
+- Collection is scored in `src/creeps/haulerCollection.ts` with a 25-tick lease.
+- Storage is only a collection source while the spawn network is short, so a hauler cannot
+  withdraw from storage and deliver straight back into it.
+
+**Tests:** `npm run test:unit` covers terminal flow including both old overlap bands, and
+collection scoring including the parked-beside-a-container case that starved the drain.
+
 ## Haulers boxed in by their own creeps, starving RCL 7 rooms (FIXED)
 
 **Symptom:** E47N41 (RCL 7) sat at 0 storage with 256 of 4,600 extension energy while its

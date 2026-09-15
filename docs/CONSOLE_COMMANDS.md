@@ -361,7 +361,7 @@ Terminal state across all colonies, plus what the transfer planner would do next
 
 ```
 === Terminals ===
-  E43N39  holds:12000  cooldown:0  surplus:26511  need:0.00  [filling]
+  E43N39  holds:12000  cooldown:0  surplus:26511  need:0.00  [fill]
   E46N37  holds:0  cooldown:0  surplus:0  need:2.83
   E47N41  holds:0  cooldown:0  surplus:0  need:3.71
   next: E43N39 -> E47N41 10000 (cost 1249) - need 3.71, surplus 26511
@@ -372,6 +372,9 @@ Terminal state across all colonies, plus what the transfer planner would do next
 Shows the decision, not just the state - "nothing to send" is the answer most of the time,
 and knowing why beats guessing from four numbers. Mirrors to `Memory._terminalReport` so
 it can be read through the API tooling.
+
+The bracket is the room's terminal flow - `fill`, `drain` or `hold` - from
+`terminalFlow()`, the single answer both hauler collection and delivery read.
 
 ## Liveness
 

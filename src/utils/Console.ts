@@ -2772,7 +2772,7 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
         "  cooldown:" + r.terminal.cooldown +
         "  surplus:" + TerminalManager.surplusOf(r) +
         "  need:" + TerminalManager.needOf(r).toFixed(2) +
-        (TerminalManager.terminalWantsEnergy(r) ? "  [filling]" : "")
+        "  [" + TerminalManager.terminalFlow(r) + "]"
       );
     }
 
@@ -2806,7 +2806,8 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
           ? r.name + " holds:" + r.terminal.store[RESOURCE_ENERGY] +
             " cd:" + r.terminal.cooldown +
             " surplus:" + TerminalManager.surplusOf(r) +
-            " need:" + TerminalManager.needOf(r).toFixed(2)
+            " need:" + TerminalManager.needOf(r).toFixed(2) +
+            " flow:" + TerminalManager.terminalFlow(r)
           : r.name + " no terminal"
       ),
       next: plan ? plan.from + "->" + plan.to + " " + plan.amount : "nothing to send",

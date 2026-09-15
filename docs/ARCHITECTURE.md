@@ -478,7 +478,7 @@ that is never met is a feature that does not exist.
 |---|---|---|
 | `SENDER_MIN_STORAGE` | 20,000 | Keep this much before giving anything away |
 | `RECIPIENT_MAX_STORAGE` | 10,000 | Above this a room waits for its own income |
-| `TERMINAL_RESERVE` | 5,000 | Haulers fill to here even in a poor room |
+| `RECEIVE_HOLDOFF` | 3,000 ticks | A room that was just sent energy cannot pass it on |
 | `TERMINAL_MAX` | 25,000 | Stop filling; terminal space is finite |
 | `MIN_SEND` / `MAX_SEND` | 2,000 / 10,000 | Dribbles waste overhead; one send cannot drain the terminal |
 
@@ -491,17 +491,52 @@ Three architectural choices, each one something this codebase already paid to le
   they need energy; `needOf()` weighs an empty spawn network above an empty bank, because
   the former is what stops a room replacing its creeps. A branch chain would silently pick
   the same room every time.
-- **Filling is a hauler preference, not a new task type.** The terminal's delivery base
-  rises from 5 to 45 when `terminalWantsEnergy()`, so it competes in the same currency as
-  every other delivery instead of a parallel queue that could starve.
+- **One answer for which way energy moves.** `terminalFlow()` returns exactly one of
+  `fill`, `drain` or `hold`, and both hauler collection and delivery read it. There used to
+  be two predicates, one per side, and they overlapped in two bands where a hauler filled
+  and drained the same terminal. A single return value makes that unrepresentable, and
+  delivery does not offer a draining terminal at all.
+- **Surplus is the whole bank.** `surplusOf()` counts storage plus terminal, so moving
+  energy between them cannot flip a room's sender role. A room sent energy within
+  `RECEIVE_HOLDOFF` cannot pass it straight on.
 
 Transfers are recorded to `Memory._terminal` (last 10) and readable with `terminal()`.
 A feature that moves energy between rooms and leaves no trace would be the next silent
 system.
 
-**Tests:** `npm run test:unit` - 20 cases covering surplus, need, cost, planning and the
-hauler fill gate.
+**Tests:** `npm run test:unit` - terminal surplus, need, cost, planning and flow (including
+both old overlap bands and the receive holdoff), plus hauler collection scoring.
 
+
+## Hauler Collection (`src/creeps/haulerCollection.ts`)
+
+Where a hauler picks energy up from, scored with `core/Decision` like delivery.
+
+It was a seven-tier priority chain. Within one feature, two of its tiers turned out to be
+branches that could always match, and each silently starved the terminal drain placed
+below it. Delivery had been converted earlier and produced no defect of that shape since.
+A scored choice has no tier below that never runs.
+
+| Source | Base | Why |
+|---|---|---|
+| Tombstone | 75 | Expires outright |
+| Terminal, flow `drain` only | 70 | Delivered energy, unspendable until moved |
+| Dropped energy | 65 | Decays |
+| Source container | 60 | The ordinary job; discounted by competing haulers |
+| Storage | 20 | Only while the spawn network is short |
+
+Supply and distance scale each base, so a nearly empty high-base source loses to a full
+lower one. The container `runHauler()` assigned gets a 1.25 continuity bonus, and a chosen
+target is leased for 25 ticks - scoring alone flips between near-equal containers, which
+delivery learned first.
+
+Storage is gated on a short spawn network because it is always a valid delivery target:
+offered unconditionally, a hauler with full extensions would withdraw from storage and
+deliver straight back into it.
+
+The decision lives in its own module so it can be unit tested with mock rooms.
+`Hauler.collect()` only honours the lease, executes, and positions the creep when nothing
+holds energy.
 
 ## Colony Phases
 
