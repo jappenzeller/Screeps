@@ -42,6 +42,13 @@ To avoid CPU spikes, only **one structure** is placed per tick. The system cycle
 
 ### Extensions (ExtensionPlanner.ts)
 
+Tile selection lives in `src/structures/buildGrid.ts` and searches rings 3 to 22 from the
+spawn, charging distance as a score penalty rather than stopping at a hard limit. The old
+limit was radius 10, which both mature rooms exhausted, leaving them 19 extensions short
+with no signal. Placement also runs through the shared corridor guard, so a widened tile
+cannot seal a one-wide passage.
+
+
 **Placement Strategy:**
 - Cluster near spawn (easier to fill)
 - Checkerboard pattern (walkable paths)

@@ -538,6 +538,23 @@ The decision lives in its own module so it can be unit tested with mock rooms.
 `Hauler.collect()` only honours the lease, executes, and positions the creep when nothing
 holds energy.
 
+## Build Geometry (`src/structures/buildGrid.ts`)
+
+Two placement rules that were each private to one planner, and had started to disagree.
+
+**The corridor guard.** A structure is a wall creeps cannot pass, so one placed in a
+one-tile corridor severs whatever is behind it. The check was private to `placeStructures`,
+so `ExtensionPlanner` placed an extension in E47N41's only route north and sealed every
+remote miner it spawned inside its own room. Both planners now share it.
+
+**Extension tile selection.** Searched rings 3 to 10 from the spawn. Measured live, both
+mature rooms had zero valid tiles inside that radius and 183 and 92 outside it, so they
+stopped growing 19 extensions short with no signal. The search now runs to radius 22 and
+charges distance as a score penalty, so a near tile still wins whenever one exists.
+
+Both are pure and take predicates rather than a `Room`, so the geometry is unit tested
+against a grid instead of a live colony.
+
 ## Colony Phases
 
 ```

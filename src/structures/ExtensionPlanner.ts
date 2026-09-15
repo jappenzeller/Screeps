@@ -1,8 +1,20 @@
 import { logger } from "../utils/Logger";
+import * as Liveness from "../core/Liveness";
+import { ExtensionTileQuery, blocksMovement, pickExtensionTiles } from "./buildGrid";
 
 /**
- * ExtensionPlanner - Places extension construction sites with traffic-aware layout
- * Maintains 2-tile-wide corridors between spawn and key destinations
+ * ExtensionPlanner - places extension construction sites with a traffic-aware layout.
+ *
+ * Its search used to stop at radius 10 from the spawn, and both mature rooms had exhausted
+ * that area. E43N39 sat at 31 extensions of 40 and E47N41 at 40 of 50, each with zero
+ * valid tiles inside radius 10 and 183 and 92 respectively outside it. The planner logged
+ * only on success and had no liveness coverage, so nothing reported that 19 extensions had
+ * quietly stopped being built. A preferred region had become the only region, the same
+ * defect the terminal placement had.
+ *
+ * Geometry now lives in buildGrid, shared with placeStructures, which also means a
+ * widened placement is checked against the corridor guard - this planner is what sealed
+ * E47N41's only route north in the first place.
  */
 export class ExtensionPlanner {
   private room: Room;
@@ -24,17 +36,14 @@ export class ExtensionPlanner {
     // Targets to maintain corridors to
     const targets: RoomPosition[] = [];
 
-    // Add sources
     for (const source of this.room.find(FIND_SOURCES)) {
       targets.push(source.pos);
     }
 
-    // Add controller
     if (this.room.controller) {
       targets.push(this.room.controller.pos);
     }
 
-    // Add storage if exists
     if (this.room.storage) {
       targets.push(this.room.storage.pos);
     }
@@ -62,7 +71,7 @@ export class ExtensionPlanner {
       }
     }
 
-    // Clear area around spawn (5x5 for maneuvering)
+    // Clear area around spawn (5x5 for manoeuvring)
     for (let dx = -2; dx <= 2; dx++) {
       for (let dy = -2; dy <= 2; dy++) {
         const x = spawn.pos.x + dx;
@@ -76,15 +85,13 @@ export class ExtensionPlanner {
     return clear;
   }
 
-  /**
-   * Check if a position is on a highway (should be kept clear)
-   */
+  /** Check if a position is on a highway (should be kept clear) */
   private isOnHighway(x: number, y: number): boolean {
     return this.highways.has(`${x},${y}`);
   }
 
   /**
-   * Run extension planning - call periodically (every 20 ticks)
+   * Run extension planning - call periodically, gated by ConstructionCoordinator.
    */
   run(): void {
     const controller = this.room.controller;
@@ -95,10 +102,10 @@ export class ExtensionPlanner {
     const spawn = this.room.find(FIND_MY_SPAWNS)[0];
     if (!spawn) return;
 
-    // Get max extensions for current RCL
+    Liveness.ran("ExtensionPlanner");
+
     const maxExtensions = CONTROLLER_STRUCTURES[STRUCTURE_EXTENSION][controller.level];
 
-    // Count existing extensions and sites
     const existingExtensions = this.room.find(FIND_MY_STRUCTURES, {
       filter: (s) => s.structureType === STRUCTURE_EXTENSION,
     }).length;
@@ -108,125 +115,102 @@ export class ExtensionPlanner {
     }).length;
 
     const totalPlanned = existingExtensions + extensionSites;
+    const missing = maxExtensions - totalPlanned;
 
-    // Don't place more if we're at max
-    if (totalPlanned >= maxExtensions) {
+    if (missing <= 0) {
+      // Genuinely nothing to do at this RCL. Reported as idle so it cannot be mistaken
+      // for a planner that had work and failed - which is the state below.
+      Liveness.idle("ExtensionPlanner");
       return;
     }
 
     // Limit new sites per run to avoid spam
-    const sitesToPlace = Math.min(2, maxExtensions - totalPlanned);
-    const positions = this.findExtensionPositions(spawn.pos, sitesToPlace);
+    const sitesToPlace = Math.min(2, missing);
+    const tiles = pickExtensionTiles(
+      { x: spawn.pos.x, y: spawn.pos.y },
+      sitesToPlace,
+      this.buildQuery()
+    );
 
-    for (const pos of positions) {
-      const result = this.room.createConstructionSite(pos.x, pos.y, STRUCTURE_EXTENSION);
+    if (tiles.length === 0) {
+      // Deliberately NOT idle: extensions are missing and none could be placed. This is
+      // the state that went unreported while two rooms stalled 19 extensions short.
+      logger.warn(
+        "ExtensionPlanner",
+        `${this.room.name}: ${missing} extensions missing, no valid tile found`
+      );
+      return;
+    }
+
+    for (const tile of tiles) {
+      const result = this.room.createConstructionSite(tile.x, tile.y, STRUCTURE_EXTENSION);
       if (result === OK) {
-        logger.info("ExtensionPlanner", `Placed extension at ${pos.x},${pos.y}`);
+        Liveness.acted("ExtensionPlanner");
+        logger.info("ExtensionPlanner", `Placed extension at ${tile.x},${tile.y}`);
+      } else {
+        // Failures used to be silent, which hid everything about why nothing appeared.
+        logger.warn(
+          "ExtensionPlanner",
+          `${this.room.name}: createConstructionSite at ${tile.x},${tile.y} returned ${result}`
+        );
       }
     }
   }
 
   /**
-   * Find valid positions for extensions, avoiding highways
+   * Describe the room's tiles for buildGrid.
+   *
+   * Everything is precomputed into sets rather than queried per tile: the search now
+   * sweeps rings out to radius 22, and a lookForAt call per tile at that scale is enough
+   * CPU to matter.
    */
-  private findExtensionPositions(spawnPos: RoomPosition, needed: number): RoomPosition[] {
+  private buildQuery(): ExtensionTileQuery {
     const terrain = this.room.getTerrain();
-    const candidates: Array<{ pos: RoomPosition; score: number }> = [];
+    const occupied = new Set<string>();
+    const movement = new Set<string>();
+    const extensions = new Set<string>();
+    const extensionSites = new Set<string>();
 
-    // Search in expanding rings from spawn (range 3-10)
-    for (let radius = 3; radius <= 10; radius++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        for (let dy = -radius; dy <= radius; dy++) {
-          const x = spawnPos.x + dx;
-          const y = spawnPos.y + dy;
+    for (const s of this.room.find(FIND_STRUCTURES)) {
+      const key = `${s.pos.x},${s.pos.y}`;
+      occupied.add(key);
+      if (blocksMovement(s.structureType)) movement.add(key);
+      if (s.structureType === STRUCTURE_EXTENSION) extensions.add(key);
+    }
 
-          // Bounds check (stay away from edges)
-          if (x < 2 || x > 47 || y < 2 || y > 47) continue;
+    for (const s of this.room.find(FIND_CONSTRUCTION_SITES)) {
+      const key = `${s.pos.x},${s.pos.y}`;
+      occupied.add(key);
+      if (s.structureType === STRUCTURE_EXTENSION) extensionSites.add(key);
+    }
 
-          // Skip walls
-          if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+    const sources = this.room.find(FIND_SOURCES).map((s) => s.pos);
+    const controller = this.room.controller ? this.room.controller.pos : null;
 
-          // CRITICAL: Skip highway tiles to maintain traffic corridors
-          if (this.isOnHighway(x, y)) continue;
+    const isAdjacent = (px: number, py: number, x: number, y: number): boolean =>
+      Math.max(Math.abs(px - x), Math.abs(py - y)) <= 1;
 
-          // Skip if structure exists
-          const structures = this.room.lookForAt(LOOK_STRUCTURES, x, y);
-          if (structures.length > 0) continue;
-
-          // Skip if construction site exists
-          const sites = this.room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
-          if (sites.length > 0) continue;
-
-          // Skip tiles adjacent to sources (harvesters need those)
-          if (this.isAdjacentToSource(x, y)) continue;
-
-          // Skip tiles adjacent to controller (upgraders need those)
-          if (this.isAdjacentToController(x, y)) continue;
-
-          // Use checkerboard pattern (allows walking between extensions)
-          if ((x + y) % 2 !== (spawnPos.x + spawnPos.y) % 2) continue;
-
-          // Score: prefer closer to spawn, plain terrain, and clustered
-          const distance = Math.max(Math.abs(dx), Math.abs(dy));
-          const terrainPenalty = terrain.get(x, y) === TERRAIN_MASK_SWAMP ? 5 : 0;
-          const clusterBonus = this.getClusterScore(x, y);
-
-          const score = distance + terrainPenalty - clusterBonus;
-
-          candidates.push({
-            pos: new RoomPosition(x, y, this.room.name),
-            score,
-          });
+    return {
+      isWall: (x, y) => (terrain.get(x, y) & TERRAIN_MASK_WALL) !== 0,
+      isSwamp: (x, y) => (terrain.get(x, y) & TERRAIN_MASK_SWAMP) !== 0,
+      isOccupied: (x, y) => occupied.has(`${x},${y}`),
+      isReserved: (x, y) => this.isOnHighway(x, y),
+      isNearSource: (x, y) => sources.some((p) => isAdjacent(p.x, p.y, x, y)),
+      isNearController: (x, y) => !!controller && isAdjacent(controller.x, controller.y, x, y),
+      blocksMovementAt: (x, y) => movement.has(`${x},${y}`),
+      clusterScore: (x, y) => {
+        let score = 0;
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            if (dx === 0 && dy === 0) continue;
+            const key = `${x + dx},${y + dy}`;
+            if (extensions.has(key)) score += 2;
+            else if (extensionSites.has(key)) score += 1;
+          }
         }
-      }
-    }
-
-    // Sort by score (lower = better) and take what we need
-    candidates.sort((a, b) => a.score - b.score);
-    return candidates.slice(0, needed).map((p) => p.pos);
-  }
-
-  /**
-   * Check if a position is adjacent to any source
-   */
-  private isAdjacentToSource(x: number, y: number): boolean {
-    const sources = this.room.find(FIND_SOURCES);
-    for (const source of sources) {
-      if (source.pos.inRangeTo(x, y, 1)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Check if a position is adjacent to the controller
-   */
-  private isAdjacentToController(x: number, y: number): boolean {
-    const controller = this.room.controller;
-    if (!controller) return false;
-    return controller.pos.inRangeTo(x, y, 1);
-  }
-
-  /**
-   * Get cluster score - bonus for being adjacent to existing extensions
-   */
-  private getClusterScore(x: number, y: number): number {
-    let score = 0;
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        if (dx === 0 && dy === 0) continue;
-
-        const structures = this.room.lookForAt(LOOK_STRUCTURES, x + dx, y + dy);
-        const hasExtension = structures.some((s) => s.structureType === STRUCTURE_EXTENSION);
-        if (hasExtension) score += 2;
-
-        const sites = this.room.lookForAt(LOOK_CONSTRUCTION_SITES, x + dx, y + dy);
-        const hasExtensionSite = sites.some((s) => s.structureType === STRUCTURE_EXTENSION);
-        if (hasExtensionSite) score += 1;
-      }
-    }
-    return score;
+        return score;
+      },
+    };
   }
 
   /**

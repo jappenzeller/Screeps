@@ -381,6 +381,7 @@ function declareSystems(): void {
   Liveness.expect("StatsCollector.snapshot", 100);
   Liveness.expect("syncRemoteRooms", 1000, true);
   Liveness.expect("TerminalManager", 10, true);
+  Liveness.expect("ExtensionPlanner", 10, true);
 }
 
 function cleanupMemory(): void {

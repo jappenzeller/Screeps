@@ -49,6 +49,14 @@ interface LivenessStat {
    * exact failure it exists to prevent.
    */
   tracksActs: boolean;
+  /**
+   * Runs that found no work to do - a planner already at its cap, a sync with nothing to
+   * change. Subtracted before judging ALWAYS_NOOP, because "never acted" says nothing when
+   * there was never anything to act on. placeStructures and syncRemoteRooms both reported
+   * ALWAYS_NOOP for exactly that reason, which is the noise that trains a reader to skip
+   * the list.
+   */
+  idle: number;
 }
 
 const stats: Record<string, LivenessStat> = {};
@@ -93,7 +101,7 @@ export interface LivenessFinding {
 export function expect(name: string, everyTicks = 1, tracksActs = false): void {
   if (!bootTick) bootTick = Game.time;
   if (!stats[name]) {
-    stats[name] = { ran: 0, acted: 0, lastRan: 0, lastActed: 0, everyTicks, tracksActs };
+    stats[name] = { ran: 0, acted: 0, idle: 0, lastRan: 0, lastActed: 0, everyTicks, tracksActs };
   } else {
     stats[name].everyTicks = everyTicks;
     stats[name].tracksActs = tracksActs;
@@ -117,6 +125,17 @@ export function acted(name: string): void {
   if (!s) return;
   s.acted++;
   s.lastActed = Game.time;
+}
+
+/**
+ * Record that a run found nothing to do. Call alongside `ran`, only when the system checked
+ * and there was genuinely no work - not when it had work and failed, which is precisely
+ * the case ALWAYS_NOOP exists to surface.
+ */
+export function idle(name: string): void {
+  const s = stats[name];
+  if (!s) return;
+  s.idle++;
 }
 
 /**
@@ -156,11 +175,14 @@ export function report(): LivenessFinding[] {
 
     // Only claim a no-op for systems that actually report their work. Silence from an
     // uninstrumented system is absence of evidence, not evidence of absence.
-    if (s.tracksActs && s.acted === 0) {
+    // Judge only the runs that had work. A system that was idle every time it ran is
+    // correctly doing nothing; one that had work and never acted is the finding.
+    const hadWork = s.ran - s.idle;
+    if (s.tracksActs && hadWork > 0 && s.acted === 0) {
       findings.push({
         system: name,
         type: "ALWAYS_NOOP",
-        detail: `ran ${s.ran} times, never did anything`,
+        detail: `had work on ${hadWork} of ${s.ran} runs, never acted`,
       });
     }
   }

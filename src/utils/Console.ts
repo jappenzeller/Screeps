@@ -2735,7 +2735,7 @@ Bucket: ${bucket}/10000 (${Math.floor((bucket / 10000) * 100)}%)
       systems: names.map((n) => {
         const s = snap[n];
         return (
-          n + " ran:" + s.ran + " acted:" + s.acted +
+          n + " ran:" + s.ran + " acted:" + s.acted + " idle:" + s.idle +
           " lastRan:" + (s.lastRan ? Game.time - s.lastRan : "NEVER") +
           " every:" + s.everyTicks
         );

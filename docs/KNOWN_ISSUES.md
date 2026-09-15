@@ -1,6 +1,34 @@
 # Known Issues
 
 
+## Extensions silently stopped being placed in two rooms (FIXED)
+
+**Symptom:** E43N39 sat at 31 extensions of a possible 40 and E47N41 at 40 of 50, for days,
+with no extension construction sites queued in either and nothing in any log. For E43N39
+that is roughly half again its spawn capacity left unbuilt.
+
+**Cause:** `ExtensionPlanner` searched rings 3 to 10 from the spawn. Measured live, both
+rooms had **zero** valid tiles inside that radius and 183 and 92 respectively outside it.
+Their search squares are 61% and 79% wall, and the rest is taken by structures, roads
+included. A preferred region had become the only region, the same defect the terminal
+placement had. The planner logged only on success and had no liveness coverage, so the
+stall produced no signal at all.
+
+**Fix:**
+- Tile selection moved to `src/structures/buildGrid.ts`, searching out to radius 22 with
+  distance charged as a score penalty rather than a hard limit. A near tile still wins
+  whenever one exists.
+- The corridor guard moved there too, and extension placement now runs through it. That
+  guard was private to `placeStructures`, which is how this planner came to place an
+  extension in E47N41's only route north and seal its remote miners in.
+- The planner is declared in liveness. It reports idle when genuinely at its cap, and
+  stays silent-but-not-idle when extensions are missing and no tile can be found - which
+  is the state that went unreported.
+- `createConstructionSite` failures are now logged instead of discarded.
+
+**Tests:** `npm run test:unit` covers the corridor cases and selection, including the
+beyond-radius-10 case that both rooms were stuck in.
+
 ## Haulers filled and drained the same terminal; collection was a branch chain (FIXED)
 
 **Symptom:** two FLAP anomalies in E46N37, both haulers hovering at range 1-2 of the
