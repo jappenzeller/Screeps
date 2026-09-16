@@ -855,6 +855,7 @@ export class ColonyManager {
     var rcl = room && room.controller ? room.controller.level : 0;
     if (rcl < 4) {
       console.log("[remotes] " + this.roomName + ": sync skipped - RCL " + rcl + " < 4");
+      Liveness.idle("syncRemoteRooms");
       return;
     }
 
@@ -1034,6 +1035,12 @@ export class ColonyManager {
     }
     if (removed.length > 0 || added.length > 0) {
       console.log("[remotes] " + this.roomName + " now has " + currentCount + "/" + maxRemotes + " remotes");
+    } else {
+      // A settled remote set is the normal case, and changing nothing is the correct
+      // answer. Without this the registry reported ALWAYS_NOOP for a system working
+      // exactly as intended - the kind of false finding that teaches you to stop reading
+      // the findings at all.
+      Liveness.idle("syncRemoteRooms");
     }
   }
 

@@ -67,7 +67,13 @@ export function placeStructures(room: Room): void {
   if (!spawn) return;
 
   // Only run every 10 ticks (performance)
+  //
+  // ran() belongs here rather than at the call site in main.ts. Called from there every
+  // tick, nine runs in ten returned at this gate before doing anything, so the registry's
+  // run count measured the main loop rather than this system.
   if (Game.time % 10 !== 0) return;
+
+  Liveness.ran("placeStructures");
 
   // Count what exists
   const count = (type: BuildableStructureConstant) => ({
@@ -93,13 +99,21 @@ export function placeStructures(room: Room): void {
     // STRUCTURE_ROAD - handled by SmartRoadPlanner
   ];
 
+  let wanted = false;
   for (const type of structures) {
     const { built, sites, max } = count(type);
     if (built + sites < max) {
+      wanted = true;
       const placed = placeOne(room, spawn.pos, type);
       if (placed) return; // One per tick, avoid CPU spike
     }
   }
+
+  // Nothing was missing at this RCL: genuinely idle. If something WAS missing and no
+  // position could be found, stay silent instead - calling that idle would hide precisely
+  // the defect this registry exists to surface, which is how ExtensionPlanner stalled two
+  // rooms for days without a single signal.
+  if (!wanted) Liveness.idle("placeStructures");
 }
 
 function placeOne(room: Room, near: RoomPosition, type: BuildableStructureConstant): boolean {

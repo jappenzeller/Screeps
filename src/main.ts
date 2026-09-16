@@ -257,7 +257,8 @@ function runRoom(room: Room): void {
   }
 
   // 3. Place remaining structures (towers, storage, links, roads, etc.)
-  Liveness.ran("placeStructures");
+  // ran() lives inside placeStructures, after its every-10-ticks gate: counting calls here
+  // measured the main loop rather than the system.
   placeStructures(room);
 
   // 3. Opportunistic creep renewal (before spawn decisions)
@@ -376,12 +377,26 @@ function declareSystems(): void {
   Liveness.expect("cleanupMemory", 1, true);
   Liveness.expect("framework", 1);
   Liveness.expect("ColonyManager.run", 1);
-  Liveness.expect("placeStructures", 1, true);
+  Liveness.expect("placeStructures", 10, true);
   Liveness.expect("spawnCreeps", 1, true);
   Liveness.expect("StatsCollector.snapshot", 100);
   Liveness.expect("syncRemoteRooms", 1000, true);
   Liveness.expect("TerminalManager", 10, true);
   Liveness.expect("ExtensionPlanner", 10, true);
+  Liveness.expect("ContainerPlanner", 10, true);
+  Liveness.expect("TowerManager", 1, true);
+
+  // Deliberately NOT declared yet: RenewalManager, RampartPlanner, LinkManager,
+  // SmartRoadPlanner, RemoteContainerPlanner, EconomyTracker.track, trackEnergyFlow,
+  // checkAutoSafeMode, MilitaryManager, DuoManager, ExpansionManager, AWSExporter,
+  // DecisionLogger, CommandExecutor, DirectiveReader, PositionLogger, TrafficMonitor,
+  // gatherRoomIntel and runCreeps.
+  //
+  // A declaration with no matching ran() call reports NEVER_RAN, so adding these as a
+  // batch would manufacture ~18 false findings - the cry-wolf failure this registry exists
+  // to prevent, and one this file already caused once by declaring tracksActs for systems
+  // that never called acted(). Each gets declared when it gets instrumented, in
+  // cost-of-silence order: the planners and defense first, exporters last.
 }
 
 function cleanupMemory(): void {

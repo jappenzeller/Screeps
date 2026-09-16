@@ -5,6 +5,7 @@
  */
 
 import { logger } from "../utils/Logger";
+import * as Liveness from "../core/Liveness";
 
 // ContainerPlan interface is defined in types.d.ts
 
@@ -18,6 +19,8 @@ export class ContainerPlanner {
     // Source containers can be placed at any RCL - they're the economy foundation
     // Controller container gated at RCL 5+ with storage (handled in createPlan/placeConstructionSites)
     if (!this.room.controller) return;
+
+    Liveness.ran("ContainerPlanner");
 
     // Initialize room memory
     if (!Memory.rooms) Memory.rooms = {};
@@ -97,6 +100,13 @@ export class ContainerPlanner {
 
     if (planChanged) {
       Memory.rooms[this.room.name].containerPlan = plan;
+    }
+
+    // An empty plan means every container this room wants already exists. Reported as
+    // idle so it cannot be confused with a planner that had work and failed to place it -
+    // which is the state ExtensionPlanner sat in for days without one log line.
+    if (Object.keys(plan.sources).length === 0 && !plan.controller) {
+      Liveness.idle("ContainerPlanner");
     }
 
     // Always try to place sites - check each position individually
@@ -289,6 +299,7 @@ export class ContainerPlanner {
     // Place construction site
     const result = this.room.createConstructionSite(x, y, STRUCTURE_CONTAINER);
     if (result === OK) {
+      Liveness.acted("ContainerPlanner");
       logger.debug("ContainerPlanner", `Placed container site at ${x},${y}`);
     } else if (result !== ERR_FULL) {
       logger.warn("ContainerPlanner", `Failed to place container at ${x},${y}: ${result}`);

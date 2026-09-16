@@ -1,3 +1,5 @@
+import * as Liveness from "../core/Liveness";
+
 /**
  * TowerManager - Controls tower behavior for a room
  * Simple implementation: Attack hostiles > Heal creeps > Repair structures
@@ -12,7 +14,15 @@ export class TowerManager {
   }
 
   run(): void {
-    if (this.towers.length === 0) return;
+    Liveness.ran("TowerManager");
+
+    // A room below RCL 3 has no towers yet. Idle rather than silent: defense that reports
+    // nothing is indistinguishable from defense that is broken, and towers are the one
+    // system whose quiet failure loses the room outright.
+    if (this.towers.length === 0) {
+      Liveness.idle("TowerManager");
+      return;
+    }
 
     // Priority 1: Attack hostiles
     const hostiles = this.room.find(FIND_HOSTILE_CREEPS);
@@ -22,6 +32,7 @@ export class TowerManager {
         for (const tower of this.towers) {
           if (tower.store[RESOURCE_ENERGY] >= 10) {
             tower.attack(target);
+            Liveness.acted("TowerManager");
           }
         }
         return;
@@ -40,6 +51,7 @@ export class TowerManager {
       for (const tower of this.towers) {
         if (tower.store[RESOURCE_ENERGY] >= 10) {
           tower.heal(mostDamaged);
+          Liveness.acted("TowerManager");
         }
       }
       return;
@@ -57,11 +69,15 @@ export class TowerManager {
 
     if (!hasHarvesters) {
       // Economy dead — only attack hostiles and heal, skip all repairs
+      Liveness.idle("TowerManager");
       return;
     }
 
     const minTowerEnergy = Math.min(...this.towers.map((t) => t.store[RESOURCE_ENERGY]));
-    if (minTowerEnergy < 500) return;
+    if (minTowerEnergy < 500) {
+      Liveness.idle("TowerManager");
+      return;
+    }
 
     // Find something to repair
     const damaged = this.findRepairTarget();
@@ -70,7 +86,11 @@ export class TowerManager {
       const tower = this.towers[0];
       if (tower.store[RESOURCE_ENERGY] >= 10) {
         tower.repair(damaged);
+        Liveness.acted("TowerManager");
       }
+    } else {
+      // Nothing hostile, nothing hurt, nothing broken - a quiet room, not a dead system.
+      Liveness.idle("TowerManager");
     }
   }
 

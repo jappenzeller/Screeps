@@ -457,6 +457,29 @@ anomalies, and `liveness()` prints them in the console.
 does nothing. The report states what happened and leaves judgement to the reader, because
 the alternative is a threshold that silences real findings.
 
+**A third state: `idle()`.** A planner at its RCL cap, a remote sync with a settled set and
+a tower in a quiet room all ran and correctly did nothing. Counting those as no-ops
+produced `ALWAYS_NOOP` for systems working exactly as intended, so `idle()` marks a run
+that had no work and only `ran - idle > 0` runs count toward the verdict. The distinction
+matters in the other direction too: `placeStructures` stays **silent, not idle**, when
+structures are missing and no position can be found - that is the ExtensionPlanner defect
+exactly, and calling it idle would bury it.
+
+**Declared and instrumented:** `cleanupMemory`, `framework`, `ColonyManager.run`,
+`placeStructures`, `spawnCreeps`, `StatsCollector.snapshot`, `syncRemoteRooms`,
+`TerminalManager`, `ExtensionPlanner`, `ContainerPlanner`, `TowerManager`.
+
+`placeStructures` is declared at cadence 10, not 1. It returns at an every-10-ticks gate,
+so calling `ran()` from `main.ts` counted nine skipped runs in every ten - measuring the
+main loop rather than the system.
+
+**Roughly eighteen systems remain undeclared**, listed in `declareSystems()` with the
+reason. `expect()` without a matching `ran()` reports `NEVER_RAN`, so declaring them as a
+batch would manufacture eighteen false findings - the cry-wolf failure this registry exists
+to prevent, and one this codebase already caused once by declaring `tracksActs` for systems
+that never called `acted()`. They are added in cost-of-silence order: planners and defense
+first, exporters last.
+
 
 ## Terminal Transfers (`src/structures/TerminalManager.ts`)
 
