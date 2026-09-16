@@ -1,9 +1,7 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { smartMoveTo, moveToRoom } from "../utils/movement";
-import { Chooser, proximityFactor, supplyFactor } from "../core/Decision";
-
-/** What a builder does to collect from a scored target. */
-type BuilderEnergyAction = "withdraw" | "pickup" | "harvest";
+import { chooseHomeSite, firstReachable } from "./buildTargets";
+import { applyWorkerEnergy, scoreWorkerEnergy } from "./workerEnergy";
 
 /** Ticks a builder holds a chosen site before re-picking by priority. */
 const BUILD_LEASE_TICKS = 60;
@@ -14,108 +12,63 @@ const BUILD_LEASE_TICKS = 60;
  */
 
 /**
- * Get structure type priority for home room construction sites.
- * Lower number = higher priority.
- */
-function getHomeSitePriority(site: ConstructionSite): number {
-  switch (site.structureType) {
-    case STRUCTURE_SPAWN: return 0;
-    case STRUCTURE_CONTAINER: return 1;
-    case STRUCTURE_EXTENSION: return 2;
-    case STRUCTURE_TOWER: return 3;
-    case STRUCTURE_STORAGE: return 4;
-    case STRUCTURE_LINK: return 4;
-    case STRUCTURE_TERMINAL: return 5;
-    case STRUCTURE_LAB: return 6;
-    case STRUCTURE_WALL: return 7;
-    case STRUCTURE_RAMPART: return 7;
-    default: return 5;
-  }
-}
-
-/**
  * Find the highest priority construction site.
  * Priority: home non-road > remote containers > remote roads > home roads
  */
 function findConstructionSite(creep: Creep): ConstructionSite | null {
   const homeRoom = Game.rooms[creep.memory.room];
 
-  // Priority 1: Non-road sites in home room (sorted by structure type priority)
+  // Priority 1: Non-road home sites, best reachable structure-type tier first.
+  //
+  // This used to sort by getRangeTo and return the nearest. Straight-line distance is a
+  // proxy for "can I get there", and in E47N41 the two came apart: a builder in a dead-end
+  // pocket kept reselecting the nearest-by-air extension site it could not path to, holding
+  // 800 energy for 200 ticks. chooseHomeSite honours priority strictly, but a tier nothing
+  // can reach no longer blocks the tiers below it.
   if (homeRoom) {
-    var homeSites = homeRoom.find(FIND_CONSTRUCTION_SITES);
-    var nonRoad = homeSites.filter(function(s) { return s.structureType !== STRUCTURE_ROAD; });
-    if (nonRoad.length > 0) {
-      nonRoad.sort(function(a, b) {
-        var pa = getHomeSitePriority(a);
-        var pb = getHomeSitePriority(b);
-        if (pa !== pb) return pa - pb;
-        return creep.pos.getRangeTo(a) - creep.pos.getRangeTo(b);
-      });
-      return nonRoad[0];
-    }
+    const nonRoad = homeRoom.find(FIND_CONSTRUCTION_SITES, {
+      filter: (s) => s.structureType !== STRUCTURE_ROAD,
+    });
+    const chosen = chooseHomeSite(creep, nonRoad);
+    if (chosen) return chosen;
   }
 
-  // Priority 2: Container sites in adjacent remote rooms we're mining
-  // Priority 3: Road sites in remote rooms (for hauler efficiency)
+  // Priority 2 and 3: container sites in remotes we are mining, then roads there.
   const exits = Game.map.describeExits(creep.memory.room);
   if (exits) {
-    // First pass: containers (higher priority)
-    for (const dir in exits) {
-      const roomName = exits[dir as ExitKey];
-      if (!roomName || !Game.rooms[roomName]) continue;
+    const remoteOrder: StructureConstant[] = [STRUCTURE_CONTAINER, STRUCTURE_ROAD];
+    for (const wanted of remoteOrder) {
+      for (const dir in exits) {
+        const roomName = exits[dir as ExitKey];
+        if (!roomName || !Game.rooms[roomName]) continue;
 
-      // Only build in rooms we're actively mining
-      const hasMiner = Object.values(Game.creeps).some(
-        (c) =>
-          c.memory.role === "REMOTE_MINER" &&
-          c.memory.targetRoom === roomName &&
-          c.memory.room === creep.memory.room
-      );
-      if (!hasMiner) continue;
+        // Only build in rooms we are actively mining.
+        const hasMiner = Object.values(Game.creeps).some(
+          (c) =>
+            c.memory.role === "REMOTE_MINER" &&
+            c.memory.targetRoom === roomName &&
+            c.memory.room === creep.memory.room
+        );
+        if (!hasMiner) continue;
 
-      const remoteSites = Game.rooms[roomName].find(FIND_CONSTRUCTION_SITES, {
-        filter: (s) => s.structureType === STRUCTURE_CONTAINER,
-      });
-
-      if (remoteSites.length > 0) {
-        // Return first remote container site found
-        return remoteSites[0];
-      }
-    }
-
-    // Second pass: roads in remote rooms
-    for (const dir in exits) {
-      const roomName = exits[dir as ExitKey];
-      if (!roomName || !Game.rooms[roomName]) continue;
-
-      // Only build roads in rooms we're actively mining
-      const hasMiner = Object.values(Game.creeps).some(
-        (c) =>
-          c.memory.role === "REMOTE_MINER" &&
-          c.memory.targetRoom === roomName &&
-          c.memory.room === creep.memory.room
-      );
-      if (!hasMiner) continue;
-
-      const remoteRoads = Game.rooms[roomName].find(FIND_CONSTRUCTION_SITES, {
-        filter: (s) => s.structureType === STRUCTURE_ROAD,
-      });
-
-      if (remoteRoads.length > 0) {
-        return remoteRoads[0];
+        const remoteSites = Game.rooms[roomName].find(FIND_CONSTRUCTION_SITES, {
+          filter: (s) => s.structureType === wanted,
+        });
+        if (remoteSites.length > 0) return remoteSites[0];
       }
     }
   }
 
-  // Priority 4: Road sites in home room (lowest priority)
-  // Skip if storage exists - road builder handles home room roads
+  // Priority 4: Road sites in home room (lowest priority).
+  // Skip if storage exists - RoadBuilder handles home room roads.
   if (homeRoom && !homeRoom.storage) {
-    var roads = homeRoom.find(FIND_CONSTRUCTION_SITES, {
-      filter: function(s) { return s.structureType === STRUCTURE_ROAD; },
+    const roads = homeRoom.find(FIND_CONSTRUCTION_SITES, {
+      filter: (s) => s.structureType === STRUCTURE_ROAD,
     });
-    if (roads.length > 0) {
-      return creep.pos.findClosestByPath(roads) || roads[0];
-    }
+    // No `|| roads[0]` fallback: handing back an unreachable road is precisely what
+    // stranded the builder. If none is reachable, fall through to repair work.
+    const road = firstReachable(creep, roads);
+    if (road) return road;
   }
 
   return null;
@@ -326,83 +279,13 @@ function buildOrRepair(creep: Creep): void {
   }
 }
 
-/**
- * Score every energy source and take the best.
- *
- * Replaces a five-branch chain whose first test was `storage.store > 0` - any storage
- * with a single unit of energy captured the builder and short-circuited containers,
- * dropped energy and harvesting, however far away that storage was. Scoring weighs all
- * of them together, so a nearly-empty storage across the room loses to a full container
- * underfoot instead of winning by position in a list.
- *
- * Direct harvest stays in the set at a low but non-zero weight: a builder that can always
- * fall back to a regenerating source can never be stranded, which is why Builder was
- * exempt from the exact-maximum deadlock that hit Hauler and RemoteBuilder.
- */
-function scoreBuilderSources(
-  creep: Creep
-): { target: RoomObject; kind: BuilderEnergyAction; score: number } | null {
-  // Shared arithmetic - this function's scoring line was byte-identical to Upgrader's.
-  const chooser = new Chooser<{ target: RoomObject; kind: BuilderEnergyAction }>();
-  const need = creep.store.getFreeCapacity(RESOURCE_ENERGY) || 1;
-
-  const consider = (
-    target: RoomObject,
-    kind: BuilderEnergyAction,
-    base: number,
-    available: number
-  ): void => {
-    if (available <= 0) return;
-    chooser.consider(
-      { target, kind },
-      kind,
-      base,
-      supplyFactor(available, need),
-      proximityFactor(creep.pos.getRangeTo(target))
-    );
-  };
-
-  const storage = creep.room.storage;
-  if (storage) consider(storage, "withdraw", 80, storage.store[RESOURCE_ENERGY]);
-
-  const containers = creep.room.find(FIND_STRUCTURES, {
-    filter: (s) =>
-      s.structureType === STRUCTURE_CONTAINER &&
-      (s as StructureContainer).store[RESOURCE_ENERGY] > 50,
-  }) as StructureContainer[];
-  for (const c of containers) consider(c, "withdraw", 70, c.store[RESOURCE_ENERGY]);
-
-  // Decays if left, so collecting it is strictly better than ignoring it.
-  const dropped = creep.room.find(FIND_DROPPED_RESOURCES, {
-    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
-  });
-  for (const d of dropped) consider(d, "pickup", 75, d.amount);
-
-  // Only harvest at home - a builder in a remote should head back rather than mine there.
-  if (creep.room.name === creep.memory.room) {
-    const source = creep.pos.findClosestByRange(FIND_SOURCES_ACTIVE);
-    if (source) consider(source, "harvest", 25, source.energy);
-  }
-
-  const winner = chooser.best();
-  if (!winner) return null;
-  return { target: winner.target.target, kind: winner.target.kind, score: winner.score };
-}
-
 function getEnergy(creep: Creep): void {
-  const best = scoreBuilderSources(creep);
+  // One owner for worker collection, shared with RemoteBuilder and RoadBuilder. Harvesting
+  // is allowed only at home: a builder in a remote should head back, not start mining there.
+  const best = scoreWorkerEnergy(creep, { allowHarvest: creep.room.name === creep.memory.room });
 
   if (best) {
-    let result: ScreepsReturnCode;
-    if (best.kind === "withdraw") {
-      result = creep.withdraw(best.target as AnyStoreStructure, RESOURCE_ENERGY);
-    } else if (best.kind === "pickup") {
-      result = creep.pickup(best.target as Resource);
-    } else {
-      result = creep.harvest(best.target as Source);
-    }
-
-    if (result === ERR_NOT_IN_RANGE) {
+    if (applyWorkerEnergy(creep, best) === ERR_NOT_IN_RANGE) {
       smartMoveTo(creep, best.target, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
     }
     return;

@@ -538,6 +538,40 @@ The decision lives in its own module so it can be unit tested with mock rooms.
 `Hauler.collect()` only honours the lease, executes, and positions the creep when nothing
 holds energy.
 
+## Worker Energy (`src/creeps/workerEnergy.ts`)
+
+One owner for "where does a worker take energy from", shared by Builder, RemoteBuilder and
+RoadBuilder.
+
+Three roles carried three copies of the same chain, and two of them opened with "storage,
+if it holds more than 1,000". A developed room's storage nearly always does, so the
+container and dropped-energy branches below were unreachable in practice - dropped energy
+decayed on the ground while a worker walked across the room to storage. RemoteBuilder
+carried a *fourth* copy as a partial-load release check, whose own comment warned that
+divergence would make the creep "either strand or thrash"; that check now calls the
+collector itself, so the two cannot drift apart.
+
+Score = `base(source) x supply(how much is there) x proximity`: storage 80, dropped 75,
+container 70, direct harvest 25. The 1,000 floor on storage is deliberately gone - a hard
+floor means "no source at all" the moment storage dips below it, which is the shape that
+left E46N37's haulers parked while extensions sat empty. Under scoring a nearly-empty
+storage simply loses on supply. Harvest stays in the set at a low weight, so a worker that
+can mine is never stranded.
+
+## Construction Targets (`src/creeps/buildTargets.ts`)
+
+Which site a builder works on. Selection sorted candidates by `getRangeTo` and returned the
+nearest - straight-line distance standing in for "can I get there". In E47N41 the two came
+apart: a builder in a dead-end pocket held 800 energy for 200 ticks reselecting the
+nearest-by-air site it could not path to. Clearing its target by hand changed nothing,
+because the criterion itself was the defect.
+
+`chooseHomeSite` honours structure-type priority strictly - a spawn before an extension -
+but a tier nothing can reach no longer blocks the tiers below it. `firstReachable` keeps a
+caller's own ordering, for callers whose order carries intent that nearest-to-creep would
+discard (RoadBuilder pays out from storage outward), while still requiring a path. Path
+tests are capped, since the useful candidates sit at the front of an ordered list anyway.
+
 ## Hauler Delivery (`src/creeps/haulerDelivery.ts`)
 
 One owner for "where does this energy go", shared by Hauler and RemoteHauler.

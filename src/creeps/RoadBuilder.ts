@@ -11,6 +11,8 @@
  */
 
 import { smartMoveTo } from "../utils/movement";
+import { firstReachable } from "./buildTargets";
+import { applyWorkerEnergy, scoreWorkerEnergy } from "./workerEnergy";
 
 type RoadBuilderState = "COLLECTING" | "BUILDING";
 
@@ -39,43 +41,19 @@ export function runRoadBuilder(creep: Creep): void {
 }
 
 function collectEnergy(creep: Creep): void {
-  // Priority 1: Storage
+  // Shared with Builder and RemoteBuilder. This role's own chain put storage first
+  // whenever it held over 1,000, so the container and dropped-energy branches below were
+  // unreachable in any developed room.
+  const best = scoreWorkerEnergy(creep, { allowHarvest: false });
+  if (best) {
+    if (applyWorkerEnergy(creep, best) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, best.target, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
+    }
+    return;
+  }
+
+  // Nothing available - wait near storage or spawn
   var storage = creep.room.storage;
-  if (storage && storage.store[RESOURCE_ENERGY] > 1000) {
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Priority 2: Container with energy
-  var container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-    filter: function(s) {
-      return s.structureType === STRUCTURE_CONTAINER &&
-        (s as StructureContainer).store[RESOURCE_ENERGY] > 100;
-    },
-  });
-  if (container) {
-    if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Priority 3: Dropped energy
-  var dropped = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-    filter: function(r) {
-      return r.resourceType === RESOURCE_ENERGY && r.amount > 30;
-    },
-  });
-  if (dropped) {
-    if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, dropped, { visualizePathStyle: { stroke: "#ffaa00" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Nothing available — wait near storage or spawn
   var waitTarget = storage || creep.room.find(FIND_MY_SPAWNS)[0];
   if (waitTarget && !creep.pos.inRangeTo(waitTarget, 3)) {
     smartMoveTo(creep, waitTarget, { reusePath: 10 });
@@ -90,12 +68,12 @@ function buildRoad(creep: Creep): void {
   });
 
   if (roadSites.length === 0) {
-    // No roads to build — idle near storage
+    // No roads to build - idle near storage
     creep.say("done");
-    var storage = creep.room.storage;
-    var waitTarget = storage || creep.room.find(FIND_MY_SPAWNS)[0];
-    if (waitTarget && !creep.pos.inRangeTo(waitTarget, 3)) {
-      smartMoveTo(creep, waitTarget, { reusePath: 10 });
+    var idleStorage = creep.room.storage;
+    var idleTarget = idleStorage || creep.room.find(FIND_MY_SPAWNS)[0];
+    if (idleTarget && !creep.pos.inRangeTo(idleTarget, 3)) {
+      smartMoveTo(creep, idleTarget, { reusePath: 10 });
     }
     return;
   }
@@ -108,8 +86,15 @@ function buildRoad(creep: Creep): void {
     });
   }
 
-  // Build the closest-to-storage road
-  var target = roadSites[0];
+  // Paying out from storage outward is the intent, so that order is kept - but the head of
+  // the list still has to be somewhere this creep can get to. Taking roadSites[0] on faith
+  // is the same range-as-proxy assumption that stranded a builder in E47N41 for 200 ticks.
+  var target = firstReachable(creep, roadSites);
+  if (!target) {
+    creep.say("no path");
+    return;
+  }
+
   var result = creep.build(target);
   if (result === ERR_NOT_IN_RANGE) {
     smartMoveTo(creep, target, { visualizePathStyle: { stroke: "#cccccc" }, reusePath: 5 });

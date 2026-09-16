@@ -1,4 +1,5 @@
 import { smartMoveTo } from "../utils/movement";
+import { applyWorkerEnergy, scoreWorkerEnergy } from "./workerEnergy";
 
 /**
  * REMOTE_BUILDER - builds infrastructure in remote mining rooms.
@@ -52,28 +53,17 @@ export function runRemoteBuilder(creep: Creep): void {
 const PARTIAL_LOAD_FRACTION = 0.5;
 
 /**
- * Whether collectEnergy() would find anything. Mirrors its three sources and their
- * thresholds exactly, so the release check below agrees with what collection can see -
- * if these ever diverge the creep will either strand or thrash.
+ * Whether collectEnergy() would find anything.
+ *
+ * This used to be a hand-mirrored copy of collectEnergy()'s three branches and thresholds,
+ * with a comment warning that if the two ever diverged the creep would "either strand or
+ * thrash". It asks the collector itself now, so they cannot disagree.
  */
 function hasCollectableEnergy(creep: Creep): boolean {
   const mem = creep.memory as RemoteBuilderMemory;
   const home = Game.rooms[mem.room];
   if (!home) return true; // no vision - assume energy exists rather than abandon the trip
-
-  if (home.storage && home.storage.store[RESOURCE_ENERGY] > 1000) return true;
-
-  const container = home.find(FIND_STRUCTURES, {
-    filter: (s) =>
-      s.structureType === STRUCTURE_CONTAINER &&
-      (s as StructureContainer).store[RESOURCE_ENERGY] > 200,
-  })[0];
-  if (container) return true;
-
-  const dropped = home.find(FIND_DROPPED_RESOURCES, {
-    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount > 50,
-  })[0];
-  return !!dropped;
+  return scoreWorkerEnergy(creep, { room: home, allowHarvest: false }) !== null;
 }
 
 /**
@@ -91,44 +81,19 @@ function collectEnergy(creep: Creep, mem: RemoteBuilderMemory): void {
     return;
   }
 
-  // Priority 1: Withdraw from storage
-  var storage = creep.room.storage;
-  if (storage && storage.store[RESOURCE_ENERGY] > 1000) {
-    if (creep.withdraw(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#ffaa00" } });
-    }
-    return;
-  }
-
-  // Priority 2: Withdraw from container
-  var container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-    filter: function (s) {
-      return s.structureType === STRUCTURE_CONTAINER && s.store[RESOURCE_ENERGY] > 200;
-    },
-  }) as StructureContainer | null;
-
-  if (container) {
-    if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, container, { visualizePathStyle: { stroke: "#ffaa00" } });
-    }
-    return;
-  }
-
-  // Priority 3: Pickup dropped energy
-  var dropped = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-    filter: function (r) {
-      return r.resourceType === RESOURCE_ENERGY && r.amount > 50;
-    },
-  });
-
-  if (dropped) {
-    if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, dropped, { visualizePathStyle: { stroke: "#ffaa00" } });
+  // Shared with Builder and RoadBuilder. The chain here opened with "storage, if it holds
+  // over 1,000", which a developed room's storage nearly always does, so the container and
+  // dropped-energy branches below it never ran - dropped energy decayed on the ground.
+  const best = scoreWorkerEnergy(creep, { allowHarvest: false });
+  if (best) {
+    if (applyWorkerEnergy(creep, best) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, best.target, { visualizePathStyle: { stroke: "#ffaa00" } });
     }
     return;
   }
 
   // No energy available - wait near storage
+  var storage = creep.room.storage;
   if (storage) {
     if (creep.pos.getRangeTo(storage) > 3) {
       smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#ffaa00" } });

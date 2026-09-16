@@ -1,6 +1,46 @@
 # Known Issues
 
 
+## A builder held 800 energy for 200 ticks in front of a blocked corridor (FIXED)
+
+**Symptom:** a builder in E47N41, state BUILDING, 800 energy unchanged for 200 ticks,
+cycling between 11,23 / 14,20 / 15,19 while five extension sites sat at 0 progress.
+
+**Cause:** two independent faults, and the first masked the second.
+
+1. `Builder.findConstructionSite` sorted sites by `getRangeTo` - straight-line distance -
+   and returned the nearest. The nearest by air was unreachable on foot. Clearing
+   `targetSiteId` by hand did not help, because the selection immediately reproduced the
+   same choice; nor did the build lease expiring. The criterion itself was the defect.
+2. The one-tile terrain corridor at 15,18 - the only non-wall tile across that entire row -
+   was plugged by an extension this same planner had placed before the chokepoint guard
+   existed. North of it a diagonal zigzag of open tiles runs all the way to the sites.
+
+**Diagnosis note:** `findPath(spawn -> site)` reported the sites reachable while
+`findClosestByPath` from the builder reported nothing, and the difference was the *origin*,
+not the destination. Reading a reachability result without checking which position it was
+measured from sent me to the wrong conclusion once already.
+
+**Fix:** `src/creeps/buildTargets.ts` requires a path and skips a whole priority tier when
+nothing in it is reachable; the extension at 15,18 was destroyed to reopen the corridor.
+Within two ticks the builder emptied its full 800 into the site at 15,14 (0 -> 1600 of
+3000) and returned to collect more.
+
+## Three copies of worker energy collection, two dead below the first branch (FIXED)
+
+**Symptom:** dropped energy decaying beside workers who walked to storage instead.
+
+**Cause:** Builder, RemoteBuilder and RoadBuilder each had their own collection chain, and
+RemoteBuilder and RoadBuilder both opened with "storage, if it holds more than 1,000".
+Storage in a developed room nearly always holds more, so their container and dropped-energy
+branches were unreachable in practice - design rule 2. RemoteBuilder also kept a fourth
+copy of the same thresholds in `hasCollectableEnergy()` as a release check, with a comment
+warning that if the two diverged the creep would "either strand or thrash".
+
+**Fix:** `src/creeps/workerEnergy.ts` owns the decision for all three roles, and the
+release check asks the collector instead of mirroring it. The 1,000 floor is gone: under
+scoring a nearly-empty storage loses on supply rather than vanishing from the option set.
+
 ## Extension sites placed where no creep could reach them (FIXED)
 
 **Symptom:** Immediately after the extension search was widened to radius 22, a builder in
