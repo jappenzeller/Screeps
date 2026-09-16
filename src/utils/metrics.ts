@@ -5,6 +5,8 @@
  * Smooths values over time without storing full history.
  */
 
+import * as Liveness from "../core/Liveness";
+
 interface EMATracker {
   value: number;
   alpha: number; // Smoothing factor (0-1, lower = more smoothing)
@@ -55,6 +57,12 @@ export function getMetric(key: string): number {
  * Call once per tick in main loop to track energy delta
  */
 export function trackEnergyFlow(room: Room): void {
+  // Declared WITHOUT tracksActs, deliberately. This updates the EMA unconditionally on
+  // every call, so acted() would fire on every run and the no-op verdict would carry no
+  // information at all. The only question worth asking of it is whether it is still being
+  // called, since utility spawning reads the rate it maintains.
+  Liveness.ran("trackEnergyFlow");
+
   const storage = room.storage?.store[RESOURCE_ENERGY] || 0;
   const containers = room
     .find(FIND_STRUCTURES, {

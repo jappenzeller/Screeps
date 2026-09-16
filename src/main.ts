@@ -388,14 +388,21 @@ function declareSystems(): void {
   Liveness.expect("LinkManager", 1, true);
   Liveness.expect("RampartPlanner", 25, true);
   Liveness.expect("RenewalManager", 1, true);
+  Liveness.expect("checkAutoSafeMode", 1, true);
+  Liveness.expect("EconomyTracker.track", 1, true);
+
+  // No tracksActs: trackEnergyFlow updates its EMA unconditionally on every call, so
+  // acted() would fire on every run and the no-op verdict would carry no information.
+  // Only "is it still being called" is a real question for it.
+  Liveness.expect("trackEnergyFlow", 1);
 
   // Deliberately NOT declared yet: SmartRoadPlanner, RemoteContainerPlanner,
-  // EconomyTracker.track, trackEnergyFlow, checkAutoSafeMode, MilitaryManager, DuoManager,
-  // ExpansionManager, AWSExporter, DecisionLogger, CommandExecutor, DirectiveReader,
-  // PositionLogger, TrafficMonitor, gatherRoomIntel and runCreeps.
+  // MilitaryManager, DuoManager, ExpansionManager, AWSExporter, DecisionLogger,
+  // CommandExecutor, DirectiveReader, PositionLogger, TrafficMonitor, gatherRoomIntel and
+  // runCreeps.
   //
   // A declaration with no matching ran() call reports NEVER_RAN, so adding these as a
-  // batch would manufacture ~15 false findings - the cry-wolf failure this registry exists
+  // batch would manufacture ~12 false findings - the cry-wolf failure this registry exists
   // to prevent, and one this file already caused once by declaring tracksActs for systems
   // that never called acted(). Each gets declared when it gets instrumented, in
   // cost-of-silence order: the planners and defense first, exporters last.

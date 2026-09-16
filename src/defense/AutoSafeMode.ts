@@ -1,5 +1,6 @@
 import { logger } from "../utils/Logger";
 import { isUnderControllerAttack, getDefenseResponse } from "../military/AntiDowngrade";
+import * as Liveness from "../core/Liveness";
 
 /**
  * Auto Safe Mode Defense System
@@ -97,11 +98,19 @@ export function checkAutoSafeMode(room: Room): void {
   // Must be our room with controller
   if (!controller?.my) return;
 
+  // Safe mode is the last defense before a room is lost, and it ran every tick with no
+  // declaration at all - a fault here would stay invisible until the room died. Every
+  // quiet tick below reports idle, so ALWAYS_NOOP can only mean this decided to activate
+  // and the activation failed. That is precisely the finding worth being told about.
+  Liveness.ran("checkAutoSafeMode");
+
   // Can we activate safe mode?
   if (!controller.safeModeAvailable) {
+    Liveness.idle("checkAutoSafeMode");
     return; // No safe modes available
   }
   if (controller.safeModeCooldown) {
+    Liveness.idle("checkAutoSafeMode");
     return; // On cooldown
   }
 
@@ -110,14 +119,23 @@ export function checkAutoSafeMode(room: Room): void {
   const defense = assessDefense(room);
 
   // No hostiles = no problem
-  if (threat.hostileCount === 0) return;
+  if (threat.hostileCount === 0) {
+    Liveness.idle("checkAutoSafeMode");
+    return;
+  }
 
   // Minor threat - don't waste safe mode
   // Threshold: 200 = roughly 6-7 ATTACK parts or 4 HEAL parts
-  if (threat.totalThreat < 200) return;
+  if (threat.totalThreat < 200) {
+    Liveness.idle("checkAutoSafeMode");
+    return;
+  }
 
   // If we can defend, let towers handle it
-  if (defense.canDefend && !threat.hasHealer) return;
+  if (defense.canDefend && !threat.hasHealer) {
+    Liveness.idle("checkAutoSafeMode");
+    return;
+  }
 
   // Healer present with weak defense = big trouble
   // Healers can out-heal tower damage when tower energy is low
@@ -147,8 +165,11 @@ export function checkAutoSafeMode(room: Room): void {
 
     const result = controller.activateSafeMode();
     if (result === OK) {
+      Liveness.acted("checkAutoSafeMode");
       logger.warn("AutoSafeMode", "Safe mode activated successfully");
     } else {
+      // Deliberately not idle: we decided the room needed saving and failed to save it.
+      // Leaving this as unacted work is what turns it into an ALWAYS_NOOP finding.
       logger.warn("AutoSafeMode", `Failed to activate safe mode: ${result}`);
     }
     return;
@@ -163,11 +184,17 @@ export function checkAutoSafeMode(room: Room): void {
       );
       const downgradeResult = controller.activateSafeMode();
       if (downgradeResult === OK) {
+        Liveness.acted("checkAutoSafeMode");
         logger.warn("AutoSafeMode", "Safe mode activated for controller defense");
       } else {
         logger.warn("AutoSafeMode", `Failed to activate safe mode: ${downgradeResult}`);
       }
+    } else {
+      // Threat present and judged survivable without spending the safe mode.
+      Liveness.idle("checkAutoSafeMode");
     }
+  } else {
+    Liveness.idle("checkAutoSafeMode");
   }
 }
 

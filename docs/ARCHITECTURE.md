@@ -468,7 +468,22 @@ exactly, and calling it idle would bury it.
 **Declared and instrumented:** `cleanupMemory`, `framework`, `ColonyManager.run`,
 `placeStructures`, `spawnCreeps`, `StatsCollector.snapshot`, `syncRemoteRooms`,
 `TerminalManager`, `ExtensionPlanner`, `ContainerPlanner`, `TowerManager`, `LinkManager`,
-`RampartPlanner`, `RenewalManager`.
+`RampartPlanner`, `RenewalManager`, `checkAutoSafeMode`, `EconomyTracker.track`,
+`trackEnergyFlow`.
+
+`checkAutoSafeMode` is the clearest case in the whole registry. Safe mode is the last
+defense before a room is lost, every quiet tick reports idle, and so `ALWAYS_NOOP` there
+can only mean it decided to activate and the activation failed.
+
+Two declarations come with deliberate limits on what they claim:
+
+- `EconomyTracker.track` guards the **snapshot history** that feeds the advisor export, not
+  the affordability decisions. Those go through `getColonyEconomy()`, a cached pure
+  function callers invoke inline, which cannot silently stop the way a scheduled system can.
+- `trackEnergyFlow` is declared **without** `tracksActs`. It updates its EMA
+  unconditionally on every call, so `acted()` would fire on every run and the no-op verdict
+  would carry no information. Only "is it still being called" is a real question for it.
+  A declaration that cannot produce a meaningful verdict should not pretend to.
 
 `LinkManager` earned its place: E43N39 once sat at 1,430/1,800 spawn energy - 79.4% against
 a 0.8 threshold - so harvesters never fed a link and the whole network stayed dark with a
@@ -484,9 +499,9 @@ is precisely why the run count, not the act count, is the signal worth having.
 so calling `ran()` from `main.ts` counted nine skipped runs in every ten - measuring the
 main loop rather than the system.
 
-**Roughly fifteen systems remain undeclared**, listed in `declareSystems()` with the
+**Roughly twelve systems remain undeclared**, listed in `declareSystems()` with the
 reason. `expect()` without a matching `ran()` reports `NEVER_RAN`, so declaring them as a
-batch would manufacture fifteen false findings - the cry-wolf failure this registry exists
+batch would manufacture twelve false findings - the cry-wolf failure this registry exists
 to prevent, and one this codebase already caused once by declaring `tracksActs` for systems
 that never called `acted()`. They are added in cost-of-silence order: planners and defense
 first, exporters last.

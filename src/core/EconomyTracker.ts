@@ -3,6 +3,8 @@
  * Collects data over time for /live endpoint and decision making
  */
 
+import * as Liveness from "./Liveness";
+
 interface EconomySnapshot {
   tick: number;
   stored: number;
@@ -62,10 +64,22 @@ export class EconomyTracker {
    * Call every tick to track energy changes
    */
   public track(): void {
+    // Scope note, so the declaration is not read as more than it is: this guards the
+    // snapshot history that feeds the advisor export, NOT the affordability decisions.
+    // Those go through getColonyEconomy() below, a cached pure function callers invoke
+    // inline - it cannot silently stop running the way a scheduled system can.
+    Liveness.ran("EconomyTracker.track");
+
     const mem = this.getMemory();
     const currentStored = this.getTotalStored();
 
     // Record snapshot every 100 ticks
+    if (Game.time % 100 !== 0) {
+      Liveness.idle("EconomyTracker.track");
+    } else {
+      Liveness.acted("EconomyTracker.track");
+    }
+
     if (Game.time % 100 === 0) {
       mem.snapshots.push({
         tick: Game.time,
