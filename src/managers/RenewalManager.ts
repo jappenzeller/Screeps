@@ -1,5 +1,6 @@
 import { getCreepTargets } from "../core/ColonyTargets";
 import { canAffordDiscretionary } from "../core/EconomyTracker";
+import * as Liveness from "../core/Liveness";
 /**
  * Opportunistic Creep Renewal Manager
  *
@@ -32,32 +33,56 @@ export class RenewalManager {
   run(): boolean {
     if (!this.spawn) return false;
 
+    // Declared chiefly to catch it not being called at all: a true return here makes
+    // main.ts skip spawnCreeps() for the tick, so a fault in this system stops the colony
+    // reproducing. Not renewing is the normal and usually correct outcome, so nearly every
+    // run reports idle - which is exactly why the run count is the signal worth having.
+    Liveness.ran("RenewalManager");
+
     // Can't renew while spawning
-    if (this.spawn.spawning) return false;
+    if (this.spawn.spawning) {
+      Liveness.idle("RenewalManager");
+      return false;
+    }
 
     // Need energy to renew
-    if (this.room.energyAvailable < 50) return false;
+    if (this.room.energyAvailable < 50) {
+      Liveness.idle("RenewalManager");
+      return false;
+    }
 
     // Never renew while the room is starved. A true return here makes main.ts skip
     // spawnCreeps() for the tick, so renewing during a shortage both consumes the
     // energy needed to refill extensions AND blocks the replacements that would end
     // the shortage - the amplifier that turns a dip into a death spiral.
-    if (this.room.energyAvailable < this.room.energyCapacityAvailable * 0.5) return false;
+    if (this.room.energyAvailable < this.room.energyCapacityAvailable * 0.5) {
+      Liveness.idle("RenewalManager");
+      return false;
+    }
 
     // Extension fill alone is not solvency. It measures whether hauling works: E46N37
     // held its extensions at 65% out of a 20/tick trickle while running at -46/tick, and
     // renewed a 33-WORK upgrader past 1752 ticks of age on the strength of that. Renewal
     // is discretionary spending, so it answers to the colony's economy.
-    if (!canAffordDiscretionary(this.room)) return false;
+    if (!canAffordDiscretionary(this.room)) {
+      Liveness.idle("RenewalManager");
+      return false;
+    }
 
     // Find best candidate near spawn
     const candidate = this.findBestCandidateNearSpawn();
-    if (!candidate) return false;
+    if (!candidate) {
+      Liveness.idle("RenewalManager");
+      return false;
+    }
 
-    // Attempt renewal
+    // Attempt renewal. Deliberately NOT marked idle past this point: a candidate was
+    // found and renewal still did not happen, which is work that failed rather than work
+    // that was not there.
     const result = this.spawn.renewCreep(candidate);
 
     if (result === OK) {
+      Liveness.acted("RenewalManager");
       // Visual feedback
       this.spawn.room.visual.text(
         `♻️ ${candidate.name.substring(0, 8)}`,

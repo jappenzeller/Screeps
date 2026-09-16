@@ -1,4 +1,5 @@
 import { logger } from "../utils/Logger";
+import * as Liveness from "../core/Liveness";
 
 /**
  * RampartPlanner - Ramparts the structures that lose the room if they die.
@@ -31,8 +32,13 @@ export class RampartPlanner {
     const controller = this.room.controller;
     if (!controller || !controller.my || controller.level < 2) return;
 
+    Liveness.ran("RampartPlanner");
+
     const maxRamparts = CONTROLLER_STRUCTURES[STRUCTURE_RAMPART][controller.level] ?? 0;
-    if (maxRamparts === 0) return;
+    if (maxRamparts === 0) {
+      Liveness.idle("RampartPlanner");
+      return;
+    }
 
     const myStructures = this.room.find(FIND_MY_STRUCTURES);
     const rampartSites = this.room.find(FIND_CONSTRUCTION_SITES, {
@@ -45,17 +51,30 @@ export class RampartPlanner {
       MAX_CONCURRENT_SITES - rampartSites.length,
       maxRamparts - existing.length - rampartSites.length
     );
-    if (budget <= 0) return;
+    // Already at the concurrent-site cap or the RCL rampart cap: nothing to do, and that
+    // is the steady state for a protected room rather than a fault.
+    if (budget <= 0) {
+      Liveness.idle("RampartPlanner");
+      return;
+    }
 
     const covered = new Set<string>();
     for (const r of existing) covered.add(`${r.pos.x}:${r.pos.y}`);
     for (const s of rampartSites) covered.add(`${s.pos.x}:${s.pos.y}`);
 
-    for (const target of this.uncoveredTargets(myStructures, covered)) {
+    const uncovered = this.uncoveredTargets(myStructures, covered);
+
+    // Every critical structure is already protected. Distinct from the case below, where
+    // targets exist and every placement fails - that one stays silent, because it is the
+    // ExtensionPlanner defect and idle would hide it.
+    if (uncovered.length === 0) Liveness.idle("RampartPlanner");
+
+    for (const target of uncovered) {
       if (budget <= 0) break;
 
       const result = this.room.createConstructionSite(target.pos, STRUCTURE_RAMPART);
       if (result === OK) {
+        Liveness.acted("RampartPlanner");
         covered.add(`${target.pos.x}:${target.pos.y}`);
         budget--;
         logger.info(

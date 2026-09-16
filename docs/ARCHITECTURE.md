@@ -467,15 +467,26 @@ exactly, and calling it idle would bury it.
 
 **Declared and instrumented:** `cleanupMemory`, `framework`, `ColonyManager.run`,
 `placeStructures`, `spawnCreeps`, `StatsCollector.snapshot`, `syncRemoteRooms`,
-`TerminalManager`, `ExtensionPlanner`, `ContainerPlanner`, `TowerManager`.
+`TerminalManager`, `ExtensionPlanner`, `ContainerPlanner`, `TowerManager`, `LinkManager`,
+`RampartPlanner`, `RenewalManager`.
+
+`LinkManager` earned its place: E43N39 once sat at 1,430/1,800 spawn energy - 79.4% against
+a 0.8 threshold - so harvesters never fed a link and the whole network stayed dark with a
+storage link built for it, silently. Its `acted()` checks the `transferEnergy` return code
+rather than assuming success, or a permanently failing transfer would report as healthy.
+
+`RenewalManager` is declared mostly to catch it not being called at all: a `true` return
+makes `main.ts` skip `spawnCreeps()` for the tick, so a fault there stops the colony
+reproducing. Not renewing is the normal outcome, so nearly every run reports idle - which
+is precisely why the run count, not the act count, is the signal worth having.
 
 `placeStructures` is declared at cadence 10, not 1. It returns at an every-10-ticks gate,
 so calling `ran()` from `main.ts` counted nine skipped runs in every ten - measuring the
 main loop rather than the system.
 
-**Roughly eighteen systems remain undeclared**, listed in `declareSystems()` with the
+**Roughly fifteen systems remain undeclared**, listed in `declareSystems()` with the
 reason. `expect()` without a matching `ran()` reports `NEVER_RAN`, so declaring them as a
-batch would manufacture eighteen false findings - the cry-wolf failure this registry exists
+batch would manufacture fifteen false findings - the cry-wolf failure this registry exists
 to prevent, and one this codebase already caused once by declaring `tracksActs` for systems
 that never called `acted()`. They are added in cost-of-silence order: planners and defense
 first, exporters last.

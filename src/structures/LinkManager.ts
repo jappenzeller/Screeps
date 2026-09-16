@@ -1,5 +1,6 @@
 import { logger } from "../utils/Logger";
 import { ColonyStateManager, CachedColonyState } from "../core/ColonyState";
+import * as Liveness from "../core/Liveness";
 
 /**
  * LinkManager - Manages energy transfer between links
@@ -69,7 +70,17 @@ export class LinkManager {
   }
 
   run(): void {
-    if (this.links.length === 0) return;
+    Liveness.ran("LinkManager");
+
+    // This is the system with a recorded silent failure already: E43N39 sat at 1,430/1,800
+    // spawn energy - 79.4% against a 0.8 threshold - so harvesters never once fed a link,
+    // and the entire network stayed dark with a storage link built for it. Nothing logged.
+    if (this.links.length === 0) {
+      Liveness.idle("LinkManager");
+      return;
+    }
+
+    let moved = false;
 
     // Transfer from source links to controller/storage links
     for (const sourceLink of this.sourceLinks) {
@@ -79,13 +90,21 @@ export class LinkManager {
 
       // Priority 1: Send to storage link (hub for colony distribution)
       if (this.storageLink && this.storageLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100) {
-        sourceLink.transferEnergy(this.storageLink);
+        // Result checked rather than assumed: counting an attempt as work would make the
+        // registry report a permanently failing transfer as a healthy one.
+        if (sourceLink.transferEnergy(this.storageLink) === OK) {
+          Liveness.acted("LinkManager");
+          moved = true;
+        }
         continue;
       }
 
       // Priority 2: Send to controller link only if storage link is full
       if (this.controllerLink && this.controllerLink.store.getFreeCapacity(RESOURCE_ENERGY) >= 100) {
-        sourceLink.transferEnergy(this.controllerLink);
+        if (sourceLink.transferEnergy(this.controllerLink) === OK) {
+          Liveness.acted("LinkManager");
+          moved = true;
+        }
         continue;
       }
     }
@@ -103,10 +122,17 @@ export class LinkManager {
         var storage = this.room.storage;
         var storageEnergy = storage ? storage.store[RESOURCE_ENERGY] : 0;
         if (storageEnergy > 10000) {
-          this.storageLink.transferEnergy(this.controllerLink);
+          if (this.storageLink.transferEnergy(this.controllerLink) === OK) {
+            Liveness.acted("LinkManager");
+            moved = true;
+          }
         }
       }
     }
+
+    // Links on cooldown, or below the 100-energy floor, or a storage bank under 10,000:
+    // all correct reasons to move nothing this tick.
+    if (!moved) Liveness.idle("LinkManager");
   }
 
   /**

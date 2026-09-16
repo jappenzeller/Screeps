@@ -385,15 +385,17 @@ function declareSystems(): void {
   Liveness.expect("ExtensionPlanner", 10, true);
   Liveness.expect("ContainerPlanner", 10, true);
   Liveness.expect("TowerManager", 1, true);
+  Liveness.expect("LinkManager", 1, true);
+  Liveness.expect("RampartPlanner", 25, true);
+  Liveness.expect("RenewalManager", 1, true);
 
-  // Deliberately NOT declared yet: RenewalManager, RampartPlanner, LinkManager,
-  // SmartRoadPlanner, RemoteContainerPlanner, EconomyTracker.track, trackEnergyFlow,
-  // checkAutoSafeMode, MilitaryManager, DuoManager, ExpansionManager, AWSExporter,
-  // DecisionLogger, CommandExecutor, DirectiveReader, PositionLogger, TrafficMonitor,
-  // gatherRoomIntel and runCreeps.
+  // Deliberately NOT declared yet: SmartRoadPlanner, RemoteContainerPlanner,
+  // EconomyTracker.track, trackEnergyFlow, checkAutoSafeMode, MilitaryManager, DuoManager,
+  // ExpansionManager, AWSExporter, DecisionLogger, CommandExecutor, DirectiveReader,
+  // PositionLogger, TrafficMonitor, gatherRoomIntel and runCreeps.
   //
   // A declaration with no matching ran() call reports NEVER_RAN, so adding these as a
-  // batch would manufacture ~18 false findings - the cry-wolf failure this registry exists
+  // batch would manufacture ~15 false findings - the cry-wolf failure this registry exists
   // to prevent, and one this file already caused once by declaring tracksActs for systems
   // that never called acted(). Each gets declared when it gets instrumented, in
   // cost-of-silence order: the planners and defense first, exporters last.
