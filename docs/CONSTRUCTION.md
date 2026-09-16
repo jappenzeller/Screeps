@@ -48,6 +48,13 @@ limit was radius 10, which both mature rooms exhausted, leaving them 19 extensio
 with no signal. Placement also runs through the shared corridor guard, so a widened tile
 cannot seal a one-wide passage.
 
+Widening made a second guard necessary. A candidate must be **reachable from the spawn**,
+established by flooding the room over walkable tiles. The corridor guard only inspects a
+tile's eight neighbours, so it cannot see ground that was already sealed off: the first
+widened run put five sites in E47N41's walled-off north, where no creep could stand, and a
+builder hung on one of them for 200 ticks holding 800 energy. A site nothing can reach is
+worse than no site, because it also captures a builder.
+
 
 **Placement Strategy:**
 - Cluster near spawn (easier to fill)

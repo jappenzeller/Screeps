@@ -172,13 +172,18 @@ test("places nothing rather than seal the only corridor", () => {
 });
 
 test("takes an open tile while refusing the corridor beside it", () => {
-  // Same passage, plus one pocket of open ground. The guard must reject without also
-  // rejecting the safe tile - a guard that blocks everything is as bad as none.
-  const open = (x: number, y: number): boolean => x >= 30 && x <= 34 && y >= 30 && y <= 34;
-  const q = openRoom({ isWall: (x: number, y: number) => x !== 25 && !open(x, y) });
+  // Same passage, plus a pocket of open ground reached through it. The guard must reject
+  // the corridor without also rejecting the safe tile - a guard that blocks everything is
+  // as bad as none. The pocket has to adjoin the corridor, or the reachability rule
+  // correctly refuses it too and the test proves nothing.
+  const pocket = (x: number, y: number): boolean => x >= 25 && x <= 29 && y >= 30 && y <= 34;
+  const q = openRoom({ isWall: (x: number, y: number) => x !== 25 && !pocket(x, y) });
   const tiles = BG.pickExtensionTiles({ x: 25, y: 25 }, 1, q);
   assertEqual(tiles.length, 1, "the pocket is usable");
-  assertTrue(open(tiles[0].x, tiles[0].y), `chose ${tiles[0].x},${tiles[0].y} in the open pocket`);
+  assertTrue(
+    pocket(tiles[0].x, tiles[0].y),
+    `chose ${tiles[0].x},${tiles[0].y}, which should be in the open pocket, not the corridor`
+  );
 });
 
 test("two tiles picked together cannot close a passage between them", () => {
@@ -194,6 +199,39 @@ test("two tiles picked together cannot close a passage between them", () => {
       (bx !== 25 && bx !== 26) || others.has(`${bx},${by}`);
     assertEqual(BG.isChokepoint(t.x, t.y, blocked), false, `${t.x},${t.y} pinches the corridor`);
   }
+});
+
+test("never places on ground the spawn cannot reach", () => {
+  // The live regression. E47N41's north is sealed behind a pre-existing extension, and the
+  // widened radius placed five sites there - reachable by no creep, and a builder hung on
+  // one for 200 ticks. A wall across the room reproduces it: everything above the wall is
+  // valid, empty, correctly parity-matched ground, and must still be refused.
+  const anchor = { x: 25, y: 40 };
+  const q = openRoom({ isWall: (_x: number, y: number) => y === 30 });
+  const tiles = BG.pickExtensionTiles(anchor, 6, q);
+  assertTrue(tiles.length > 0, "the spawn's own side is still usable");
+  for (const t of tiles) {
+    assertTrue(t.y > 30, `tile at ${t.x},${t.y} is on the spawn's side of the wall`);
+  }
+});
+
+test("a structure wall seals a region just as terrain does", () => {
+  // Reachability must read blocking structures too - an extension is as solid as rock.
+  const anchor = { x: 25, y: 40 };
+  const q = openRoom({ blocksMovementAt: (_x: number, y: number) => y === 30 });
+  const tiles = BG.pickExtensionTiles(anchor, 6, q);
+  assertTrue(tiles.length > 0, "space remains below the barrier");
+  for (const t of tiles) {
+    assertTrue(t.y > 30, `tile at ${t.x},${t.y} is reachable from the spawn`);
+  }
+});
+
+test("reachability floods from beside the anchor, not the anchor itself", () => {
+  // A spawn blocks its own tile. Seeding the flood at the anchor would find nothing and
+  // reject the entire room.
+  const anchor = { x: 25, y: 25 };
+  const q = openRoom({ blocksMovementAt: (x: number, y: number) => x === 25 && y === 25 });
+  assertTrue(BG.pickExtensionTiles(anchor, 1, q).length === 1, "the room is still usable");
 });
 
 test("respects reserved traffic corridors, sources and the controller", () => {

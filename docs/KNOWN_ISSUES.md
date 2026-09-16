@@ -1,6 +1,58 @@
 # Known Issues
 
 
+## Extension sites placed where no creep could reach them (FIXED)
+
+**Symptom:** Immediately after the extension search was widened to radius 22, a builder in
+E47N41 sat at 14,20 holding 800 energy for 200+ ticks without spending any. Five of the six
+new extension sites showed 0 progress, and `findClosestByPath` from the builder to the set
+of sites returned **nothing**.
+
+**Cause:** the widened radius reached into the sealed north of E47N41 - the region behind
+the pre-existing extension at 15,18 that once stranded the room's remote miners. The
+chokepoint guard is local to a tile's eight neighbours: it prevents a *new* placement from
+severing a corridor, but says nothing about ground already walled off. Every one of those
+tiles was empty, correctly parity-matched and not a chokepoint, and completely unreachable.
+A local guard cannot answer a global question.
+
+**Fix:** `reachableTiles()` in `src/structures/buildGrid.ts` floods the room from the
+spawn over walkable tiles - terrain walls and blocking structures alike - and a candidate
+must be in that set. The flood starts from the tiles beside the anchor, because a spawn
+blocks its own tile.
+
+**Tests:** `npm run test:unit` covers a terrain wall, a structure wall, and the
+anchor-blocks-itself case.
+
+## Remote haulers delivered past empty spawns into storage (FIXED)
+
+**Symptom:** dead code by inspection, and the shape that produced several live stalls
+elsewhere.
+
+**Cause:** `RemoteHauler.findDeliveryTarget` was an ordered chain whose Priority 1 returned
+storage whenever storage had any free capacity. Storage holds 1,000,000 and is effectively
+never full, so Priorities 2-4 - controller container, spawn/extensions, any container -
+were unreachable in every room that owns storage. A remote hauler would cross two rooms and
+pour its load into storage past an empty spawn. Design rule 2.
+
+**Fix:** delivery scoring moved out of `Hauler.ts` into `src/creeps/haulerDelivery.ts` and
+both haulers now share it. Storage carries the lowest base of any sink (10 against
+spawn/extension 90), so RemoteHauler's separate emergency case became unnecessary - the
+spawn network wins by weight rather than by position in a list.
+
+## Haulers waited forever on a container that never reached zero (FIXED)
+
+**Symptom:** two haulers in E46N37 in COLLECTING holding 873 and 450 energy while 27
+extensions were empty, storage was 0 and the room ran at 49.7% of capacity. An earlier pair
+in the same room had already died in the same state, flagged STUCK at 200 ticks.
+
+**Cause:** the partial-load release in `Hauler.ts` switched to DELIVERING only when the
+target container held exactly 0. A static miner sits on its container and transfers as it
+harvests, so the container holds a small constant amount - 10, in both of E46N37's - and
+`=== 0` was a value that never occurred. The comment said "drained"; the test said zero.
+
+**Fix:** `TOPUP_WORTH_WAITING = 100`. A container holding less than that cannot
+meaningfully finish a load, so the hauler delivers what it has.
+
 ## Extensions silently stopped being placed in two rooms (FIXED)
 
 **Symptom:** E43N39 sat at 31 extensions of a possible 40 and E47N41 at 40 of 50, for days,

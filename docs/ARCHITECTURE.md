@@ -538,6 +538,21 @@ The decision lives in its own module so it can be unit tested with mock rooms.
 `Hauler.collect()` only honours the lease, executes, and positions the creep when nothing
 holds energy.
 
+## Hauler Delivery (`src/creeps/haulerDelivery.ts`)
+
+One owner for "where does this energy go", shared by Hauler and RemoteHauler.
+
+It was private to Hauler while RemoteHauler kept its own ordered chain, and that chain
+opened with "storage, if it has any free capacity" - which a 1,000,000-capacity storage
+effectively always does - so its controller-container, spawn/extension and container
+branches were unreachable in every room owning storage.
+
+Score = `base(role) x urgency(how empty) x proximity`. Base weights carry the intent the
+old priorities encoded in control flow: a tower that cannot defend 1000, spawn/extensions
+90 (12 while a filler is keeping up, never 0), controller container 55, a filling terminal
+45, storage 10. Storage being lowest rather than first is the whole fix, and it is why
+RemoteHauler no longer needs a separate emergency case.
+
 ## Build Geometry (`src/structures/buildGrid.ts`)
 
 Two placement rules that were each private to one planner, and had started to disagree.
@@ -551,6 +566,12 @@ remote miner it spawned inside its own room. Both planners now share it.
 mature rooms had zero valid tiles inside that radius and 183 and 92 outside it, so they
 stopped growing 19 extensions short with no signal. The search now runs to radius 22 and
 charges distance as a score penalty, so a near tile still wins whenever one exists.
+
+**Reachability.** A candidate must be somewhere a creep can actually stand, established by
+flooding the room from the spawn. The chokepoint guard is local to eight neighbours and
+cannot see a region that was already sealed: widening the radius put five sites in
+E47N41's walled-off north and hung a builder on one of them for 200 ticks. Local guards
+cannot answer global questions.
 
 Both are pure and take predicates rather than a `Room`, so the geometry is unit tested
 against a grid instead of a live colony.

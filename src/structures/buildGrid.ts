@@ -106,11 +106,65 @@ export const EXTENSION_MIN_RADIUS = 3;
 export const EXTENSION_MAX_RADIUS = 22;
 
 /**
+ * Every tile a creep can walk to from the anchor, as "x,y" keys.
+ *
+ * The anchor is normally a spawn, which blocks its own tile, so the flood starts from the
+ * walkable tiles beside it.
+ */
+export function reachableTiles(
+  anchor: { x: number; y: number },
+  blocked: BlockedPredicate
+): Set<string> {
+  const seen = new Set<string>();
+  const queue: Array<{ x: number; y: number }> = [];
+
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const x = anchor.x + dx;
+      const y = anchor.y + dy;
+      if (x < 0 || x > 49 || y < 0 || y > 49) continue;
+      if (blocked(x, y)) continue;
+      const key = `${x},${y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      queue.push({ x, y });
+    }
+  }
+
+  while (queue.length > 0) {
+    const cur = queue.pop() as { x: number; y: number };
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const x = cur.x + dx;
+        const y = cur.y + dy;
+        if (x < 0 || x > 49 || y < 0 || y > 49) continue;
+        const key = `${x},${y}`;
+        if (seen.has(key)) continue;
+        if (blocked(x, y)) continue;
+        seen.add(key);
+        queue.push({ x, y });
+      }
+    }
+  }
+
+  return seen;
+}
+
+/**
  * Choose up to `needed` tiles for new extensions, nearest and most clustered first.
  *
  * Keeps the checkerboard pattern relative to the anchor so creeps can always walk between
  * extensions, and refuses any tile that would seal a corridor - including in combination
  * with the other tiles picked in the same call.
+ *
+ * Every candidate must also be somewhere a creep can actually get to. The chokepoint check
+ * is local to a tile's eight neighbours: it stops a new placement from severing a corridor,
+ * but says nothing about ground that was already walled off. Widening the search to radius
+ * 22 reached into exactly that in E47N41, whose north is sealed behind a pre-existing
+ * extension at 15,18 - five sites were placed where no creep could stand, and a builder
+ * hung on one of them for 200 ticks holding 800 energy. Local guards cannot answer a
+ * global question, so this one floods the room from the spawn.
  */
 export function pickExtensionTiles(
   anchor: { x: number; y: number },
@@ -122,6 +176,8 @@ export function pickExtensionTiles(
 
   const candidates: Array<{ x: number; y: number; score: number }> = [];
   const anchorParity = (anchor.x + anchor.y) % 2;
+  const movementBlocked: BlockedPredicate = (x, y) => q.isWall(x, y) || q.blocksMovementAt(x, y);
+  const reachable = reachableTiles(anchor, movementBlocked);
 
   for (let radius = EXTENSION_MIN_RADIUS; radius <= maxRadius; radius++) {
     for (let dx = -radius; dx <= radius; dx++) {
@@ -138,6 +194,7 @@ export function pickExtensionTiles(
         if (q.isReserved(x, y)) continue;
         if (q.isNearSource(x, y)) continue;
         if (q.isNearController(x, y)) continue;
+        if (!reachable.has(`${x},${y}`)) continue;
 
         const score = radius + (q.isSwamp(x, y) ? 5 : 0) - q.clusterScore(x, y);
         candidates.push({ x, y, score });
@@ -153,7 +210,7 @@ export function pickExtensionTiles(
   // The chokepoint test has to see the tiles already picked in this call, or two
   // placements that are each harmless alone can close a corridor between them.
   const blocked: BlockedPredicate = (x, y) =>
-    q.isWall(x, y) || q.blocksMovementAt(x, y) || chosenKeys.has(`${x},${y}`);
+    movementBlocked(x, y) || chosenKeys.has(`${x},${y}`);
 
   for (const candidate of candidates) {
     if (chosen.length >= needed) break;

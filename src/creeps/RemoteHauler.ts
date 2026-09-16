@@ -1,5 +1,6 @@
 import { moveToRoom, smartMoveTo } from "../utils/movement";
 import { updateRoomIntel, shouldFlee, fleeToSafety, resolveRemoteTarget } from "../utils/remoteIntel";
+import { scoreDeliveryTargets } from "./haulerDelivery";
 
 /**
  * RemoteHauler - Collects energy from remote mining rooms and delivers home
@@ -199,93 +200,6 @@ function collect(creep: Creep, targetRoom: string): void {
   }
 }
 
-/**
- * Check if a room is in emergency mode (no harvesters or haulers).
- * Cached per room per tick to avoid repeated creep iteration.
- */
-function checkEmergencyMode(room: Room): boolean {
-  // Room properties reset each tick - no stale data risk
-  if (room._remoteHaulerEmergency !== undefined) {
-    return room._remoteHaulerEmergency;
-  }
-
-  // Use room.find instead of Object.values(Game.creeps).filter
-  // This only checks creeps physically in the room, which is close enough
-  const homeCreeps = room.find(FIND_MY_CREEPS);
-  let hasHarvesters = false;
-  let hasHaulers = false;
-
-  for (const creep of homeCreeps) {
-    const role = creep.memory.role;
-    if (role === "HARVESTER") hasHarvesters = true;
-    if (role === "HAULER") hasHaulers = true;
-    if (hasHarvesters && hasHaulers) break;
-  }
-
-  room._remoteHaulerEmergency = !hasHarvesters || !hasHaulers;
-  return room._remoteHaulerEmergency;
-}
-
-/**
- * Find delivery target using cheap findClosestByRange instead of findClosestByPath.
- * Priority: Emergency spawn/ext > Storage > Controller container > Spawn/ext > Any container
- */
-function findDeliveryTarget(creep: Creep): AnyStoreStructure | null {
-  const homeRoom = creep.memory.room;
-  const room = Game.rooms[homeRoom];
-  if (!room) return null;
-
-  // === EMERGENCY: Bootstrap mode - spawn/ext first ===
-  if (checkEmergencyMode(room)) {
-    const emergencyTarget = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
-      filter: (s) =>
-        (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    }) as AnyStoreStructure | null;
-    if (emergencyTarget) {
-      creep.say("SOS");
-      return emergencyTarget;
-    }
-  }
-
-  // Priority 1: Storage (direct property lookup - free)
-  const storage = room.storage;
-  if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-    return storage;
-  }
-
-  // Priority 2: Controller container (small findInRange - cheap)
-  const controller = room.controller;
-  if (controller) {
-    const containers = controller.pos.findInRange(FIND_STRUCTURES, 3, {
-      filter: (s) =>
-        s.structureType === STRUCTURE_CONTAINER &&
-        s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-    });
-    if (containers.length > 0) {
-      return containers[0] as AnyStoreStructure;
-    }
-  }
-
-  // Priority 3: Spawn/extensions (findClosestByRange, NOT byPath)
-  const spawnExt = creep.pos.findClosestByRange(FIND_MY_STRUCTURES, {
-    filter: (s) =>
-      (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 0,
-  }) as AnyStoreStructure | null;
-  if (spawnExt) return spawnExt;
-
-  // Priority 4: Any container with space (findClosestByRange)
-  const container = creep.pos.findClosestByRange(FIND_STRUCTURES, {
-    filter: (s) =>
-      s.structureType === STRUCTURE_CONTAINER &&
-      s.store.getFreeCapacity(RESOURCE_ENERGY) > 100,
-  }) as AnyStoreStructure | null;
-  if (container) return container;
-
-  return null;
-}
-
 function deliver(creep: Creep, homeRoom: string): void {
   // Travel to home room if not there
   if (creep.room.name !== homeRoom) {
@@ -312,9 +226,16 @@ function deliver(creep: Creep, homeRoom: string): void {
     delete creep.memory.deliverTarget;
   }
 
-  // Find new target using cheap lookups
-  const target = findDeliveryTarget(creep);
-  if (target) {
+  // Score every sink and take the best, the same owner Hauler uses. The chain this
+  // replaces opened with "storage, if it has any free capacity" - which a 1,000,000
+  // capacity storage effectively always does - so the controller-container,
+  // spawn/extension and container branches below it were unreachable in every room that
+  // owned storage. A remote hauler would cross two rooms and pour its load into storage
+  // past an empty spawn. The separate emergency case is gone too: spawn and extensions
+  // outrank storage by weight now (90 against 10), not by position in a list.
+  const best = scoreDeliveryTargets(creep);
+  if (best) {
+    const target = best.target;
     creep.memory.deliverTarget = target.id;
     if (creep.transfer(target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
       smartMoveTo(creep, target, ROAD_OPTS_DELIVER);
