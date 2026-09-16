@@ -176,6 +176,27 @@ test("an empty list yields nothing", () => {
 });
 
 // ============================================================================
+// A caller's own build order
+// ============================================================================
+
+test("a caller can supply its own priority order", () => {
+  // Pioneer ranks a container beside a source above any other container: in a bootstrap
+  // room static mining is what makes everything else affordable.
+  const sourceContainer = site("srcc", "container", 40, 40);
+  const plainContainer = site("plain", "container", 16, 19);
+  const pioneerPriority = (s: any) => (s.id === "srcc" ? 1 : 3);
+  const pick = BT.chooseHomeSite(makeCreep(15, 19), [plainContainer, sourceContainer], pioneerPriority);
+  assertEqual(pick.id, "srcc", "the caller's order is honoured over the default");
+});
+
+test("a custom order still yields to reachability", () => {
+  unreachable = ["srcc"];
+  const sites = [site("plain", "container", 16, 19), site("srcc", "container", 40, 40)];
+  const pick = BT.chooseHomeSite(makeCreep(15, 19), sites, (s: any) => (s.id === "srcc" ? 1 : 3));
+  assertEqual(pick.id, "plain", "an unreachable top tier does not block the rest");
+});
+
+// ============================================================================
 // firstReachable - ordering the caller cares about
 // ============================================================================
 

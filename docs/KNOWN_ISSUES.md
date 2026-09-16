@@ -1,6 +1,45 @@
 # Known Issues
 
 
+## A tower at zero energy lost to any extension with room in it (FIXED)
+
+**Symptom:** latent rather than observed - found by inspection while converting the last
+two branch chains.
+
+**Cause:** `Harvester.deliver` was a four-tier chain opening with spawn and extensions. In a
+developing room something in that set nearly always has free capacity, so the tower branch
+below it only ran when the entire spawn network was full, and the storage branch below that
+effectively never ran at all. A tower sitting at 0 energy during an attack would be ignored
+in favour of a single extension with space. Design rule 2 again.
+
+**Fix:** harvesters now use the shared delivery owner, where a tower below
+`TOWER_CRITICAL` carries a base of 1000 and so outranks the spawn network exactly when it
+must, and not otherwise. The container-building step stays ahead of everything: a harvester
+standing on its own container site with WORK parts is the fastest route to static mining.
+
+## Pioneer's five-tier collection chain and unchecked build target (FIXED)
+
+**Symptom:** latent. Pioneers are bootstrap and expansion only, so this never showed in a
+mature colony - but it is the role a new colony's survival depends on entirely.
+
+**Cause:** two faults.
+
+1. Expansion collection was five tiers - dropped, tombstone, ruin, container, harvest -
+   each returning unconditionally, so a single unit of dropped energy across the room
+   outranked a full container underfoot.
+2. `pioneerBuild` sorted sites by its own priority and took `sites[0]` with no reachability
+   check - the same defect that cost E47N41 200 builder-ticks.
+
+**Fix:** collection goes through `workerEnergy` (which gained tombstones and ruins for
+this), and the build target through `chooseHomeSite`. Pioneer's own build order is
+preserved via the optional priority parameter, because it ranks a container beside a source
+above any other container - in a bootstrap room, static mining is what makes the rest
+affordable, and flattening that into the shared order would have been a silent regression.
+
+**Deliberately not converted:** local pioneer source selection. That code spreads pioneers
+evenly across a young room's sources, which is a different question from "which source is
+best right now" - scoring it would undo the balancing.
+
 ## A builder held 800 energy for 200 ticks in front of a blocked corridor (FIXED)
 
 **Symptom:** a builder in E47N41, state BUILDING, 800 energy unchanged for 200 ticks,

@@ -551,8 +551,12 @@ carried a *fourth* copy as a partial-load release check, whose own comment warne
 divergence would make the creep "either strand or thrash"; that check now calls the
 collector itself, so the two cannot drift apart.
 
-Score = `base(source) x supply(how much is there) x proximity`: storage 80, dropped 75,
-container 70, direct harvest 25. The 1,000 floor on storage is deliberately gone - a hard
+Score = `base(source) x supply(how much is there) x proximity`: storage 80, tombstone 78,
+dropped 75, ruin 72, container 70, direct harvest 25. Tombstones and ruins were Pioneer's
+alone, as tiers 2 and 3 of its own chain; folding them in here is what let that chain be
+replaced without losing capability, and it gives the three builder roles a recovery path
+they never had - a dead hauler's full load used to decay untouched unless a pioneer
+happened to be in the room. The 1,000 floor on storage is deliberately gone - a hard
 floor means "no source at all" the moment storage dips below it, which is the shape that
 left E46N37's haulers parked while extensions sat empty. Under scoring a nearly-empty
 storage simply loses on supply. Harvest stays in the set at a low weight, so a worker that
@@ -574,7 +578,8 @@ tests are capped, since the useful candidates sit at the front of an ordered lis
 
 ## Hauler Delivery (`src/creeps/haulerDelivery.ts`)
 
-One owner for "where does this energy go", shared by Hauler and RemoteHauler.
+One owner for "where does this energy go", shared by Hauler, RemoteHauler, Harvester and
+Pioneer.
 
 It was private to Hauler while RemoteHauler kept its own ordered chain, and that chain
 opened with "storage, if it has any free capacity" - which a 1,000,000-capacity storage

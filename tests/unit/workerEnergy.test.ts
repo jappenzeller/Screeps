@@ -19,6 +19,8 @@ g.RESOURCE_ENERGY = "energy";
 g.FIND_STRUCTURES = 107;
 g.FIND_DROPPED_RESOURCES = 106;
 g.FIND_SOURCES_ACTIVE = 104;
+g.FIND_TOMBSTONES = 118;
+g.FIND_RUINS = 123;
 g.STRUCTURE_CONTAINER = "container";
 g.STRUCTURE_STORAGE = "storage";
 g.Game = { time: 400000, creeps: {} };
@@ -44,6 +46,8 @@ interface RoomOpts {
   storAt?: [number, number];
   containers?: any[];
   drops?: any[];
+  tombs?: any[];
+  ruins?: any[];
   source?: { x: number; y: number; energy: number };
 }
 
@@ -61,6 +65,8 @@ function makeRoom(o: RoomOpts = {}): any {
     let pool: any[] = [];
     if (type === g.FIND_STRUCTURES) pool = (o.containers || []).concat(room.storage ? [room.storage] : []);
     else if (type === g.FIND_DROPPED_RESOURCES) pool = o.drops || [];
+    else if (type === g.FIND_TOMBSTONES) pool = o.tombs || [];
+    else if (type === g.FIND_RUINS) pool = o.ruins || [];
     return opts && opts.filter ? pool.filter(opts.filter) : pool;
   };
   return room;
@@ -187,6 +193,37 @@ test("piles and containers below the minimum are ignored", () => {
     drops: [drop("d1", 11, 11, WE.MIN_PICKUP - 1)],
   });
   assertEqual(WE.scoreWorkerEnergy(makeCreep(room, 10, 10), {}), null, "not worth the trip");
+});
+
+test("a tombstone is collected, and outranks equal dropped energy", () => {
+  // Tombstones and ruins were Pioneer's alone. Folding them in is what let its five-tier
+  // chain be replaced without losing capability - and it gives builders a recovery path
+  // they never had: a dead hauler's load used to decay untouched.
+  const room = makeRoom({
+    storage: 0,
+    tombs: [{ id: "t1", x: 12, y: 10, pos: { x: 12, y: 10 }, store: { energy: 600 } }],
+    drops: [drop("d1", 12, 10, 600)],
+  });
+  const best = WE.scoreWorkerEnergy(makeCreep(room, 10, 10), {});
+  assertEqual(best.target.id, "t1", "the tombstone expires outright");
+  assertEqual(best.kind, "withdraw", "tombstones are withdrawn from");
+});
+
+test("a ruin is collected when nothing better is around", () => {
+  const room = makeRoom({
+    storage: 0,
+    ruins: [{ id: "r1", x: 12, y: 10, pos: { x: 12, y: 10 }, store: { energy: 900 } }],
+  });
+  const best = WE.scoreWorkerEnergy(makeCreep(room, 10, 10), {});
+  assertEqual(best.target.id, "r1", "free energy is free energy");
+});
+
+test("a nearly-empty tombstone is not worth the trip", () => {
+  const room = makeRoom({
+    storage: 0,
+    tombs: [{ id: "t1", x: 12, y: 10, pos: { x: 12, y: 10 }, store: { energy: WE.MIN_PICKUP - 1 } }],
+  });
+  assertEqual(WE.scoreWorkerEnergy(makeCreep(room, 10, 10), {}), null, "below the minimum");
 });
 
 test("another room can be asked whether it holds anything", () => {

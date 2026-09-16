@@ -41,6 +41,15 @@ export function getHomeSitePriority(site: ConstructionSite): number {
 }
 
 /**
+ * A caller's own build order, for roles whose priorities differ from the standard one.
+ *
+ * Pioneer ranks a container beside a source above any other container, because in a
+ * bootstrap room static mining is what makes the rest affordable. That distinction is worth
+ * keeping rather than flattening into the shared order.
+ */
+export type SitePriority = (site: ConstructionSite) => number;
+
+/**
  * The nearest site in this list the creep can actually walk to, or null.
  *
  * Sites in another room cannot be path-tested from here, so they are accepted on trust and
@@ -81,12 +90,16 @@ export function pickReachableSite(
  * whole point: ordering without a release condition is how a builder came to hold 800
  * energy for 200 ticks in front of a blocked corridor.
  */
-export function chooseHomeSite(creep: Creep, sites: ConstructionSite[]): ConstructionSite | null {
+export function chooseHomeSite(
+  creep: Creep,
+  sites: ConstructionSite[],
+  priorityOf: SitePriority = getHomeSitePriority
+): ConstructionSite | null {
   if (sites.length === 0) return null;
 
   const tiers: Record<number, ConstructionSite[]> = {};
   for (const s of sites) {
-    const rank = getHomeSitePriority(s);
+    const rank = priorityOf(s);
     if (!tiers[rank]) tiers[rank] = [];
     tiers[rank].push(s);
   }

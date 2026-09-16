@@ -1,5 +1,6 @@
 import { ColonyManager } from "../core/ColonyManager";
 import { smartMoveTo } from "../utils/movement";
+import { scoreDeliveryTargets } from "./haulerDelivery";
 import { ThresholdMonitor } from "../utils/ThresholdMonitor";
 
 /** Stored energy above which a room can afford to route harvest into links. */
@@ -306,41 +307,17 @@ function deliver(creep: Creep): void {
     return;
   }
 
-  // Priority 1: Spawn and Extensions (critical for spawning)
-  var spawnOrExtension = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function(s) {
-      return (s.structureType === STRUCTURE_SPAWN || s.structureType === STRUCTURE_EXTENSION) &&
-        (s as StructureSpawn | StructureExtension).store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-    },
-  });
-
-  if (spawnOrExtension) {
-    if (creep.transfer(spawnOrExtension, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, spawnOrExtension, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Priority 2: Towers
-  var tower = creep.pos.findClosestByPath(FIND_MY_STRUCTURES, {
-    filter: function(s) {
-      return s.structureType === STRUCTURE_TOWER &&
-        (s as StructureTower).store.getFreeCapacity(RESOURCE_ENERGY) > 0;
-    },
-  });
-
-  if (tower) {
-    if (creep.transfer(tower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, tower, { visualizePathStyle: { stroke: "#ff0000" }, reusePath: 5 });
-    }
-    return;
-  }
-
-  // Priority 3: Storage
-  var storage = creep.room.storage;
-  if (storage && storage.store.getFreeCapacity(RESOURCE_ENERGY) > 0) {
-    if (creep.transfer(storage, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, storage, { visualizePathStyle: { stroke: "#00ff00" }, reusePath: 5 });
+  // Everything else goes through the one delivery owner, shared with Hauler and
+  // RemoteHauler. The chain this replaces put spawn and extensions first, and in a
+  // developing room something in that set nearly always has space - so the tower branch
+  // below it only ran when the entire spawn network was full, and the storage branch
+  // effectively never ran at all. A tower sitting at 0 energy under attack lost to a single
+  // extension with room in it. Scoring gives a tower below TOWER_CRITICAL a base of 1000,
+  // so it outranks the spawn network exactly when it needs to and not otherwise.
+  const best = scoreDeliveryTargets(creep);
+  if (best) {
+    if (creep.transfer(best.target, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, best.target, { visualizePathStyle: { stroke: "#ffffff" }, reusePath: 5 });
     }
     return;
   }

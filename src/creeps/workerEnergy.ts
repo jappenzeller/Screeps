@@ -41,8 +41,12 @@ export const WORKER_ENERGY_BASE = {
   STORAGE: 80,
   /** Decays every tick it sits, so taking it is strictly better than ignoring it. */
   DROPPED: 75,
+  /** Expires outright, and faster than dropped energy for a large creep's remains. */
+  TOMBSTONE: 78,
   /** The ordinary intermediate store. */
   CONTAINER: 70,
+  /** Decays, but slowly - worth collecting, not worth crossing a room for. */
+  RUIN: 72,
   /**
    * Direct harvest, low but never absent. A worker that can always fall back to a
    * regenerating source can never be stranded, which is why Builder was exempt from the
@@ -115,6 +119,24 @@ export function scoreWorkerEnergy(
   });
   for (const d of dropped) {
     consider(d, "pickup", WORKER_ENERGY_BASE.DROPPED, d.amount);
+  }
+
+  // Tombstones and ruins were Pioneer's alone, as tiers 2 and 3 of its own chain. Folding
+  // them in here is what let that chain be replaced without losing anything, and it gives
+  // the three builder roles a recovery path they never had - a dead hauler's full load used
+  // to decay untouched unless a pioneer happened to be in the room.
+  const tombstones = room.find(FIND_TOMBSTONES, {
+    filter: (t: Tombstone) => t.store[RESOURCE_ENERGY] >= MIN_PICKUP,
+  });
+  for (const t of tombstones) {
+    consider(t, "withdraw", WORKER_ENERGY_BASE.TOMBSTONE, t.store[RESOURCE_ENERGY]);
+  }
+
+  const ruins = room.find(FIND_RUINS, {
+    filter: (r: Ruin) => r.store[RESOURCE_ENERGY] >= MIN_PICKUP,
+  });
+  for (const ruin of ruins) {
+    consider(ruin, "withdraw", WORKER_ENERGY_BASE.RUIN, ruin.store[RESOURCE_ENERGY]);
   }
 
   // Only harvest in the room the creep is actually in - a source it can see in another
