@@ -71,6 +71,19 @@ permanently and silently.
 **Fix:** convert in the reader - `r.expiresAt * 1000 > now`. Not in the writer: seconds is
 what DynamoDB TTL requires, so changing the stored form would break automatic expiry.
 
+**Verified:** after deploying to `screeps-api-prod`, both rooms returned 50 rows (the
+query's `Limit`) where they had returned 0.
+
+**Correction, and a second finding underneath it.** Calling that output "recommendations"
+overstates it. Every one of the 891 rows is `type: observation` with an `observation_*` id,
+written by `storeObservations()` under a comment reading "store summary to recommendations
+table for backwards compatibility". **Not one genuine recommendation exists in the table.**
+The endpoint fix restored the advisor's *observation* feed - which is substantive and worth
+reading - but the recommendation pipeline itself produces nothing, and
+`screeps-recommendation-writer-prod` is deployed in the account without having written a
+row here. That is a separate, unfixed gap, and it was hidden behind the expiry bug: an
+empty array looked like one fault when it was concealing two.
+
 **Hypotheses refuted along the way,** recorded because each looked plausible: that the
 engine produced no recommendations (it had produced 891); that the rows lacked a `status`
 attribute and were therefore missing from the sparse `room-status-index` (true that all 891
