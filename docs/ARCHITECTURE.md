@@ -621,6 +621,38 @@ The decision lives in its own module so it can be unit tested with mock rooms.
 `Hauler.collect()` only honours the lease, executes, and positions the creep when nothing
 holds energy.
 
+## Builder Budget (`src/core/builderBudget.ts`)
+
+How many builders a colony can actually pay for.
+
+The mature-colony branch of `getCreepTargets` computed
+`maxBuildersByEconomy = Math.min(rcl, 4)`. The name claims a measurement and the value is a
+proxy: RCL is not income, so an RCL 7 room got four builders whether it earned 20 energy per
+tick or 200. The early-colony branch immediately above it *did* do income arithmetic - only
+the mature path, the one running in every developed room, ignored it.
+
+Measured live, all three colonies were CRITICAL at the same moment with an identical shape:
+
+| Room | Income | Burn | netFlow | Runway |
+|---|---|---|---|---|
+| E43N39 | 30 | 57.2 (upgrade 30, build 25) | -27.2 | 70 |
+| E47N41 | 20 | 78.3 (upgrade 36, build 40) | -58.3 | 11 |
+| E46N37 | 20 | 78.3 (upgrade 36, build 40) | -58.3 | 4 |
+
+Upgraders already answered to `canAffordDiscretionary` and were converging down to one.
+Builders answered to nothing, and were the larger half of a burn no room could pay.
+
+Two details that decide the design:
+
+- It keys on **measured** `buildBurn`, never a per-builder estimate. Burn scales with body
+  size - EconomyTracker charges `workParts * 5 * 0.5` - so a single 16-WORK builder burns
+  40/tick alone, and a head-count cap would have missed it completely.
+- The floor is **zero**, unlike the upgrader cap's one. That floor exists to keep a
+  controller off downgrade; construction has no deadline, and sites simply wait.
+
+Shedding one builder per death converges instead of lurching, and reverses on its own when
+income recovers - the same mechanism, and the same reasoning, as the upgrader cap.
+
 ## Worker Energy (`src/creeps/workerEnergy.ts`)
 
 One owner for "where does a worker take energy from", shared by Builder, RemoteBuilder and

@@ -20,6 +20,7 @@ import { ColonyManager } from "./ColonyManager";
 import { getMilestones } from "./ColonyMilestones";
 import { scoutingViable } from "./ColonyPopulation";
 import { canAffordDiscretionary, getColonyEconomy } from "./EconomyTracker";
+import { builderTargetFor } from "./builderBudget";
 import { LinkManager } from "../structures/LinkManager";
 import { CONFIG } from "../config";
 
@@ -68,9 +69,28 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
     } else if (rcl <= 3) {
       builderTarget = Math.min(2, Math.max(2, Math.min(rcl, 4)));
     } else {
-      // RCL 4+: scale by site count
-      const maxBuildersByEconomy = Math.min(rcl, 4);
-      builderTarget = Math.min(Math.ceil(totalSites / 10), maxBuildersByEconomy);
+      // RCL 4+: site count, bounded by what the room can actually pay for.
+      //
+      // This used to read `maxBuildersByEconomy = Math.min(rcl, 4)` - a name claiming a
+      // measurement over a value that is a proxy. RCL is not income. All three colonies
+      // were measured CRITICAL at once on the same shape: 20/tick of income against 40/tick
+      // of building, with runways of 70, 11 and 4 ticks. Upgraders already answered to
+      // solvency; builders answered to nothing, and were the larger half of the burn.
+      const economy = getColonyEconomy(room);
+      let builders = 0;
+      for (const name in Game.creeps) {
+        const c = Game.creeps[name];
+        if (c.memory.room === room.name && c.memory.role === "BUILDER") builders++;
+      }
+
+      builderTarget = builderTargetFor({
+        rcl,
+        totalSites,
+        totalIncome: economy.totalIncome,
+        buildBurn: economy.buildBurn,
+        builders,
+        canAfford: canAffordDiscretionary(room),
+      });
     }
   }
 

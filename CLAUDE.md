@@ -469,12 +469,42 @@ External AI-powered analysis system that monitors colony performance and provide
 https://g9gplzbul4.execute-api.us-east-1.amazonaws.com
 ```
 
+### AWS account and profile
+
+The advisor stack lives in account **788417514918**, reachable with
+**`AWS_PROFILE=screeps-new`**. Note that this shell may have `AWS_PROFILE=screeps-monitor`
+set in the environment, which resolves to a *different* account (488218643044) where none
+of this exists - every `aws` command below needs the profile set explicitly, including the
+`lambda update-function-code` deploy steps further down. Querying the wrong account fails
+with "Invalid API identifier", which reads like the API is missing rather than like the
+credentials are pointed elsewhere.
+
+The API is an **HTTP (v2)** API, so `aws apigatewayv2` is the right CLI, not `apigateway`.
+
 ### Endpoints
 
-- `GET /summary/{roomName}` - Colony overview with latest snapshot
-- `GET /recommendations/{roomName}` - AI-generated recommendations
-- `GET /metrics/{roomName}?hours=24` - Historical metric data
-- `POST /feedback/{recommendationId}` - Submit feedback on recommendations
+Verified live against `g9gplzbul4` (`screeps-ai-advisor-prod`). The previously documented
+`/summary/{room}`, `/recommendations/{room}` and `/feedback/{id}` routes **do not exist** -
+they 404, which looks like a dead API but is only stale documentation. Recommendations are
+nested under `/analysis`, colony state under `/colonies`:
+
+- `GET /colonies` - every colony
+- `GET /colonies/{roomName}` - colony overview from segment 90, with freshness
+- `GET /colonies/{roomName}/economy` - income, burn, netFlow, runway, health status
+- `GET /colonies/{roomName}/creeps` - creep census
+- `GET /colonies/{roomName}/remotes` - remote mining state
+- `GET /analysis/{roomName}/recommendations` - AI-generated recommendations
+- `GET /analysis/{roomName}/patterns` - observed patterns with trends
+- `GET /analysis/{roomName}/observations` - raw observations
+- `GET /analysis/{roomName}/signals` - **currently returns HTTP 500** with a
+  "Requested resource not found" body
+- `POST /analysis/{roomName}/feedback` - submit feedback
+- `GET /metrics/{roomName}` - historical metric data
+- `GET /intel/candidates`, `GET /intel/enemies` - expansion and threat intel
+- `GET /viewer`, `/recordings/*`, `/debug/*` - replay and debugging
+
+`/colonies/{roomName}/economy` is the fastest way to answer "can this room afford what it
+is doing": it returns netFlow and runway directly, which is the number that matters.
 
 ### How It Works
 

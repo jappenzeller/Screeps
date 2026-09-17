@@ -40,6 +40,38 @@ affordable, and flattening that into the shared order would have been a silent r
 evenly across a young room's sources, which is a different question from "which source is
 best right now" - scoring it would undo the balancing.
 
+## All three colonies ran CRITICAL at once with builders uncapped (FIXED)
+
+**Symptom:** every colony in deficit simultaneously, reported by the AWS advisor's
+`/colonies/{room}/economy` endpoint:
+
+| Room | Income | Burn | netFlow | Runway | Stored |
+|---|---|---|---|---|---|
+| E43N39 | 30 | 57.2 | -27.2 | 70 | 1,927 |
+| E47N41 | 20 | 78.3 | -58.3 | 11 | 660 |
+| E46N37 | 20 | 78.3 | -58.3 | 4 | 270 |
+
+Nothing accumulated anywhere, which is also why terminal transfers stayed dormant - no room
+could reach `SENDER_MIN_STORAGE`, so a working feature had nothing to move.
+
+**Cause:** `getCreepTargets` capped mature-room builders at
+`maxBuildersByEconomy = Math.min(rcl, 4)`. RCL is not income. Upgrading was already gated by
+`canAffordDiscretionary` and converging down; building - 40 of the 78.3 per tick, the larger
+share - was gated by nothing at all.
+
+**Fix:** `src/core/builderBudget.ts`, keyed on measured `buildBurn` against a 30% share of
+income, shedding one builder per death with a floor of zero. Measured burn rather than head
+count because a single 16-WORK builder burns 40/tick by itself.
+
+**Contributing factor, not a defect:** income was 20/tick per room because three of E43N39's
+four remotes were auto-paused with `"Hostile detected"` and valid future expiries. That is
+the system working - neighbour pressure, not a bug - and they reactivate on schedule.
+
+**Note on diagnosis:** an earlier report in this session described E46N37 as "recovered to
+5,600/5,600". That was a snapshot taken at the top of a fill cycle read as a trend; the room
+was in deficit throughout. Single-tick energy readings do not show direction - `netFlow` and
+`runway` do, and the advisor had been publishing both all along.
+
 ## A builder held 800 energy for 200 ticks in front of a blocked corridor (FIXED)
 
 **Symptom:** a builder in E47N41, state BUILDING, 800 energy unchanged for 200 ticks,
