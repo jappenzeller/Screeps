@@ -250,7 +250,15 @@ export interface SpawnBudgetInputs {
   stalledTicks: number;
   /** Total income per tick including remote, from EconomyTracker. */
   incomePerTick: number;
-  /** Whether the room can afford discretionary work at all. */
+  /**
+   * Whether the room holds a real stored buffer.
+   *
+   * Deliberately NOT "netFlow >= 0". A body is a commitment for the creep's entire
+   * 1,500-tick life, and instantaneous flow is computed from the creeps currently alive -
+   * so it reads positive precisely when the room has just stopped over-spending. Passing
+   * `canAffordDiscretionary` here released the clamp at that exact moment and let a 36-WORK
+   * upgrader spawn into a room earning 20/tick. Callers pass `hasSpendableBuffer`.
+   */
   canAfford: boolean;
 }
 

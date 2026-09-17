@@ -683,9 +683,29 @@ Three exemptions, each paid for by an earlier defect:
   function was written to fix, which cost 191 failed spawns out of 191.
 - **Never the rescue paths.** `emergency`, `hauler bootstrap` and `downgrade rescue` pass
   through unclamped; each exists to break a specific deadlock, and a cap would restore it.
-- **Only when insolvent.** A room with a buffer should build big creeps - that is what a
-  buffer is for - so the clamp keys on the same solvency test as the upgrader and builder
-  count caps.
+- **Only when insolvent** - and *insolvent* means an empty bank, not negative flow. This is
+  the distinction that makes the clamp hold, and getting it wrong leaked twice.
+
+**Stock, not a one-tick reading of flow.** The first version released the clamp on
+`canAffordDiscretionary`, which accepts `netFlow >= 0`. But `netFlow` is computed from the
+creeps *currently alive*, so it reads healthiest at exactly the moment the room has stopped
+over-spending. Measured live: E46N37 spawned a clamped 2-WORK builder and a 6-WORK upgrader,
+burn fell to ~13 against 20 income, flow went positive, the clamp released, and a **36-WORK
+upgrader** spawned 99 ticks later - straight back to -56. E47N41 did the same with a 16-WORK
+builder. Both were born well after the clamp shipped.
+
+A body or a headcount is a commitment for the creep's whole 1,500-tick life, so it must
+answer to a stored buffer (`hasSpendableBuffer`), never to instantaneous flow.
+`canAffordDiscretionary` keeps the flow test, which is correct for a *recurring* decision
+like renewal: if the room is not losing ground, renewing one creep is affordable.
+
+The effect once corrected, within one creep turnover:
+
+| Room | before | after |
+|---|---|---|
+| E43N39 | -25.2/tick, runway 4, stored 120 | **-15.7, runway 208, stored 3,272** |
+| E47N41 | -56.3, upgraders at 36 WORK | **-32.3, upgrade burn 36 -> 12** |
+| E46N37 | -56.3, builders at 16 WORK | **-27.3, build burn 40 -> 5** |
 
 The function stays pure, so both spawn paths can share it and it can be unit tested. Its
 own history is the reason that matters: when `utilitySpawning` and the framework's

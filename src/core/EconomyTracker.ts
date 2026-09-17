@@ -396,5 +396,27 @@ export function canAffordDiscretionary(room: Room): boolean {
   return e.netFlow >= 0;
 }
 
+/**
+ * True only when the room holds a real buffer - not merely when it is breaking even.
+ *
+ * `canAffordDiscretionary` accepts `netFlow >= 0`, which is right for a recurring decision
+ * like renewal: if the room is not losing ground, renewing one creep is affordable. It is
+ * wrong for a decision that creates a *lasting* commitment, because instantaneous flow is
+ * measured with the current creeps alive - so it reads healthiest exactly when the room has
+ * just stopped over-spending.
+ *
+ * That released the body clamp at the worst possible moment. Measured live: E46N37 spawned
+ * a clamped 2-WORK builder and a 6-WORK upgrader, burn fell to ~13 against 20 income,
+ * netFlow went positive, the clamp released, and a 36-WORK upgrader spawned 99 ticks later
+ * - taking netFlow back to -56. E47N41 did the same with a 16-WORK builder. Both creeps
+ * were born well after the clamp shipped.
+ *
+ * A body or a headcount is a commitment for the creep's whole 1,500-tick life, so it has to
+ * answer to stock, not to a one-tick reading of flow.
+ */
+export function hasSpendableBuffer(room: Room): boolean {
+  return getColonyEconomy(room).stored > DISCRETIONARY_BUFFER;
+}
+
 /** Stored energy above which a room may spend freely regardless of instantaneous flow. */
 const DISCRETIONARY_BUFFER = 10000;

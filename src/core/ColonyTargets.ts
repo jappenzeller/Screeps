@@ -19,7 +19,7 @@
 import { ColonyManager } from "./ColonyManager";
 import { getMilestones } from "./ColonyMilestones";
 import { scoutingViable } from "./ColonyPopulation";
-import { canAffordDiscretionary, getColonyEconomy } from "./EconomyTracker";
+import { canAffordDiscretionary, getColonyEconomy, hasSpendableBuffer } from "./EconomyTracker";
 import { builderTargetFor } from "./builderBudget";
 import { LinkManager } from "../structures/LinkManager";
 import { CONFIG } from "../config";
@@ -89,7 +89,10 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
         totalIncome: economy.totalIncome,
         buildBurn: economy.buildBurn,
         builders,
-        canAfford: canAffordDiscretionary(room),
+        // Buffer, not flow. A headcount lasts the creep's whole life, and netFlow reads
+        // positive exactly when the room has just shed the burn that was sinking it -
+        // which let E47N41 respawn a 16-WORK builder after the cap had shipped.
+        canAfford: hasSpendableBuffer(room),
       });
     }
   }

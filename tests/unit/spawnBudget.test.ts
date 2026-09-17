@@ -122,6 +122,19 @@ test("more income buys a bigger body", () => {
 // What must NOT be clamped
 // ============================================================================
 
+test("breaking even with an empty bank does not release the clamp", () => {
+  // The leak that got through the first version. canAfford was fed
+  // canAffordDiscretionary, which accepts netFlow >= 0 - and netFlow is computed from the
+  // creeps currently alive, so it reads positive right after the room stops over-spending.
+  // Measured live: E46N37 spawned a clamped 2-WORK builder and 6-WORK upgrader, burn fell
+  // to ~13 against 20 income, flow went positive, and a 36-WORK upgrader spawned 99 ticks
+  // later. Callers now pass hasSpendableBuffer, so an empty bank means canAfford === false
+  // however healthy this tick happens to look.
+  const b = BB.resolveSpawnEnergyBudget(inputs({ canAfford: false, energyStored: 0 }));
+  assertTrue(b.energy < 5600, `budget ${b.energy} must stay clamped on an empty bank`);
+  assertTrue(b.reason.indexOf("income-capped") !== -1, `clamp should be recorded: ${b.reason}`);
+});
+
 test("a solvent room is untouched", () => {
   const b = BB.resolveSpawnEnergyBudget(inputs({ canAfford: true }));
   assertEqual(b.energy, 5600, "a buffer exists precisely so it can be spent");

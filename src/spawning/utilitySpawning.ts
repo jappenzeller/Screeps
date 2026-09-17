@@ -1859,7 +1859,11 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
     // room that had just filled its extensions built a 36-WORK upgrader it earned 20/tick
     // to feed. Same economy owner the upgrader and builder count caps use.
     incomePerTick: SpawnEconomy.getColonyEconomy(state.room).totalIncome,
-    canAfford: SpawnEconomy.canAffordDiscretionary(state.room),
+    // A real buffer, not merely breaking even. netFlow is measured with the creeps
+    // currently alive, so it reads positive right after the room stops over-spending -
+    // which released this clamp and let a 36-WORK upgrader spawn into E46N37 moments after
+    // a clamped 2-WORK builder had brought flow back above zero.
+    canAfford: SpawnEconomy.hasSpendableBuffer(state.room),
   });
 
   // Kept as instrumentation only - these gates no longer decide anything here, but their

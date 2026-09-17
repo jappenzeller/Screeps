@@ -85,6 +85,18 @@ test("RCL alone no longer authorises builders", () => {
 // When the cap must NOT engage
 // ============================================================================
 
+test("breaking even with an empty bank does not release the cap", () => {
+  // The same leak found in the body clamp, and the same fix. canAfford was fed
+  // canAffordDiscretionary, which accepts netFlow >= 0 - and netFlow is computed from the
+  // creeps currently alive, so it reads positive precisely when the room has just stopped
+  // over-spending. E47N41 respawned a 16-WORK builder that way after this cap had shipped.
+  // The call site now passes hasSpendableBuffer, so an empty bank is never "affordable".
+  const t = BB.builderTargetFor(
+    input({ canAfford: false, totalIncome: 20, buildBurn: 40, builders: 2 })
+  );
+  assertEqual(t, 1, "still shedding, however healthy this single tick looks");
+});
+
 test("a solvent room is untouched however large its burn", () => {
   const t = BB.builderTargetFor(input({ canAfford: true, totalIncome: 20, buildBurn: 99 }));
   assertEqual(t, 4, "a storage buffer is exactly what spending is for");

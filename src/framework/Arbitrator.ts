@@ -357,7 +357,9 @@ export class ActionExecutor {
       // reason: when the two disagreed about body sizing, this executor failed 191 times
       // out of 191 while utilitySpawning spawned normally.
       incomePerTick: SpawnEconomy.getColonyEconomy(room).totalIncome,
-      canAfford: SpawnEconomy.canAffordDiscretionary(room),
+      // Buffer, not instantaneous flow - see hasSpendableBuffer. Both spawn paths must
+      // agree here as well, or one of them sizes bodies the other would refuse.
+      canAfford: SpawnEconomy.hasSpendableBuffer(room),
     });
 
     const body = buildBody(action.role, budget.energy);
