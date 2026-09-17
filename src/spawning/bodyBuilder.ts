@@ -248,6 +248,75 @@ export interface SpawnBudgetInputs {
   sourceCount: number;
   /** Consecutive ticks a spawn was attempted and refused for lack of energy. */
   stalledTicks: number;
+  /** Total income per tick including remote, from EconomyTracker. */
+  incomePerTick: number;
+  /** Whether the room can afford discretionary work at all. */
+  canAfford: boolean;
+}
+
+/**
+ * Energy a WORK part of this role burns per tick once it is alive.
+ *
+ * Only roles whose body size sets an ongoing drain appear here. A harvester's WORK parts
+ * *earn*; a hauler carries. Sizing those to the energy on hand is correct, and starving
+ * them is exactly the deadlock this file was written to fix.
+ */
+const BURN_PER_WORK: Record<string, number> = {
+  UPGRADER: 1, // upgradeController spends 1 per WORK per tick
+  BUILDER: 2.5, // build() spends 5 per WORK, at roughly 50% uptime
+  ROAD_BUILDER: 2.5,
+  REMOTE_BUILDER: 2.5,
+};
+
+/**
+ * Share of income a single discretionary creep may consume.
+ *
+ * Deliberately well below 1: an upgrader and a builder both sized at this share still leave
+ * most of the income for spawning, towers and rebuilding the buffer. At 20/tick that is a
+ * 6-WORK upgrader and a 2-WORK builder, against the 36-WORK and 16-WORK creeps this
+ * function was producing.
+ */
+export const DISCRETIONARY_INCOME_SHARE = 0.35;
+
+/** Energy one WORK part costs in this role's body, including its share of MOVE. */
+function patternCostPerWork(config: BodyConfig): number {
+  const workInPattern = config.pattern.filter((p) => p === WORK).length;
+  if (workInPattern === 0) return 0;
+
+  let unitCost = calculateCost(config.pattern);
+  if (config.moveMode !== "pattern") {
+    const nonMove = config.pattern.filter((p) => p !== MOVE).length;
+    unitCost += Math.ceil(nonMove * getMoveRatio(config.moveMode)) * BODYPART_COST[MOVE];
+  }
+
+  return unitCost / workInPattern;
+}
+
+/**
+ * The largest body energy this role can be given without out-earning the room, or null when
+ * the role is not discretionary and should not be clamped at all.
+ *
+ * Bodies were sized from `energyAvailable` or `energyCapacity` in every branch below -
+ * stock, never flow. Measured live: E46N37 reached 5,600/5,600, the "nearly full" branch
+ * handed over the whole 5,600, and buildBody produced a 50-part 36-WORK upgrader burning
+ * 36/tick into a room earning 20/tick. Filling the extensions is what *caused* the next
+ * deficit, and all three colonies were CRITICAL simultaneously on that pattern.
+ */
+export function sustainableBodyEnergy(role: string, incomePerTick: number): number | null {
+  const burnPerWork = BURN_PER_WORK[role];
+  if (!burnPerWork) return null;
+
+  const config = BODY_CONFIGS[role];
+  if (!config) return null;
+
+  const costPerWork = patternCostPerWork(config);
+  if (costPerWork <= 0) return null;
+
+  const affordableWork = (incomePerTick * DISCRETIONARY_INCOME_SHARE) / burnPerWork;
+
+  // Never below the role's own minimum: returning an unbuildable budget would stop the
+  // role spawning entirely, which is a worse failure than a slightly oversized creep.
+  return Math.max(config.minEnergy || 200, Math.floor(affordableWork * costPerWork));
 }
 
 /** Stored energy above which a room is limited by refill throughput, not by energy. */
@@ -265,6 +334,33 @@ export const MIN_BODY_FILL = 0.6;
 export const SPAWN_STALL_LIMIT = 150;
 
 export function resolveSpawnEnergyBudget(i: SpawnBudgetInputs): {
+  energy: number;
+  reason: string;
+} {
+  const base = baseSpawnEnergyBudget(i);
+
+  // Rescue paths outrank the economy. An emergency, a colony with no haulers, or a
+  // controller about to downgrade all need a creep now, at whatever size is affordable -
+  // clamping those would reintroduce the deadlock the branches exist to break.
+  if (
+    base.reason === "emergency" ||
+    base.reason === "hauler bootstrap" ||
+    base.reason === "downgrade rescue"
+  ) {
+    return base;
+  }
+
+  // A room with a buffer or positive flow should build big creeps: that is what the buffer
+  // is for, and it is the same solvency test the upgrader and builder caps use.
+  if (i.canAfford) return base;
+
+  const sustainable = sustainableBodyEnergy(i.role, i.incomePerTick);
+  if (sustainable === null || sustainable >= base.energy) return base;
+
+  return { energy: sustainable, reason: base.reason + " (income-capped)" };
+}
+
+function baseSpawnEnergyBudget(i: SpawnBudgetInputs): {
   energy: number;
   reason: string;
 } {

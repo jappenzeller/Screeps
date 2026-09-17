@@ -14,6 +14,7 @@ import { LinkManager } from "../structures/LinkManager";
 import { getMilestones } from "../core/ColonyMilestones";
 import { ColonyManager } from "../core/ColonyManager";
 import { buildBody as buildBodyFromConfig, ROLE_MIN_COST, resolveSpawnEnergyBudget } from "./bodyBuilder";
+import * as SpawnEconomy from "../core/EconomyTracker";
 import { isUnreachable } from "../utils/movement";
 import { CONFIG } from "../config";
 import { ThresholdMonitor } from "../utils/ThresholdMonitor";
@@ -1854,6 +1855,11 @@ function buildBody(role: SpawnRole, state: ColonyState): BodyPartConstant[] {
     downgradeRisk: isDowngradeRisk(state.room),
     sourceCount: state.room.find(FIND_SOURCES).length,
     stalledTicks: state.room.memory._spawnStall || 0,
+    // Flow, not stock. Every branch of the budget sized bodies from energy on hand, so a
+    // room that had just filled its extensions built a 36-WORK upgrader it earned 20/tick
+    // to feed. Same economy owner the upgrader and builder count caps use.
+    incomePerTick: SpawnEconomy.getColonyEconomy(state.room).totalIncome,
+    canAfford: SpawnEconomy.canAffordDiscretionary(state.room),
   });
 
   // Kept as instrumentation only - these gates no longer decide anything here, but their

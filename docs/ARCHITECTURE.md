@@ -653,6 +653,44 @@ Two details that decide the design:
 Shedding one builder per death converges instead of lurching, and reverses on its own when
 income recovers - the same mechanism, and the same reasoning, as the upgrader cap.
 
+## Spawn Body Budget (`src/spawning/bodyBuilder.ts`)
+
+How large a body a room should build, as distinct from how large a body it can pay for
+*right now*.
+
+Every branch of `resolveSpawnEnergyBudget` returned `energyAvailable` or `energyCapacity` -
+**stock, never flow**. Measured live, E46N37 reached 5,600/5,600, the "nearly full" branch
+handed over the whole 5,600, and `buildBody` produced a 50-part, 4,300-energy, **36-WORK
+upgrader** burning 36/tick into a room earning 20/tick. Filling the extensions is what
+*caused* the next deficit; the peak was not a recovery, it was the trigger.
+
+The conversion from flow to body size is arithmetic, and both halves are checkable against
+observed creeps:
+
+| Role | Burn per WORK | Energy per WORK | Observed |
+|---|---|---|---|
+| UPGRADER | 1/tick | 150 (`[W,W,W,CARRY]` + road MOVE) | 36 WORK = 4,300 |
+| BUILDER | 2.5/tick (5 at ~50% uptime) | 200 (`[W,CARRY,MOVE]`) | 16 WORK = 3,200 |
+
+`sustainableBodyEnergy` turns income into a ceiling: `income x share / burnPerWork`, times
+cost per WORK. At 20/tick and a 0.35 share that is a 6-WORK upgrader burning 6/tick and a
+2-WORK builder burning 5/tick.
+
+Three exemptions, each paid for by an earlier defect:
+
+- **Only discretionary roles.** HARVESTER, HAULER and FILLER sized to stock is *correct* -
+  they earn and move energy rather than consuming it. Starving them is the deadlock this
+  function was written to fix, which cost 191 failed spawns out of 191.
+- **Never the rescue paths.** `emergency`, `hauler bootstrap` and `downgrade rescue` pass
+  through unclamped; each exists to break a specific deadlock, and a cap would restore it.
+- **Only when insolvent.** A room with a buffer should build big creeps - that is what a
+  buffer is for - so the clamp keys on the same solvency test as the upgrader and builder
+  count caps.
+
+The function stays pure, so both spawn paths can share it and it can be unit tested. Its
+own history is the reason that matters: when `utilitySpawning` and the framework's
+`Arbitrator` disagreed about body sizing, one of them silently never spawned anything.
+
 ## Worker Energy (`src/creeps/workerEnergy.ts`)
 
 One owner for "where does a worker take energy from", shared by Builder, RemoteBuilder and

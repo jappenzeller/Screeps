@@ -40,6 +40,39 @@ affordable, and flattening that into the shared order would have been a silent r
 evenly across a young room's sources, which is a different question from "which source is
 best right now" - scoring it would undo the balancing.
 
+## Creep bodies were sized to energy on hand, not to income (FIXED)
+
+**Symptom:** single creeps out-consuming their entire room. E47N41 and E46N37 each ran one
+36-WORK upgrader (50 parts, 4,300 energy, burning 36/tick) and one 16-WORK builder (48
+parts, 3,200 energy, burning 40/tick) in rooms earning **20/tick**. One creep exceeded total
+room income by 80%.
+
+**Cause:** every branch of `resolveSpawnEnergyBudget` returned `energyAvailable` or
+`energyCapacity`. None considered income. The specific path was:
+
+```
+if (i.energyAvailable >= i.energyCapacity * 0.9) return { energy: i.energyAvailable, ... }
+```
+
+E46N37 reached 5,600/5,600, so it was handed the full 5,600 and built accordingly. **Filling
+the extensions is what caused the oversized spawn** - the "recovery to 100%" reported
+earlier in that session was the trigger for the next deficit, not evidence of health.
+
+This is the same proxy-for-measurement shape as `maxBuildersByEconomy = Math.min(rcl, 4)`
+and as range standing in for reachability: `energyCapacityAvailable` measures what a room
+can spend *at once*, never what it earns *per tick*.
+
+**Fix:** `sustainableBodyEnergy()` caps discretionary bodies at
+`income x 0.35 / burnPerWork`, converted to energy via the role's own pattern cost. Burn per
+WORK is 1/tick for upgrading and 2.5/tick for building (5 at ~50% uptime). Exempt: all
+non-discretionary roles, all three rescue branches, and any solvent room.
+
+**Diagnostic note:** the advisor had been publishing `netFlow`, `runway` and a CRITICAL
+health status for all three colonies the whole time, at
+`GET /colonies/{room}/economy`. It went unread for the entire session because `CLAUDE.md`
+documented endpoints that no longer exist, so the one system built to answer "why is the
+economy flat" was assumed broken rather than mis-documented.
+
 ## All three colonies ran CRITICAL at once with builders uncapped (FIXED)
 
 **Symptom:** every colony in deficit simultaneously, reported by the AWS advisor's

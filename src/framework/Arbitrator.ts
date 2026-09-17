@@ -20,6 +20,7 @@ import {
 } from "./types";
 import { logger } from "../utils/Logger";
 import { buildBody, calculateCost, getMinCost, resolveSpawnEnergyBudget } from "../spawning/bodyBuilder";
+import * as SpawnEconomy from "../core/EconomyTracker";
 import { findBuildPosition } from "../structures/placeStructures";
 import { ColonyManager } from "../core/ColonyManager";
 import * as MilitaryManager from "../military/MilitaryManager";
@@ -352,6 +353,11 @@ export class ActionExecutor {
       downgradeRisk,
       sourceCount: room.find(FIND_SOURCES).length,
       stalledTicks: room.memory._spawnStall || 0,
+      // Both spawn paths must supply the same inputs. This function's own history is the
+      // reason: when the two disagreed about body sizing, this executor failed 191 times
+      // out of 191 while utilitySpawning spawned normally.
+      incomePerTick: SpawnEconomy.getColonyEconomy(room).totalIncome,
+      canAfford: SpawnEconomy.canAffordDiscretionary(room),
     });
 
     const body = buildBody(action.role, budget.energy);
