@@ -84,6 +84,28 @@ reading - but the recommendation pipeline itself produces nothing, and
 row here. That is a separate, unfixed gap, and it was hidden behind the expiry bug: an
 empty array looked like one fault when it was concealing two.
 
+**Cause established (OPEN):** that Lambda has **never been invoked**, because nothing is
+wired to invoke it. Verified against the account:
+
+- no event-source mappings (nothing streams or queues into it)
+- no EventBridge rule targets its ARN
+- **no CloudWatch log group exists** - and a Lambda's log group is created on its first
+  invocation, so its absence is direct evidence of zero invocations ever
+
+So it is not a failing writer but an **orphaned deployment**: a pipeline stage that was
+created and never connected. The distinction matters for the fix - there is no bug to
+repair in its code, there is a trigger to add, and nobody has ever seen its output.
+
+**Deliberately not fixed here.** Wiring it means creating an EventBridge rule or stream
+mapping on billed infrastructure, and its handler has not been read to establish what event
+shape it expects. Enabling an untested writer against a live table that the bot's advisor
+reads is a decision for the operator, not a side effect of a diagnosis.
+
+**Method note:** the first attempt at this check returned nothing because the SSO token had
+expired, while the script's own `(empty = never invoked)` echo lines printed underneath the
+errors. Absence of output is not evidence of absence - the conclusion above rests on a
+re-run with valid credentials, not on that first empty result.
+
 **Hypotheses refuted along the way,** recorded because each looked plausible: that the
 engine produced no recommendations (it had produced 891); that the rows lacked a `status`
 attribute and were therefore missing from the sparse `room-status-index` (true that all 891
