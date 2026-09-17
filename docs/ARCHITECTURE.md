@@ -423,6 +423,57 @@ Three follow-on defects surfaced from having one table to look at:
   — which is how two spawners drift apart again. Both now state their real number.
 
 
+## Invariants (`src/core/Invariants.ts`)
+
+Assertions checked **at the moment a decision is committed**.
+
+The registry now answers three questions, and they are genuinely distinct:
+
+| Question | Owner |
+|---|---|
+| Did this system run, and did running accomplish anything? | `Liveness` |
+| Is a creep frozen or oscillating? | `AnomalyDetector` |
+| Was the decision *right about the quantity*? | `Invariants` |
+
+The third was the gap. Every expensive defect found on 2026-09-16 was a system that ran,
+acted, reported success, and was wrong about a number:
+
+- range standing in for reachability - a builder pathing to a site it could not reach
+- RCL standing in for income - `maxBuildersByEconomy = Math.min(rcl, 4)`
+- capacity standing in for income - a 36-WORK upgrader in a room earning 20/tick
+- seconds standing in for milliseconds - 891 advisor rows judged expired
+- instantaneous flow standing in for a buffer - the clamp releasing as it succeeded
+
+In all five, liveness reported healthy, and correctly: nothing had stopped. A periodic
+sweep sees the *consequence* (netFlow -56, three banks drained) hours or weeks later. A
+commit-point check sees the *cause* while the inputs that justified it are still in hand.
+
+**First invariant: `UNSUSTAINABLE_SPAWN`.** At the `spawnCreep` call, a discretionary body's
+ongoing burn (`workParts x burnPerWork`) is compared against room income. `BURN_PER_WORK` is
+imported from `bodyBuilder` rather than duplicated - one coefficient table.
+
+Three properties worth keeping:
+
+- **It is a backstop, not a discovery mechanism.** The body clamp already prevents the
+  ordinary case, so this stays silent most of the time. Its value is catching the clamp
+  being *bypassed* - a rescue path, or a regression. It would have caught the escapee leak
+  immediately; finding that by hand took an hour of reading `_born` fields.
+- **Its threshold is deliberately looser than the clamp's** (0.5 versus 0.35). Reporting at
+  the same threshold the clamp enforces would fire on every borderline body and teach the
+  reader to skip the findings - the cry-wolf failure this registry exists to prevent.
+- **Income roles are never reported.** A harvester's WORK earns and a hauler's CARRY moves;
+  flagging them would be noise, and starving them is the deadlock the body budget exists to
+  fix.
+
+**No fifth surface.** Findings ride the existing segment-90 export, attached per-colony
+alongside `anomalies` and `liveness`, so they arrive at `/colonies/{room}` with everything
+else. Four surfaces already existed and the real cost was that nobody read them - adding a
+fifth place to look would have made the routing problem worse, not better.
+
+**Not yet covered:** the other four shapes above. A gate binding at a pathological rate and
+a target that stays unmet are both checkable this way. The units mismatch is not a runtime
+invariant at all - that one wants a type, not a check.
+
 ## Liveness (`src/core/Liveness.ts`)
 
 Reports systems that are not running, or that run without ever doing anything.

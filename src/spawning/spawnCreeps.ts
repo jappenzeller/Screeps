@@ -13,6 +13,8 @@ import { getSpawnCandidate } from "./utilitySpawning";
 import { StatsCollector } from "../utils/StatsCollector";
 import { recordActualSpawn } from "../framework/ShadowSpawn";
 import * as Liveness from "../core/Liveness";
+import * as Invariants from "../core/Invariants";
+import { getColonyEconomy } from "../core/EconomyTracker";
 import * as DuoManager from "../combat/DuoManager";
 import * as MilitaryManager from "../military/MilitaryManager";
 import * as WaveCoordinator from "../military/WaveCoordinator";
@@ -51,6 +53,32 @@ export function spawnCreeps(room: Room): void {
 
   if (result === OK) {
     Liveness.acted("spawnCreeps");
+
+    // Check the commitment at the moment it is made, while the body and the room's economy
+    // are both in hand. The body clamp in resolveSpawnEnergyBudget already prevents the
+    // ordinary case; this catches it being bypassed - a rescue path, or a regression like
+    // the leak where the clamp released on instantaneous flow and a 36-WORK upgrader
+    // spawned into a room earning 20/tick. That took an hour of hand-reading `_born`
+    // fields to find. It would have been one line in the log here.
+    let workParts = 0;
+    for (let wi = 0; wi < candidate.body.length; wi++) {
+      if (candidate.body[wi] === WORK) workParts++;
+    }
+    const economy = getColonyEconomy(room);
+    const unsustainable = Invariants.unsustainableSpawn({
+      role: candidate.role,
+      workParts,
+      incomePerTick: economy.totalIncome,
+      storedEnergy: economy.stored,
+    });
+    if (unsustainable) {
+      Invariants.record({
+        type: "UNSUSTAINABLE_SPAWN",
+        room: room.name,
+        detail: unsustainable,
+        tick: Game.time,
+      });
+    }
     // Compare the incumbent's choice with the framework SpawnEvaluator's shadow proposal.
     recordActualSpawn(room.name, candidate.role);
 

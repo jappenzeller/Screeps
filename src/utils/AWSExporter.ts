@@ -11,6 +11,8 @@ import { ExpansionReadiness, ReadinessCheck, ParentCandidate } from "../empire/E
 import { getCreepsByRoom, getHostileCreeps, shouldSkipExport } from "./cpuCache";
 import { DirectiveReader, DirectiveAck } from "../core/DirectiveReader";
 import { AnomalyDetector, Anomaly } from "./AnomalyDetector";
+import * as Invariants from "../core/Invariants";
+import type { InvariantFinding } from "../core/Invariants";
 import * as Liveness from "../core/Liveness";
 import type { LivenessFinding } from "../core/Liveness";
 import { ThresholdMonitor, ThresholdReport } from "./ThresholdMonitor";
@@ -290,6 +292,11 @@ interface ColonyExport {
   // than per-colony, but carried here because this is the payload the advisor reads.
   // Every expensive defect in this codebase was silent; this is what makes silence loud.
   liveness: LivenessFinding[];
+  // Decisions that were committed despite being unsustainable - checked at the commit
+  // point, where the inputs that justified them are still in hand. Liveness catches a
+  // system that stopped; this catches one that ran and was wrong about the quantity.
+  // Carried here for the same reason: no fifth surface, it arrives with everything else.
+  invariants: InvariantFinding[];
 }
 
 interface DefenseExport {
@@ -1182,6 +1189,7 @@ export class AWSExporter {
           return c ? c.memory.room === roomName : a.room === roomName;
         }),
         liveness: Liveness.report(),
+        invariants: Invariants.forRoom(roomName),
       });
     }
 

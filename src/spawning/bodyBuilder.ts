@@ -269,7 +269,7 @@ export interface SpawnBudgetInputs {
  * *earn*; a hauler carries. Sizing those to the energy on hand is correct, and starving
  * them is exactly the deadlock this file was written to fix.
  */
-const BURN_PER_WORK: Record<string, number> = {
+export const BURN_PER_WORK: Record<string, number> = {
   UPGRADER: 1, // upgradeController spends 1 per WORK per tick
   BUILDER: 2.5, // build() spends 5 per WORK, at roughly 50% uptime
   ROAD_BUILDER: 2.5,

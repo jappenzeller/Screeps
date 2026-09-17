@@ -45,6 +45,7 @@ import { runFullRecovery } from "./military/CampaignRecovery";
 import { initializeFramework, runFramework } from "./framework";
 import { recordCreepDeath } from "./core/ColonyPopulation";
 import * as Liveness from "./core/Liveness";
+import * as Invariants from "./core/Invariants";
 import * as TerminalManager from "./structures/TerminalManager";
 
 // CPU caching utilities
@@ -451,6 +452,9 @@ function cleanupMemory(): void {
   // Drop anomaly findings whose creep has since died
   if (Game.time % 50 === 0) {
     AnomalyDetector.prune();
+    // Invariant findings age out rather than being re-checked: each is a claim about a
+    // decision that was committed, not about a condition that might have resolved.
+    Invariants.prune();
   }
 
   // Room memory cleanup - less frequent
