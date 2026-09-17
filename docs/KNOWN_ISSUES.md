@@ -40,6 +40,47 @@ affordable, and flattening that into the shared order would have been a silent r
 evenly across a young room's sources, which is a different question from "which source is
 best right now" - scoring it would undo the balancing.
 
+## The advisor's recommendations endpoint returned [] for every room (FIXED)
+
+**Symptom:** `GET /analysis/{roomName}/recommendations` returned an empty array for all three
+colonies, while `/patterns` and `/observations` on the same engine returned rich content.
+This read as "the AI has produced no recommendations", and the stack costs ~$32/month.
+
+**Cause:** a units mismatch across the write/read boundary. `storeObservations()` in the
+analysis engine sets `expiresAt` in **seconds**, as DynamoDB TTL requires:
+
+```
+const expiresAt = Math.floor(timestamp / 1000) + RETENTION_DAYS * 24 * 60 * 60;
+```
+
+The API then filtered with `r.expiresAt > Date.now()` - **milliseconds**. Stored values are
+~1.79e9 against a clock of ~1.79e12, so every row was judged expired by a factor of 1000,
+permanently and silently.
+
+**Measured before the fix**, for E43N39 alone:
+
+| | rows |
+|---|---|
+| stored | 299 |
+| passing the old filter | **0** |
+| passing the corrected filter | **299** |
+| newest row age | 3.1 hours |
+
+891 rows across three rooms were unreachable. Nothing was ever actually expired.
+
+**Fix:** convert in the reader - `r.expiresAt * 1000 > now`. Not in the writer: seconds is
+what DynamoDB TTL requires, so changing the stored form would break automatic expiry.
+
+**Hypotheses refuted along the way,** recorded because each looked plausible: that the
+engine produced no recommendations (it had produced 891); that the rows lacked a `status`
+attribute and were therefore missing from the sparse `room-status-index` (true that all 891
+lack `status`, but the API queries `room-index`, which is keyed on `roomName` alone, so it
+was irrelevant).
+
+**Same family as three other defects found the same day:** range standing in for
+reachability, RCL for income, capacity for income, and now seconds for milliseconds. Every
+one was a value compared against something measured in different terms.
+
 ## Creep bodies were sized to energy on hand, not to income (FIXED)
 
 **Symptom:** single creeps out-consuming their entire room. E47N41 and E46N37 each ran one

@@ -922,10 +922,24 @@ async function getRecommendations(roomName) {
     Limit: 50,
   }));
 
-  // Filter out expired recommendations
+  // Filter out expired recommendations.
+  //
+  // expiresAt is stored in SECONDS, because DynamoDB TTL requires seconds - see
+  // storeObservations() in the analysis engine, which writes
+  // `Math.floor(timestamp / 1000) + RETENTION_DAYS * 86400`. Date.now() is milliseconds, so
+  // comparing them directly made every row look expired by a factor of 1000 and this
+  // endpoint returned [] for every room, always.
+  //
+  // Measured before the fix: 299 stored rows for E43N39, 0 passing this filter, 299 passing
+  // it with the conversion, newest row 3.1 hours old. Nothing was ever actually expired -
+  // 891 rows across three rooms were unreachable, and the empty result read as "the advisor
+  // has no recommendations" rather than as a bug.
+  //
+  // The conversion belongs here rather than in the writer: seconds is what TTL requires, so
+  // changing the stored form would break automatic expiry instead.
   const now = Date.now();
   const items = response.Items || [];
-  return items.filter(r => !r.expiresAt || r.expiresAt > now);
+  return items.filter(r => !r.expiresAt || r.expiresAt * 1000 > now);
 }
 
 async function getMetricHistory(roomName, hours = 24) {

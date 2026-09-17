@@ -523,7 +523,11 @@ is doing": it returns netFlow and runway directly, which is the number that matt
 cd aws/lambda && powershell -Command "Compress-Archive -Path api/* -DestinationPath api.zip -Force"
 
 # 2. Deploy Lambda function code
-aws lambda update-function-code --function-name screeps-advisor-api --zip-file fileb://aws/lambda/api.zip
+# The function is screeps-api-prod. There is no function named screeps-advisor-api - that
+# name was documented here but does not exist in the account, so this command used to fail.
+# AWS_PROFILE must be screeps-new (account 788417514918); the shell default points elsewhere.
+AWS_PROFILE=screeps-new aws lambda update-function-code --region us-east-1 \
+  --function-name screeps-api-prod --zip-file fileb://aws/lambda/api.zip
 
 # 3. Update CloudFormation stack (if infrastructure changes needed)
 aws cloudformation deploy --template-file aws/cloudformation/template.yaml --stack-name screeps-advisor-prod --capabilities CAPABILITY_IAM
