@@ -396,16 +396,20 @@ function declareSystems(): void {
   // Only "is it still being called" is a real question for it.
   Liveness.expect("trackEnergyFlow", 1);
 
-  // Deliberately NOT declared yet: SmartRoadPlanner, RemoteContainerPlanner,
-  // MilitaryManager, DuoManager, ExpansionManager, AWSExporter, DecisionLogger,
-  // CommandExecutor, DirectiveReader, PositionLogger, TrafficMonitor, gatherRoomIntel and
-  // runCreeps.
+  Liveness.expect("SmartRoadPlanner", 100, true);
+  Liveness.expect("RemoteContainerPlanner", 100, true);
+
+  // Deliberately NOT declared yet: MilitaryManager, DuoManager, ExpansionManager,
+  // AWSExporter, DecisionLogger, CommandExecutor, DirectiveReader, PositionLogger,
+  // TrafficMonitor, gatherRoomIntel and runCreeps.
+  //
+  // That is every planner and every defense system declared; what remains is exporters,
+  // monitoring and military, which is the low end of cost-of-silence.
   //
   // A declaration with no matching ran() call reports NEVER_RAN, so adding these as a
-  // batch would manufacture ~12 false findings - the cry-wolf failure this registry exists
+  // batch would manufacture ~10 false findings - the cry-wolf failure this registry exists
   // to prevent, and one this file already caused once by declaring tracksActs for systems
-  // that never called acted(). Each gets declared when it gets instrumented, in
-  // cost-of-silence order: the planners and defense first, exporters last.
+  // that never called acted(). Each gets declared when it gets instrumented.
 }
 
 function cleanupMemory(): void {

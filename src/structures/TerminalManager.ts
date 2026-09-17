@@ -257,10 +257,22 @@ export function run(): void {
   }
 
   const plan = planTransfer(rooms);
-  if (!plan) return;
+  if (!plan) {
+    // No room holds surplus above SENDER_MIN_STORAGE, or no room needs it. This is the
+    // steady state most of the time and it is correct - but with no idle() call here the
+    // registry counted all 1,087 runs as work never done and reported ALWAYS_NOOP against
+    // a system behaving exactly as designed. Live right now: every bank sits below the
+    // 20,000 sender floor, so there is genuinely nothing to send.
+    Liveness.idle("TerminalManager");
+    return;
+  }
 
   const sender = Game.rooms[plan.from];
-  if (!sender || !sender.terminal) return;
+  if (!sender || !sender.terminal) {
+    // Deliberately NOT idle: planTransfer named a sender with no terminal, which is an
+    // internal inconsistency rather than an absence of work, and should surface as one.
+    return;
+  }
 
   const result = sender.terminal.send(RESOURCE_ENERGY, plan.amount, plan.to, plan.reason);
   if (result === OK) {

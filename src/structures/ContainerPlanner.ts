@@ -102,16 +102,21 @@ export class ContainerPlanner {
       Memory.rooms[this.room.name].containerPlan = plan;
     }
 
-    // An empty plan means every container this room wants already exists. Reported as
-    // idle so it cannot be confused with a planner that had work and failed to place it -
-    // which is the state ExtensionPlanner sat in for days without one log line.
-    if (Object.keys(plan.sources).length === 0 && !plan.controller) {
-      Liveness.idle("ContainerPlanner");
-    }
-
     // Always try to place sites - check each position individually
     // This handles cases where some containers built but others failed
-    this.placeConstructionSites(plan);
+    const outcome = this.placeConstructionSites(plan);
+
+    // Nothing was even attempted: every container this room wants already exists, or the
+    // controller entry is correctly declined because a link serves the upgraders instead.
+    // Both are the steady state and neither is a fault.
+    //
+    // The previous test - an entirely empty plan - was too narrow, and the registry duly
+    // reported ALWAYS_NOOP on 2,174 runs of a planner doing its job. If sites WERE
+    // attempted and all failed, stay silent rather than idle: that one is a real defect
+    // and is exactly what this registry exists to surface.
+    if (outcome.attempted === 0) {
+      Liveness.idle("ContainerPlanner");
+    }
   }
 
   private createPlan(): ContainerPlan {
@@ -246,7 +251,9 @@ export class ContainerPlanner {
    * Place construction sites for planned containers
    * Idempotent - safe to call repeatedly, will skip already placed
    */
-  private placeConstructionSites(plan: ContainerPlan): void {
+  private placeConstructionSites(plan: ContainerPlan): { attempted: number } {
+    let attempted = 0;
+
     // Place source containers - only if source doesn't already have a container
     for (var sourceId in plan.sources) {
       var source = Game.getObjectById(sourceId as Id<Source>);
@@ -258,7 +265,7 @@ export class ContainerPlanner {
       }
 
       var pos = plan.sources[sourceId];
-      this.placeContainerSite(pos.x, pos.y);
+      if (this.placeContainerSite(pos.x, pos.y) !== "exists") attempted++;
     }
 
     // Place controller container (RCL 2+) - only if controller doesn't already have one
@@ -277,34 +284,47 @@ export class ContainerPlanner {
           filter: function(s) { return s.structureType === STRUCTURE_LINK; }
         });
         if (controllerLinks.length === 0) {
-          this.placeContainerSite(plan.controller.x, plan.controller.y);
+          if (this.placeContainerSite(plan.controller.x, plan.controller.y) !== "exists") {
+            attempted++;
+          }
         }
       }
     }
+
+    return { attempted };
   }
 
   /**
    * Place a single container construction site
    */
-  private placeContainerSite(x: number, y: number): ScreepsReturnCode {
+  /**
+   * Place a single container construction site.
+   *
+   * Returns which of three things happened, rather than a bare return code. "Already
+   * there" used to come back as OK, indistinguishable from a placement - which is how the
+   * liveness registry came to report this planner as ALWAYS_NOOP on 2,174 runs while it
+   * was behaving perfectly: nothing needed placing, and nothing said so.
+   */
+  private placeContainerSite(x: number, y: number): "exists" | "placed" | "failed" {
     // Check if container or construction site already exists
     const structures = this.room.lookForAt(LOOK_STRUCTURES, x, y);
-    const hasContainer = structures.some((s) => s.structureType === STRUCTURE_CONTAINER);
-    if (hasContainer) return OK;
+    if (structures.some((s) => s.structureType === STRUCTURE_CONTAINER)) return "exists";
 
     const sites = this.room.lookForAt(LOOK_CONSTRUCTION_SITES, x, y);
-    const hasSite = sites.some((s) => s.structureType === STRUCTURE_CONTAINER);
-    if (hasSite) return OK;
+    if (sites.some((s) => s.structureType === STRUCTURE_CONTAINER)) return "exists";
 
     // Place construction site
     const result = this.room.createConstructionSite(x, y, STRUCTURE_CONTAINER);
     if (result === OK) {
       Liveness.acted("ContainerPlanner");
       logger.debug("ContainerPlanner", `Placed container site at ${x},${y}`);
-    } else if (result !== ERR_FULL) {
+      return "placed";
+    }
+
+    if (result !== ERR_FULL) {
       logger.warn("ContainerPlanner", `Failed to place container at ${x},${y}: ${result}`);
     }
-    return result;
+    return "failed";
   }
 
   /**

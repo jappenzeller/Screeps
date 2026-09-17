@@ -7,6 +7,7 @@
 import { TrafficMonitor } from "./TrafficMonitor";
 import { ColonyManager } from "./ColonyManager";
 import { logger } from "../utils/Logger";
+import * as Liveness from "./Liveness";
 
 // Configuration - lower threshold for unroaded-only tracking
 const MIN_VISITS_FOR_ROAD = 30; // Minimum traffic to build a road
@@ -25,8 +26,13 @@ export class SmartRoadPlanner {
    * Main entry - call every 100 ticks
    */
   run(): void {
+    Liveness.ran("SmartRoadPlanner");
+
     // Gate: need RCL 3+ and extensions mostly done
-    if (!this.shouldPlanRoads()) return;
+    if (!this.shouldPlanRoads()) {
+      Liveness.idle("SmartRoadPlanner");
+      return;
+    }
 
     // Count existing road construction sites (home + remote)
     const homeRoom = this.room;
@@ -54,16 +60,27 @@ export class SmartRoadPlanner {
     // Uses its own budget based on via room sites only
     const viaRoadSites = this.countViaRoomSites();
     const viaMax = MAX_CONCURRENT_ROAD_SITES - viaRoadSites;
+    let viaPlaced = 0;
     if (viaMax > 0) {
-      this.planViaRoomRoads(viaMax);
+      viaPlaced = this.planViaRoomRoads(viaMax);
     }
 
     // Phase 4: Remote room roads (inside remote rooms - exit to sources)
     // Count remote road sites separately - don't let home room sites block remote
     const remoteRoadSites = this.countRemoteRoadSites();
     const remoteMax = MAX_CONCURRENT_ROAD_SITES - remoteRoadSites;
+    let remotePlaced = 0;
     if (remoteMax > 0) {
-      this.planRemoteRoads(remoteMax);
+      remotePlaced = this.planRemoteRoads(remoteMax);
+    }
+
+    // Placing nothing is genuinely idle here, unlike the structure planners: the reasons
+    // are no traffic hotspot above MIN_VISITS_FOR_ROAD yet, or the concurrent-site budget
+    // already full. Neither is a road this planner wanted and failed to place.
+    if (homePlaced + routePlaced + viaPlaced + remotePlaced > 0) {
+      Liveness.acted("SmartRoadPlanner");
+    } else {
+      Liveness.idle("SmartRoadPlanner");
     }
   }
 

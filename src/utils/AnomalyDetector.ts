@@ -144,9 +144,23 @@ export class AnomalyDetector {
     // --- state transitions ---
     if (state !== mem._anState) {
       const heldFor = Game.time - mem._anStateAt;
-      if (heldFor < FLAP_MIN_STATE_TICKS) {
+
+      // A short state is only churn if it achieved nothing.
+      //
+      // An upgrader standing beside a controller link refills to full in a single tick and
+      // returns straight to UPGRADING. That one-tick COLLECTING is the fastest cycle the
+      // creep can run, not a fault - but it scored a flap event every time, at roughly two
+      // or three per 50-tick decay, so the score only ever climbed and every healthy
+      // upgrader beside its energy eventually reported FLAP for good. Two were reported in
+      // E43N39 doing exactly this.
+      //
+      // Energy moving during the state is the proof it did work: _anEnergyAt is stamped
+      // above whenever the store changes, and the energy block runs before this one.
+      const didWork = (mem._anEnergyAt || 0) >= mem._anStateAt;
+      if (heldFor < FLAP_MIN_STATE_TICKS && !didWork) {
         mem._anFlap = (mem._anFlap || 0) + 1;
       }
+
       mem._anState = state;
       mem._anStateAt = Game.time;
     }

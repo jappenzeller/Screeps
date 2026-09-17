@@ -4,6 +4,7 @@
  */
 
 import { logger } from "../utils/Logger";
+import * as Liveness from "./Liveness";
 
 export class RemoteContainerPlanner {
   private homeRoom: Room;
@@ -17,19 +18,30 @@ export class RemoteContainerPlanner {
    * Call periodically (every 100 ticks).
    */
   run(): void {
+    Liveness.ran("RemoteContainerPlanner");
+
     // Gate: RCL 4+ required for remote mining
     const rcl = this.homeRoom.controller?.level || 0;
-    if (rcl < 4) return;
+    if (rcl < 4) {
+      Liveness.idle("RemoteContainerPlanner");
+      return;
+    }
 
     // Get remote rooms where we have active miners
     const remoteRooms = this.getActiveRemoteRooms();
 
+    let wanted = 0;
     for (const roomName of remoteRooms) {
       const room = Game.rooms[roomName];
       if (!room) continue; // No visibility
 
-      this.planContainersInRoom(room);
+      wanted += this.planContainersInRoom(room).wanted;
     }
+
+    // Every mined remote source already has its container: the steady state, and correct.
+    // When sources DID want one and none could be placed, stay silent instead - a planner
+    // that wanted to act and could not is the ExtensionPlanner defect, and idle buries it.
+    if (wanted === 0) Liveness.idle("RemoteContainerPlanner");
   }
 
   /**
@@ -55,8 +67,10 @@ export class RemoteContainerPlanner {
   /**
    * Place containers at sources in a remote room.
    */
-  private planContainersInRoom(room: Room): void {
+  private planContainersInRoom(room: Room): { placed: number; wanted: number } {
     const sources = room.find(FIND_SOURCES);
+    let placed = 0;
+    let wanted = 0;
 
     for (const source of sources) {
       // Check if container already exists or is being built
@@ -70,6 +84,9 @@ export class RemoteContainerPlanner {
       });
       if (existingSite.length > 0) continue;
 
+      // This source wants a container, whether or not one can be placed for it.
+      wanted++;
+
       // Find best position for container (adjacent to source)
       const containerPos = this.findContainerPosition(room, source);
       if (!containerPos) {
@@ -80,11 +97,15 @@ export class RemoteContainerPlanner {
       // Place construction site
       const result = room.createConstructionSite(containerPos.x, containerPos.y, STRUCTURE_CONTAINER);
       if (result === OK) {
+        placed++;
+        Liveness.acted("RemoteContainerPlanner");
         logger.info("RemoteContainerPlanner", `Placed container site at ${containerPos.x},${containerPos.y} in ${room.name}`);
       } else if (result !== ERR_FULL) {
         logger.warn("RemoteContainerPlanner", `Failed to place container in ${room.name}: ${result}`);
       }
     }
+
+    return { placed, wanted };
   }
 
   /**

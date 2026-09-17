@@ -469,7 +469,29 @@ exactly, and calling it idle would bury it.
 `placeStructures`, `spawnCreeps`, `StatsCollector.snapshot`, `syncRemoteRooms`,
 `TerminalManager`, `ExtensionPlanner`, `ContainerPlanner`, `TowerManager`, `LinkManager`,
 `RampartPlanner`, `RenewalManager`, `checkAutoSafeMode`, `EconomyTracker.track`,
-`trackEnergyFlow`.
+`trackEnergyFlow`, `SmartRoadPlanner`, `RemoteContainerPlanner`.
+
+### What the first real report said
+
+The registry's first output after the boot grace carried three `ALWAYS_NOOP` findings. One
+was true and two were mine, which is worth recording exactly:
+
+| Finding | Verdict |
+|---|---|
+| `placeStructures`: work on 1087 of 3261 runs | **Real.** 1087 is one room's share of 3261 - E47N41 wants six labs and can never position one. Labs need a 4x3 cluster and that room is mostly wall. |
+| `TerminalManager`: 1087 of 1087 | False. It had no `idle()` at all, so the correct steady state - no bank above the 20,000 sender floor - reported as a defect. |
+| `ContainerPlanner`: 2174 of 3261 | False. The `idle()` condition only fired on a completely empty plan, so a `controller` entry correctly declined because a link serves the upgraders counted as work never done. |
+
+Two lessons, both already paid for. An `idle()` condition must cover *every* correct
+no-work path, not the obvious one - a partial condition is worse than none, because it
+converts healthy behaviour into a standing accusation. And "already done" must not be
+reported through the same channel as "did it": `placeContainerSite` returned `OK` for a
+container that already existed, indistinguishable from placing one, which is what made the
+second false positive possible.
+
+The real finding is left reported rather than silenced. Whether E47N41 should host labs at
+all is a layout decision, and suppressing a true report to make a list look clean is how
+the list stops being read.
 
 `checkAutoSafeMode` is the clearest case in the whole registry. Safe mode is the last
 defense before a room is lost, every quiet tick reports idle, and so `ALWAYS_NOOP` there
@@ -499,12 +521,13 @@ is precisely why the run count, not the act count, is the signal worth having.
 so calling `ran()` from `main.ts` counted nine skipped runs in every ten - measuring the
 main loop rather than the system.
 
-**Roughly twelve systems remain undeclared**, listed in `declareSystems()` with the
-reason. `expect()` without a matching `ran()` reports `NEVER_RAN`, so declaring them as a
-batch would manufacture twelve false findings - the cry-wolf failure this registry exists
-to prevent, and one this codebase already caused once by declaring `tracksActs` for systems
-that never called `acted()`. They are added in cost-of-silence order: planners and defense
-first, exporters last.
+**Roughly ten systems remain undeclared**, listed in `declareSystems()` with the reason.
+That is now every planner and every defense system covered; what is left is exporters,
+monitoring and military - the low end of cost-of-silence. `expect()` without a matching
+`ran()` reports `NEVER_RAN`, so declaring them as a batch would manufacture ten false
+findings - the cry-wolf failure this registry exists to prevent, and one this codebase has
+now caused twice: once by declaring `tracksActs` for systems that never called `acted()`,
+and again with `idle()` conditions too narrow to cover every correct no-work path.
 
 
 ## Terminal Transfers (`src/structures/TerminalManager.ts`)
