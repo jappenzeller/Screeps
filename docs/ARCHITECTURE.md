@@ -493,6 +493,17 @@ The real finding is left reported rather than silenced. Whether E47N41 should ho
 all is a layout decision, and suppressing a true report to make a list look clean is how
 the list stops being read.
 
+**Verified once the next boot grace elapsed.** The stated prediction was that the two false
+positives would disappear and the true one would persist. `Memory._liveness` then held a
+single finding: `placeStructures`, "had work on 203 of 609 runs, never acted". The ratio
+corroborates it independently - 203 of 609 is one room in three, the same proportion as the
+earlier 1087 of 3261, on counters the deploy had reset. `TerminalManager` and
+`ContainerPlanner` were both gone. Both fixes hold.
+
+Worth keeping as method: the fix was committed with a falsifiable prediction attached, so
+"did it work" had an answer that did not depend on re-reading the code that produced the
+bug. Writing the prediction down first is what made the check take one query.
+
 `checkAutoSafeMode` is the clearest case in the whole registry. Safe mode is the last
 defense before a room is lost, every quiet tick reports idle, and so `ALWAYS_NOOP` there
 can only mean it decided to activate and the activation failed.
