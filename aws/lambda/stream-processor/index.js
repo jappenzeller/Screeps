@@ -41,7 +41,16 @@ export async function handler(event) {
 
     // Convert DynamoDB format to regular object
     const snapshot = unmarshall(newImage);
-    const previousSnapshot = oldImage ? unmarshall(oldImage) : null;
+
+    // OldImage is only populated on MODIFY, and this table is insert-only: its key is
+    // (roomName HASH, timestamp RANGE), so every write is a new item and every stream
+    // record is an INSERT. previousSnapshot was therefore always null,
+    // detectSignificantChanges returned [] on every invocation, and the analysis Step
+    // Function has executed 0 times since 2026-02-22. Fetching the previous row is what the
+    // unused QueryCommand import in this file was always for.
+    const previousSnapshot = oldImage
+      ? unmarshall(oldImage)
+      : await fetchPreviousSnapshot(snapshot.roomName, snapshot.timestamp);
 
     // Always emit SnapshotCreated event for metrics
     events.push({
@@ -93,13 +102,71 @@ export async function handler(event) {
 }
 
 /**
+ * Fetch the previous snapshot for a room.
+ *
+ * Needed because DynamoDB streams only carry OldImage on MODIFY and this table is
+ * insert-only, so the stream can never supply a prior value to compare against.
+ *
+ * Failures are swallowed deliberately: SnapshotCreated emission and the Firehose archive
+ * work today and metrics-writer depends on them, so a lookup problem must degrade this
+ * function to its previous behaviour rather than break the handler.
+ */
+async function fetchPreviousSnapshot(roomName, currentTimestamp) {
+  if (!SNAPSHOTS_TABLE || !roomName || !currentTimestamp) return null;
+
+  try {
+    const res = await docClient.send(new QueryCommand({
+      TableName: SNAPSHOTS_TABLE,
+      KeyConditionExpression: "roomName = :r AND #ts < :t",
+      ExpressionAttributeNames: { "#ts": "timestamp" },
+      ExpressionAttributeValues: { ":r": roomName, ":t": currentTimestamp },
+      ScanIndexForward: false,
+      Limit: 1,
+    }));
+    return (res.Items && res.Items[0]) || null;
+  } catch (e) {
+    console.error(`Previous snapshot lookup failed for ${roomName}:`, e);
+    return null;
+  }
+}
+
+/**
  * Detect significant changes between snapshots
  */
 function detectSignificantChanges(current, previous) {
   const events = [];
   const roomName = current.roomName;
 
-  // No previous snapshot to compare
+  // Current-only checks first, so they run whether or not a previous snapshot exists.
+  //
+  // These sat BELOW the `if (!previous)` guard, which always matched on an insert-only
+  // table - an early branch that can always match starves everything beneath it, which is
+  // design rule 2 from the bot's own CLAUDE.md, here in the AWS code. Both feed the
+  // screeps-advisor-critical-alerts SNS rule, so critical alerting never fired once since
+  // 2026-02-22. Neither needs a previous snapshot: they read only `current`.
+  const storageEnergy = current.storageEnergy || current.energy?.stored || 0;
+  const spawnEnergy = current.energyAvailable || current.energy?.available || 0;
+  const spawnCapacity = current.energyCapacity || current.energy?.capacity || 300;
+  if (storageEnergy < 5000 && spawnEnergy < spawnCapacity * 0.5) {
+    events.push(createEvent("CriticalEnergyLevel", {
+      roomName,
+      storageEnergy,
+      spawnEnergy,
+      spawnCapacity,
+      message: "Critical energy shortage - economy failing",
+    }));
+  }
+
+  if (current.threatLevel >= 3 || (current.hostileCount || 0) >= 5) {
+    events.push(createEvent("ThreatDetected", {
+      roomName,
+      threatLevel: current.threatLevel || 0,
+      hostileCount: current.hostileCount || 0,
+      message: "High threat level detected - defense needed",
+    }));
+  }
+
+  // Everything below this point compares against the previous snapshot.
   if (!previous) {
     return events;
   }
@@ -172,38 +239,16 @@ function detectSignificantChanges(current, previous) {
     }
   }
 
-  // ==================== CRITICAL EVENTS (trigger SNS alerts) ====================
+  // ==================== CRITICAL EVENTS (comparison-based) ====================
 
-  // Critical: No creeps alive
+  // Critical: no creeps alive. This one genuinely needs the previous snapshot - "went from
+  // some to none" is the signal, whereas a room that has always had none is simply a room
+  // we do not own. It stays below the guard for that reason; the other two moved above it.
   if (current.creepCount === 0 && previous.creepCount > 0) {
     events.push(createEvent("NoCreepsAlive", {
       roomName,
       previousCount: previous.creepCount,
       message: "All creeps have died - colony may collapse",
-    }));
-  }
-
-  // Critical: Energy critically low (below 5000 storage AND below 50% spawn energy)
-  const storageEnergy = current.storageEnergy || current.energy?.stored || 0;
-  const spawnEnergy = current.energyAvailable || current.energy?.available || 0;
-  const spawnCapacity = current.energyCapacity || current.energy?.capacity || 300;
-  if (storageEnergy < 5000 && spawnEnergy < spawnCapacity * 0.5) {
-    events.push(createEvent("CriticalEnergyLevel", {
-      roomName,
-      storageEnergy,
-      spawnEnergy,
-      spawnCapacity,
-      message: "Critical energy shortage - economy failing",
-    }));
-  }
-
-  // Critical: High threat with significant damage potential
-  if (current.threatLevel >= 3 || (current.hostileCount || 0) >= 5) {
-    events.push(createEvent("ThreatDetected", {
-      roomName,
-      threatLevel: current.threatLevel || 0,
-      hostileCount: current.hostileCount || 0,
-      message: "High threat level detected - defense needed",
     }));
   }
 

@@ -40,6 +40,71 @@ affordable, and flattening that into the shared order would have been a silent r
 evenly across a young room's sources, which is a different question from "which source is
 best right now" - scoring it would undo the balancing.
 
+## The advisor's Step Functions pipeline has never executed (PARTIALLY FIXED)
+
+**Symptom:** zero recommendations in a table holding 891 rows, all observations. Also - not
+noticed until this was traced - **critical SNS alerting has never fired**.
+
+**The pipeline exists and is well-formed.** State machine
+`screeps-advisor-analysis-workflow`, created 2026-02-22:
+
+```
+BuildContext -> ShouldAnalyze -> DetectPatterns -> FilterPatterns
+             -> HasNewPatterns -> AnalyzeWithClaude -> WriteRecommendations
+```
+
+Executions since creation: **0**, measured explicitly rather than inferred from empty output.
+
+**Root cause, in `stream-processor`:** `previousSnapshot` was read from
+`record.dynamodb.OldImage`. DynamoDB only populates `OldImage` on **MODIFY**, and the
+snapshots table is keyed `(roomName HASH, timestamp RANGE)` - every write is a new item, so
+every stream record is an **INSERT**. `previous` was therefore always null, and
+`detectSignificantChanges` returned `[]` on every one of its ~493 invocations per day.
+
+The EventBridge rule `screeps-advisor-analysis-trigger` listens for `SignificantChange`,
+`ThreatDetected`, `EconomyAnomaly`, `RCLProgress`. None were ever emitted - confirmed by
+24h log counts of exactly **0** for each, against repeated `Sent 1 events to EventBridge`
+lines, that one event being the unconditional `SnapshotCreated` emitted *above* the guard.
+
+**A second defect in the same function.** `CriticalEnergyLevel` and the high-threat
+`ThreatDetected` read only `current` - they never needed a previous snapshot - but sat
+*below* the `if (!previous) return events;` guard. An early branch that can always match
+starves everything beneath it: design rule 2 from this repo's own CLAUDE.md, in the AWS
+code. Those two feed `screeps-advisor-critical-alerts` (SNS), so "colony may collapse" and
+"critical energy shortage" alerts have never once fired.
+
+**Fixed:** previous snapshot is now fetched with a Query on `(roomName, timestamp <
+current)` descending, limit 1 - which is what the unused `QueryCommand` import and
+`SNAPSHOTS_TABLE` env var in that file were always for. Lookup failures are swallowed so
+the handler degrades to its old behaviour rather than breaking `SnapshotCreated` and the
+Firehose archive, which metrics-writer depends on. The two current-only critical checks
+moved above the guard; `NoCreepsAlive` correctly stays below it, since "went from some to
+none" genuinely needs a comparison.
+
+**Still OPEN - a contract mismatch, not a wiring gap.** `claude-analyzer` returns
+`{observations, patterns, signalCorrelations, summary}` and its prompt states "You are
+building a historical record of observations - NOT generating recommendations".
+`recommendation-writer` reads `event.recommendations || []` and writes one row per element.
+That array is never produced, so lighting up the pipeline as-is would call Claude and write
+**zero** rows. Two options, awaiting a decision: persist observations as `pending` rows
+(no new AI spend, weak `expectedOutcome`), or have the analyzer emit recommendations too
+(one prompt schema block plus two parser lines, genuinely actionable, new recurring spend).
+
+**Consequence worth noting:** the Phase-4 learning loop is complete in design and idles on
+an empty set. `filter-patterns` suppresses patterns that already have a pending
+recommendation; `outcome-evaluator` transitions pending rows to `resolved_helpful` /
+`resolved_natural` / `resolved_unknown` and feeds confidence back to the knowledge table.
+Both key on `status: "pending"`, which only `recommendation-writer` writes. So the loop has
+never closed - and because nothing is pending, `filter-patterns` suppresses nothing, which
+makes the `HasNewPatterns` cost gate loosest in exactly the broken state we are in now.
+
+**Cost note:** `claude-analyzer` uses `claude-sonnet-4-20250514`, `max_tokens: 2000`, with
+no `output_config.effort`. Two Choice gates bound invocation: a hard 10-minute per-room
+cooldown (`recentAnalysisAge < 600000`) and `count === 0` on filtered patterns. An early
+estimate of $450-1,800/month ignored both gates and was wrong by roughly an order of
+magnitude; the realistic ceiling is single-digit dollars per day, to be confirmed against
+`USAGE` log lines over a first full day rather than trusted.
+
 ## The advisor's recommendations endpoint returned [] for every room (FIXED)
 
 **Symptom:** `GET /analysis/{roomName}/recommendations` returned an empty array for all three
@@ -84,8 +149,13 @@ reading - but the recommendation pipeline itself produces nothing, and
 row here. That is a separate, unfixed gap, and it was hidden behind the expiry bug: an
 empty array looked like one fault when it was concealing two.
 
-**Cause established (OPEN):** that Lambda has **never been invoked**, because nothing is
-wired to invoke it. Verified against the account:
+**Superseded - the cause below was wrong.** See "The advisor's Step Functions pipeline has
+never executed" further down. The writer has no event source *by design*: it is a state in
+a Step Functions workflow, not an event-driven Lambda. The account evidence in this section
+is accurate; the conclusion drawn from it was not.
+
+**Cause as first established (INCORRECT):** that Lambda has **never been invoked**, because
+nothing is wired to invoke it. Verified against the account:
 
 - no event-source mappings (nothing streams or queues into it)
 - no EventBridge rule targets its ARN
