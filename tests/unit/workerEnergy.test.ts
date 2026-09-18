@@ -141,6 +141,31 @@ test("a full container nearby beats a full storage far away", () => {
   assertEqual(best.target.id, "c1", "the container branch is reachable now");
 });
 
+test("a stocked container beats a small distant drop", () => {
+  // The RemoteHauler chain this replaced put dropped energy first and returned
+  // unconditionally, so one 50-energy pile anywhere in a remote room starved the container
+  // branch below it - and in a remote room that container holds the miner's whole output.
+  // No storage here, because a remote room is not owned and has none.
+  const room = makeRoom({
+    storage: null,
+    containers: [container("c1", 12, 10, 1800)],
+    drops: [drop("d1", 40, 40, 60)],
+  });
+  const best = WE.scoreWorkerEnergy(makeCreep(room, 10, 10), { allowHarvest: false });
+  assertTrue(!!best, "something should be chosen");
+  assertEqual(best.target.id, "c1", "supply and distance decide, not tier order");
+});
+
+test("a remote hauler is never offered a harvest", () => {
+  // It has no WORK parts, and mining in someone else's room is not its job.
+  const room = makeRoom({ storage: null, source: { x: 11, y: 10, energy: 3000 } });
+  assertEqual(
+    WE.scoreWorkerEnergy(makeCreep(room, 10, 10), { allowHarvest: false }),
+    null,
+    "it should head home instead"
+  );
+});
+
 test("storage below the old 1,000 floor is still offered", () => {
   // A hard floor means "no source at all" the moment storage dips under it - the shape
   // that left E46N37's haulers parked while extensions sat empty.

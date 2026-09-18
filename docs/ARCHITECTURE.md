@@ -764,8 +764,15 @@ own history is the reason that matters: when `utilitySpawning` and the framework
 
 ## Worker Energy (`src/creeps/workerEnergy.ts`)
 
-One owner for "where does a worker take energy from", shared by Builder, RemoteBuilder and
-RoadBuilder.
+One owner for "where does a creep take energy from", shared by Builder, RemoteBuilder,
+RoadBuilder and RemoteHauler.
+
+RemoteHauler joined last, and it is why the module is no longer only about *workers*. Its
+collection was three tiers - dropped, containers, tombstones - each returning
+unconditionally, so a single 50-energy pile anywhere in a remote room starved the container
+branch beneath it. In a remote room that container holds the miner's entire output, so the
+cost was the whole point of the remote. It calls with `allowHarvest: false`: a hauler has no
+WORK parts, and mining in someone else's room is not its job.
 
 Three roles carried three copies of the same chain, and two of them opened with "storage,
 if it holds more than 1,000". A developed room's storage nearly always does, so the

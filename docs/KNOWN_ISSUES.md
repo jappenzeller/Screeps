@@ -313,6 +313,33 @@ blocks its own tile.
 **Tests:** `npm run test:unit` covers a terrain wall, a structure wall, and the
 anchor-blocks-itself case.
 
+## Remote hauler collection: one dropped pile starved the miner's container (FIXED)
+
+**Symptom:** latent by inspection, found while inventorying the last remaining branch
+chains rather than from a live failure.
+
+**Cause:** `RemoteHauler.collect` was three tiers - dropped energy (>= 50), then containers
+(>= 100), then tombstones - each returning unconditionally. Any dropped pile of 50 or more
+anywhere in the room captured the creep, so the container branch below it could not run.
+In a remote room that container holds the miner's entire output, which is the whole reason
+the remote exists. Tombstones, last in the list, were unreachable while either existed.
+
+Design rule 2 again, and the last instance of it in a hauling path.
+
+**Fix:** collection goes through `workerEnergy`, which already covered every source this
+role needs. Scoring weighs them together, so a full container two tiles away beats a
+60-energy pile thirty tiles off - roughly 65 against 15 on the actual weights - instead of
+losing to it by position in a list. `allowHarvest: false`, since a remote hauler has no
+WORK parts and should return home rather than mine someone else's room.
+
+The container floor relaxed from 100 to `MIN_CONTAINER` (50). Safe, because `supplyFactor`
+scores a nearly-empty container low rather than excluding it - the same "weighted, never
+zero" principle used throughout, and the opposite of the hard floors that caused the
+storage-withholding and RCL-as-income defects.
+
+**Tests:** the container-versus-distant-drop case and the no-harvest case are both in
+`tests/unit/workerEnergy.test.ts`, encoding the defect directly.
+
 ## Remote haulers delivered past empty spawns into storage (FIXED)
 
 **Symptom:** dead code by inspection, and the shape that produced several live stalls

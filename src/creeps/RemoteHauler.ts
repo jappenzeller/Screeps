@@ -1,6 +1,7 @@
 import { moveToRoom, smartMoveTo } from "../utils/movement";
 import { updateRoomIntel, shouldFlee, fleeToSafety, resolveRemoteTarget } from "../utils/remoteIntel";
 import { scoreDeliveryTargets } from "./haulerDelivery";
+import { applyWorkerEnergy, scoreWorkerEnergy } from "./workerEnergy";
 
 /**
  * RemoteHauler - Collects energy from remote mining rooms and delivers home
@@ -158,37 +159,23 @@ function collect(creep: Creep, targetRoom: string): void {
   // Update room intel whenever we have vision (critical for defense spawning)
   updateRoomIntel(creep);
 
-  // Priority 1: Pick up dropped energy
-  const dropped = creep.pos.findClosestByPath(FIND_DROPPED_RESOURCES, {
-    filter: (r) => r.resourceType === RESOURCE_ENERGY && r.amount >= 50,
-  });
-  if (dropped) {
-    if (creep.pickup(dropped) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, dropped, ROAD_OPTS);
-    }
-    return;
-  }
-
-  // Priority 2: Withdraw from containers
-  const container = creep.pos.findClosestByPath(FIND_STRUCTURES, {
-    filter: (s) =>
-      s.structureType === STRUCTURE_CONTAINER &&
-      s.store.getUsedCapacity(RESOURCE_ENERGY) >= 100,
-  }) as StructureContainer | null;
-  if (container) {
-    if (creep.withdraw(container, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, container, ROAD_OPTS);
-    }
-    return;
-  }
-
-  // Priority 3: Pick up from tombstones
-  const tombstone = creep.pos.findClosestByPath(FIND_TOMBSTONES, {
-    filter: (t) => t.store.getUsedCapacity(RESOURCE_ENERGY) > 0,
-  });
-  if (tombstone) {
-    if (creep.withdraw(tombstone, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-      smartMoveTo(creep, tombstone, ROAD_OPTS);
+  // One owner for "where does energy come from", shared with the three builder roles.
+  //
+  // This was three tiers - dropped, containers, tombstones - each returning
+  // unconditionally. A single 50-energy pile anywhere in the room starved the container
+  // branch beneath it, and in a remote room that container holds the miner's entire
+  // output; tombstones were unreachable while any drop or stocked container existed.
+  // Design rule 2, and the last instance of it in a hauling path.
+  //
+  // Scoring weighs all of them together, so a full container two tiles away beats a
+  // 60-energy pile thirty tiles off instead of losing to it by position in a list.
+  //
+  // allowHarvest is false: a remote hauler carries no WORK parts, and mining in someone
+  // else's room is not its job - it should come home instead.
+  const best = scoreWorkerEnergy(creep, { allowHarvest: false });
+  if (best) {
+    if (applyWorkerEnergy(creep, best) === ERR_NOT_IN_RANGE) {
+      smartMoveTo(creep, best.target, ROAD_OPTS);
     }
     return;
   }
