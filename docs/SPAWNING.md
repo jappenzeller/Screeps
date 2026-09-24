@@ -65,6 +65,13 @@ stored 600k -> +1    stored 1.0M -> +3 (target 6 at RCL 5)
 
 Rooms with empty storage are unaffected.
 
+**Poverty cap:** the mirror of the surplus rule. A room with no spendable buffer whose
+upgrade burn exceeds `UPGRADE_INCOME_SHARE` (50%) of income sheds one upgrader per death,
+floor one. Both rules live in `src/core/upgraderBudget.ts`; `ColonyTargets` supplies the
+measurements. Solvency is `hasSpendableBuffer` - a stored buffer, never `netFlow`, because
+flow is measured from the creeps currently alive and so reads healthiest at the moment the
+room has just shed the burn that was sinking it. See ARCHITECTURE.md, Upgrader Budget.
+
 #### BUILDER
 ```
 Base: 40

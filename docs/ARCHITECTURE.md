@@ -704,6 +704,33 @@ Two details that decide the design:
 Shedding one builder per death converges instead of lurching, and reverses on its own when
 income recovers - the same mechanism, and the same reasoning, as the upgrader cap.
 
+## Upgrader Budget (`src/core/upgraderBudget.ts`)
+
+How many upgraders a colony wants, and how many it can pay for: a base target from RCL, a
+surplus bonus once storage passes the high-water mark, and a poverty cap that mirrors the
+builder one.
+
+The poverty cap was the **last** spawn decision still keyed on `canAffordDiscretionary`. The
+builder headcount and the body clamp on both spawn paths were moved to `hasSpendableBuffer`
+after the same defect was measured twice; this path was missed, and the rule it broke is
+stated in EconomyTracker's own doc comment - *a body or a headcount is a commitment for the
+creep's whole 1,500-tick life, so it has to answer to stock, not to a one-tick reading of
+flow.*
+
+Because `netFlow` is computed from the creeps currently alive, it reads healthiest at the
+moment the room has just shed the burn that was sinking it. So the cap released one death
+before it had finished converging, the target reverted to its RCL value, and the room
+respawned what it had just shed. Measured live at E46N37, held rather than converging:
+
+| Income | Upgrade burn | Upgraders | netFlow | Stored | Runway |
+|---|---|---|---|---|---|
+| 20/tick | 18/tick | 3 | -3.3 | 112 | 33 |
+
+The floor is **one**, unlike the builder cap's zero: sites wait, but a controller
+downgrades. The arithmetic holds that floor without a separate `upgraders > 1` guard - an
+earlier version had one and it made the cap oscillate rather than converge, because shedding
+to a single upgrader switched the guard off and the target reverted to 3.
+
 ## Spawn Body Budget (`src/spawning/bodyBuilder.ts`)
 
 How large a body a room should build, as distinct from how large a body it can pay for

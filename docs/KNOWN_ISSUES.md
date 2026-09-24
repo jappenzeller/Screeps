@@ -242,6 +242,15 @@ share - was gated by nothing at all.
 income, shedding one builder per death with a floor of zero. Measured burn rather than head
 count because a single 16-WORK builder burns 40/tick by itself.
 
+**Follow-up, fixed later:** the *upgrader* headcount cap was the one spawn decision left
+keyed on `canAffordDiscretionary` after the builder cap and the body clamp both moved to
+`hasSpendableBuffer`. Since `netFlow` is measured from the creeps currently alive, it reads
+healthiest exactly when the room has just shed the burn that was sinking it, so the cap
+switched itself off one death before converging and the room respawned what it had shed.
+E46N37 sat at 20/tick income against 18/tick of upgrading across three upgraders - netFlow
+-3.3, stored 112, runway 33 - stable rather than recovering. Moved to
+`src/core/upgraderBudget.ts` (pure, unit tested) and fed `hasSpendableBuffer`.
+
 **Contributing factor, not a defect:** income was 20/tick per room because three of E43N39's
 four remotes were auto-paused with `"Hostile detected"` and valid future expiries. That is
 the system working - neighbour pressure, not a bug - and they reactivate on schedule.

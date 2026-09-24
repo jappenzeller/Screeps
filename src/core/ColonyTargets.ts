@@ -19,24 +19,11 @@
 import { ColonyManager } from "./ColonyManager";
 import { getMilestones } from "./ColonyMilestones";
 import { scoutingViable } from "./ColonyPopulation";
-import { canAffordDiscretionary, getColonyEconomy, hasSpendableBuffer } from "./EconomyTracker";
+import { getColonyEconomy, hasSpendableBuffer } from "./EconomyTracker";
 import { builderTargetFor } from "./builderBudget";
+import { upgraderTargetFor } from "./upgraderBudget";
 import { LinkManager } from "../structures/LinkManager";
 import { CONFIG } from "../config";
-
-/**
- * Extra upgraders a storage-rich room may add beyond its base target, so a full store can
- * spend its way out instead of dropping energy on the ground.
- */
-const MAX_SURPLUS_UPGRADERS = 4;
-
-/**
- * Share of a room's harvest income that upgrading may consume when there is no storage
- * buffer. The remainder has to cover spawning, repair, and rebuilding the buffer - a room
- * that spends everything on the controller never accumulates the storage that would let
- * it spend more.
- */
-const UPGRADE_INCOME_SHARE = 0.5;
 
 /**
  * How long a combat-capable hostile must remain before it counts as a siege worth
@@ -161,87 +148,35 @@ export function getCreepTargets(room: Room, totalSites: number): Record<string, 
     haulerTarget = Math.max(haulerTarget, 2);
   }
 
-  // Upgrader target: always need upgraders to progress RCL
-  // Early colonies: at least 1 upgrader (can use source containers or dropped energy)
-  // Mature colonies: scale with RCL
-  let upgraderTarget = 0;
-  if (isEarlyColony) {
-    // Early colony (RCL 1-3, no storage): always have at least 1 upgrader
-    // Upgraders can pick up energy from source containers or dropped resources
-    if (m.allExtensions) {
-      upgraderTarget = Math.min(rcl, 3); // Infrastructure done, push RCL
-    } else {
-      upgraderTarget = 1; // Building extensions or early RCL, have 1 upgrader
-    }
-  } else {
-    // RCL 4+ or has storage: normal scaling
-    upgraderTarget = rcl < 8 ? Math.min(rcl, 3) : 1;
+  // Upgrader target: base scaling by RCL, a surplus bonus, and a poverty cap, all in
+  // upgraderBudget so they can be unit tested. The poverty cap was the last spawn decision
+  // still keyed on canAffordDiscretionary - see the file comment there.
+  const upgControllerMax = room.controller ? CONTROLLER_DOWNGRADE[room.controller.level] || 0 : 0;
+  const upgEconomy = getColonyEconomy(room);
+  let upgradersAlive = 0;
+  for (const name in Game.creeps) {
+    const c = Game.creeps[name];
+    if (c.memory.room === room.name && c.memory.role === "UPGRADER") upgradersAlive++;
   }
 
-  // Surplus burn: a storage sitting above the high-water mark is dead capital, and
-  // once it caps out the room starts dropping energy on the ground. The base target
-  // is capped at 3, so without this a full room can never spend its way out.
-  // Upgrading is the sink that always exists — convert the surplus into RCL.
-  if (room.storage && rcl < 8) {
-    const stored = room.storage.store[RESOURCE_ENERGY];
-    const high = CONFIG.ENERGY.STORAGE_THRESHOLDS.high;
-
-    if (stored > high) {
-      const step = high / 2;
-      const surplusUpgraders = Math.min(Math.floor((stored - high) / step), MAX_SURPLUS_UPGRADERS);
-      upgraderTarget += surplusUpgraders;
-    }
-  }
-
-  // Poverty scales the target DOWN, the mirror of the surplus rule above.
-  //
-  // The target scaled up with wealth and never down with need: at RCL 7 it was an
-  // unconditional 3 regardless of whether the room had anything to feed them. E46N37 and
-  // E47N41 both ran three upgraders on zero storage with their extensions two-thirds
-  // empty, burning the energy that should have been refilling the spawn - and, in a
-  // cramped base, those parked upgraders were the creeps physically boxing the haulers in.
-  //
-  // Releases on its own as the room recovers, and yields to a controller actually at risk
-  // of downgrading, which is the one case where upgrading outranks the economy.
-  const downgradeMax = room.controller ? CONTROLLER_DOWNGRADE[room.controller.level] || 0 : 0;
-  const downgradeRisk =
-    !!room.controller && downgradeMax > 0 && room.controller.ticksToDowngrade < downgradeMax * 0.5;
-
-  // Poverty scales the target DOWN, the mirror of the surplus rule above. The target used
-  // to scale up with wealth and never down with need: at RCL 7 it was an unconditional 3
-  // regardless of whether the room had anything to feed them. E46N37 and E47N41 both ran
-  // three upgraders while running at -46 and -28 energy per tick.
-  //
-  // Solvency comes from EconomyTracker, which is the colony's one answer to "can we
-  // afford this" - it counts remote income and every category of burn. Two earlier
-  // versions of this cap got it wrong independently: one tested extension fill, which
-  // measures whether hauling works rather than whether the room is solvent, and one
-  // walked the room's creeps by hand and missed remote income entirely.
-  //
-  // Shedding one upgrader per death converges downward instead of lurching, and reverses
-  // on its own when income recovers. A controller actually near downgrade outranks the
-  // economy - that is the one case where upgrading is not discretionary.
-  if (!downgradeRisk && upgraderTarget > 1 && !canAffordDiscretionary(room)) {
-    const economy = getColonyEconomy(room);
-    let upgraders = 0;
-    for (const name in Game.creeps) {
-      const c = Game.creeps[name];
-      if (c.memory.room === room.name && c.memory.role === "UPGRADER") upgraders++;
-    }
-
-    // Only shed while upgrading is actually a meaningful share of the shortfall - if the
-    // room is losing energy for some other reason, cutting upgraders will not fix it.
-    //
-    // No `upgraders > 1` guard here, deliberately. An earlier version had one and it made
-    // the cap oscillate rather than converge: E46N37 shed to a single upgrader, the guard
-    // then switched the cap off, the target reverted to 3, and it immediately spawned a
-    // 54-WORK replacement into a room earning 20/tick. The arithmetic already holds the
-    // floor at one - min(target, upgraders - 1) is 0 when a lone upgrader remains, and
-    // max(1, ...) lifts it back - so the count needs no separate guard.
-    if (economy.upgradeBurn > economy.totalIncome * UPGRADE_INCOME_SHARE) {
-      upgraderTarget = Math.max(1, Math.min(upgraderTarget, upgraders - 1));
-    }
-  }
+  let upgraderTarget = upgraderTargetFor({
+    rcl,
+    isEarlyColony,
+    allExtensions: m.allExtensions,
+    storedInStorage: room.storage ? room.storage.store[RESOURCE_ENERGY] : null,
+    storageHigh: CONFIG.ENERGY.STORAGE_THRESHOLDS.high,
+    downgradeRisk:
+      !!room.controller &&
+      upgControllerMax > 0 &&
+      room.controller.ticksToDowngrade < upgControllerMax * 0.5,
+    // Buffer, not flow. A headcount lasts the creep's whole life, and netFlow reads positive
+    // exactly when the room has just shed the burn that was sinking it - so the cap released
+    // one death before it had converged and the room respawned what it had just shed.
+    canAfford: hasSpendableBuffer(room),
+    upgradeBurn: upgEconomy.upgradeBurn,
+    totalIncome: upgEconomy.totalIncome,
+    upgraders: upgradersAlive,
+  });
 
   // FLOOR: RCL 1-3 without storage MUST have upgrader target >= 1
   // This is non-negotiable — without upgrading, colony can never progress.
